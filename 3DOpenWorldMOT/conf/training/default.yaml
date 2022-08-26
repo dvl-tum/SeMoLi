@@ -1,0 +1,36 @@
+# @package training
+# Those arguments defines the training hyper-parameters
+epochs: 32
+num_workers: 4
+batch_size: 16
+shuffle: True
+gpu: 0 # -1 -> no cuda otherwise takes the specified index
+optim:
+  base_lr: 0.001
+  # accumulated_gradient: -1 # Accumulate gradient accumulated_gradient * batch_size
+  grad_clip: -1
+  optimizer:
+    class: Adam
+    params:
+      lr: ${training.optim.base_lr} # The path is cut from training
+  lr_scheduler: ${lr_scheduler} # CHECK THIS
+  bn_scheduler:
+    bn_policy: "step_decay"
+    params:
+      bn_momentum: 0.1
+      bn_decay: 0.9
+      decay_step: 10
+      bn_clip: 1e-2
+weight_name: "latest" # Used during resume, select with model to load from [miou, macc, acc..., latest]
+checkpoint_dir: ""
+
+# Those arguments within experiment defines which model, dataset and task to be created for benchmarking
+# parameters for Weights and Biases
+wandb:
+  entity: ""
+  project: "3DOWMOT"
+  log: True
+  notes:
+  name:
+  config:
+    model_name: ${model_name}

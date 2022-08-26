@@ -1,0 +1,53 @@
+# @package models
+pointnet2msg:
+    encoder_name: pointnet2_sem_seg_msg
+    down_conv:
+        sa1:
+            module_name: PointNetSetAbstractionMsg
+            npoints: 1024
+            radius: [0.05, 0.1]
+            nsample: [16, 32]
+            in_channel: 9
+            mlp: [[16, 16, 32], [32, 32, 64]]
+        sa2:
+            module_name: PointNetSetAbstractionMsg
+            npoints: 256
+            radius: [0.1, 0.2]
+            nsample: [16, 32]
+            in_channel: 32+64
+            mlp: [[64, 64, 128], [64, 96, 128]]
+        sa3:
+            module_name: PointNetSetAbstractionMsg
+            npoints: 64
+            radius: [0.2, 0.4]
+            nsample: [16, 32]
+            in_channel: 128+128
+            mlp: [[128, 196, 256], [128, 196, 256]]
+        sa4:
+            module_name: PointNetSetAbstractionMsg
+            npoints: 16
+            radius: [0.4, 0.8]
+            nsample: [16, 32]
+            in_channel: 256+256
+            mlp: [[256, 256, 512], [256, 384, 512]]
+    up_conv:
+        fp4:
+            module_name: PointNetFeaturePropagation
+            in_channel: 512+512+256+256
+            mlp: [256, 256]
+        fp3:
+            module_name: PointNetFeaturePropagation
+            in_channel: 128+128+256
+            mlp: [256, 256]
+        fp2:
+            module_name: PointNetFeaturePropagation
+            in_channel: 32+64+256
+            mlp: [256, 128]
+        fp1:
+            module_name: PointNetFeaturePropagation
+            in_channel: 128
+            mlp: [128, 128, 128]
+    mlp_cls:
+        mlp1: [128]
+        mlp2: [128]
+        dropout: 0.5
