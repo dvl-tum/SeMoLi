@@ -4,8 +4,9 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset, IterableDataset, DataLoader, Sampler, BatchSampler
 
-from utils.tools import Config as cfg
-from utils.tools import DataProcessing as DP
+from .helper_tool import DataProcessing as DP
+import os
+import glob
 
 class PointCloudsDataset(Dataset):
     def __init__(self, dir, labels_available=True):
@@ -61,7 +62,13 @@ class PointCloudsDataset(Dataset):
 class CloudsDataset(Dataset):
     def __init__(self, dir, data_type='npy'):
         self.path = dir
-        self.paths = list(dir.glob(f'*.{data_type}'))
+        self.paths = glob.glob(dir)
+        print(glob.glob('*.npy'))
+        print(self.paths)
+        print("HELLO", dir)
+        print(os.listdir('.'))
+        print(os.listdir(dir))
+        quit()
         self.size = len(self.paths)
         self.data_type = data_type
         self.input_trees = {'training': [], 'validation': []}
@@ -77,6 +84,8 @@ class CloudsDataset(Dataset):
         print('Size of validation : ', len(self.input_colors['validation']))
 
     def load_data(self):
+        print(self.paths)
+        quit()
         for i, file_path in enumerate(self.paths):
             t0 = time.time()
             cloud_name = file_path.stem
@@ -135,21 +144,24 @@ class CloudsDataset(Dataset):
 
 class ActiveLearningSampler(IterableDataset):
 
-    def __init__(self, dataset, batch_size=6, split='training'):
+    def __init__(self, dataset, cfg, batch_size=6, split='training'):
         self.dataset = dataset
         self.split = split
         self.batch_size = batch_size
         self.possibility = {}
         self.min_possibility = {}
+        self.cfg = cfg
 
         if split == 'training':
-            self.n_samples = cfg.train_steps
+            self.n_samples = cfg.training.train_steps
         else:
-            self.n_samples = cfg.val_steps
+            self.n_samples = cfg.training.val_steps
 
         #Random initialisation for weights
         self.possibility[split] = []
         self.min_possibility[split] = []
+        print(self.dataset.input_colors)
+        quit()
         for i, tree in enumerate(self.dataset.input_colors[split]):
             self.possibility[split] += [np.random.rand(tree.data.shape[0]) * 1e-3]
             self.min_possibility[split] += [float(np.min(self.possibility[split][-1]))]
@@ -165,10 +177,11 @@ class ActiveLearningSampler(IterableDataset):
 
         for i in range(self.n_samples * self.batch_size):  # num_per_epoch
             # t0 = time.time()
-            if cfg.sampling_type=='active_learning':
+            if self.cfg.data.sampling_method=='active_learning':
                 # Generator loop
 
                 # Choose a random cloud
+                print(self.min_possibility, self.split)
                 cloud_idx = int(np.argmin(self.min_possibility[self.split]))
 
                 # choose the point with the minimum of possibility as query point
@@ -184,10 +197,10 @@ class ActiveLearningSampler(IterableDataset):
                 noise = np.random.normal(scale=3.5 / 10, size=center_point.shape)
                 pick_point = center_point + noise.astype(center_point.dtype)
 
-                if len(points) < cfg.num_points:
+                if len(points) < self.cfg.data.npoints:
                     queried_idx = self.dataset.input_trees[self.split][cloud_idx].query(pick_point, k=len(points))[1][0]
                 else:
-                    queried_idx = self.dataset.input_trees[self.split][cloud_idx].query(pick_point, k=cfg.num_points)[1][0]
+                    queried_idx = self.dataset.input_trees[self.split][cloud_idx].query(pick_point, k=cfg.data.npoints)[1][0]
 
                 queried_idx = DP.shuffle_idx(queried_idx)
                 # Collect points and colors
@@ -201,16 +214,16 @@ class ActiveLearningSampler(IterableDataset):
                 self.possibility[self.split][cloud_idx][queried_idx] += delta
                 self.min_possibility[self.split][cloud_idx] = float(np.min(self.possibility[self.split][cloud_idx]))
 
-                if len(points) < cfg.num_points:
+                if len(points) < self.cfg.data.npoints:
                     queried_pc_xyz, queried_pc_colors, queried_idx, queried_pc_labels = \
-                        DP.data_aug(queried_pc_xyz, queried_pc_colors, queried_pc_labels, queried_idx, cfg.num_points)
+                        DP.data_aug(queried_pc_xyz, queried_pc_colors, queried_pc_labels, queried_idx, cfg.data.npoints)
 
             # Simple random choice of cloud and points in it
-            elif cfg.sampling_type=='random':
+            elif self.cfg.data.sampling_method=='random':
 
                 cloud_idx = np.random.choice(len(self.min_possibility[self.split]), 1)[0]
                 points = np.array(self.dataset.input_trees[self.split][cloud_idx].data, copy=False)
-                queried_idx = np.random.choice(len(self.dataset.input_trees[self.split][cloud_idx].data), cfg.num_points)
+                queried_idx = np.random.choice(len(self.dataset.input_trees[self.split][cloud_idx].data), cfg.data.npoints)
                 queried_pc_xyz = points[queried_idx]
                 queried_pc_colors = self.dataset.input_colors[self.split][cloud_idx][queried_idx]
                 queried_pc_labels = self.dataset.input_labels[self.split][cloud_idx][queried_idx]
@@ -234,15 +247,17 @@ def data_loaders(cfg):
 
     # if active learning sampling
     if cfg.data.sampling_method == 'active_learning':
-        dataset = CloudsDataset(cfg.data.dataroot / 'train')
+        dataset = CloudsDataset(os.path.join(cfg.data.dataroot, cfg.data.dataset_name))
         batch_size = cfg.training.batch_size
         val_sampler = ActiveLearningSampler(
             dataset,
+            cfg,
             batch_size=batch_size,
             split='validation'
         )
         train_sampler = ActiveLearningSampler(
             dataset,
+            cfg,
             batch_size=batch_size,
             split='training'
         )
@@ -251,8 +266,8 @@ def data_loaders(cfg):
 
     # if random sampling
     if cfg.data.sampling_method == 'naive':
-        train_dataset = PointCloudsDataset(cfg.data.dataroot / 'train')
-        val_dataset = PointCloudsDataset(cfg.data.dataroot / 'val')
+        train_dataset = PointCloudsDataset(os.path.join(cfg.data.dataroot, 'train'))
+        val_dataset = PointCloudsDataset(os.path.join(cfg.data.dataroot, 'val'))
         return DataLoader(train_dataset, shuffle=True, **kwargs), DataLoader(val_dataset, **kwargs)
 
     raise ValueError(f"Dataset sampling method '{cfg.data.sampling_method}' does not exist.")

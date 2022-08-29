@@ -1,39 +1,12 @@
 # @package data
-class_name: semantickitti.SemanticKittiDataset
 dataset_name: "kitti"
-task: segmentation
-dataroot: data
+dataroot: '/usr/wiss/seidensc/Documents/3DOpenWorldMOT/3DOpenWorldMOT/data'
+sampling_method: 'active_learning'
 grid_size: 0.1
 process_workers: 8
+num_classes: 19
 apply_rotation: True
 mode: "last"
 use_category: False
-
-train_transform:
-  - transform: FixedNumerPoints:
-    params:
-      npoints: 4096
-  - transform: ElasticDistortion
-  - transform: Random3AxisRotation
-    params:
-      apply_rotation: ${data.apply_rotation}
-      rot_x: 2
-      rot_y: 2
-      rot_z: 180
-  - transform: RandomScaleAnisotropic
-    params:
-      scales: [0.9, 1.1]
-  - transform: GridSampling3D
-    params:
-      size: ${data.grid_size}
-      quantize_coords: True
-      mode: ${data.mode}
-
-val_transform:
-  - transform: GridSampling3D
-    params:
-      size: ${data.grid_size}
-      quantize_coords: True
-      mode: ${data.mode}
-
-test_transform: ${data.val_transform}
+npoints: 4096 #4 0960  # Number of input points 
+sub_grid_size: 0.04  # preprocess_parameter

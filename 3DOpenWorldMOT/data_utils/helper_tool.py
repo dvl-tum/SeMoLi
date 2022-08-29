@@ -10,9 +10,9 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 sys.path.append(BASE_DIR)
 sys.path.append(os.path.join(BASE_DIR, 'RandLA-Net', 'utils'))
-
+print(os.path.join(BASE_DIR, 'RandLA-Net', 'utils'))
 import cpp_wrappers.cpp_subsampling.grid_subsampling as cpp_subsampling
-import nearest_neighbors.lib.python.nearest_neighbors as nearest_neighbors
+# import nearest_neighbors.lib.python.nearest_neighbors as nearest_neighbors
 
 
 class ConfigSemanticKITTI:
@@ -252,11 +252,11 @@ class DataProcessing:
         elif dataset_name is 'Semantic3D':
             num_per_class = np.array([5181602, 5012952, 6830086, 1311528, 10476365, 946982, 334860, 269353],
                                      dtype=np.int32)
-        elif dataset_name is 'SemanticKITTI':
+        elif dataset_name is 'kitti':
             num_per_class = np.array([55437630, 320797, 541736, 2578735, 3274484, 552662, 184064, 78858,
                                       240942562, 17294618, 170599734, 6369672, 230413074, 101130274, 476491114,
                                       9833174, 129609852, 4506626, 1168181])
-        weight = num_per_class / float(sum(num_per_class))
+        weight = np.asarray(num_per_class) / float(sum(num_per_class))
         ce_label_weight = 1 / (weight + 0.02)
         return np.expand_dims(ce_label_weight, axis=0)
 

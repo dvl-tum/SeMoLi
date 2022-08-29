@@ -7,42 +7,42 @@ _layer_factory = {'PointNetSetAbstraction': PointNetSetAbstraction,
                 'PointNetFeaturePropagation': PointNetFeaturePropagation}
 
 
-class get_model(nn.Module):
+class PointNet2(nn.Module):
     def __init__(self, num_classes, model_conv):
-        super(get_model, self).__init__()
+        super(PointNet2, self).__init__()
         down_conv = model_conv.down_conv
         if 'sa1' in down_conv.keys():
             sa_1 = down_conv.sa1
-            self.sa1 = _layer_factory[sa_1.module_name](sa_1)
+            self.sa1 = _layer_factory[sa_1.module_name](**sa_1)
         if 'sa2' in down_conv.keys():
             sa_2 = down_conv.sa2
-            self.sa2 = _layer_factory[sa_2.module_name](sa_2)
+            self.sa2 = _layer_factory[sa_2.module_name](**sa_2)
         if 'sa3' in down_conv.keys():
             sa_3 = down_conv.sa3
-            self.sa2 = _layer_factory[sa_3.module_name](sa_3)
+            self.sa2 = _layer_factory[sa_3.module_name](**sa_3)
         if 'sa4' in down_conv.keys():
             sa_4 = down_conv.sa4
-            self.sa4 = _layer_factory[sa_4.module_name](sa_4)
+            self.sa4 = _layer_factory[sa_4.module_name](**sa_4)
         if 'sa5' in down_conv.keys():
             sa_5 = down_conv.sa5
-            self.sa5 = _layer_factory[sa_5.module_name](sa_5)
+            self.sa5 = _layer_factory[sa_5.module_name](**sa_5)
 
         up_conv = model_conv.up_conv
         if 'fp5' in up_conv.keys():
             fp5 = up_conv.fp5
-            self.fp5 = _layer_factory[fp5.module_name](fp5)
+            self.fp5 = _layer_factory[fp5.module_name](**fp5)
         if 'fp4' in up_conv.keys():
             fp4 = up_conv.fp4
-            self.fp4 = _layer_factory[fp4.module_name](fp4)
+            self.fp4 = _layer_factory[fp4.module_name](**fp4)
         if 'fp3' in up_conv.keys():
             fp3 = up_conv.fp3
-            self.fp3 = _layer_factory[fp3.module_name](fp3)
+            self.fp3 = _layer_factory[fp3.module_name](**fp3)
         if 'fp2' in up_conv.keys():
             fp2 = up_conv.fp2
-            self.fp2 = _layer_factory[fp2.module_name](fp2)
+            self.fp2 = _layer_factory[fp2.module_name](**fp2)
         if 'fp1' in up_conv.keys():
             fp1 = up_conv.fp1
-            self.fp1 = _layer_factory[fp1.module_name](fp1)
+            self.fp1 = _layer_factory[fp1.module_name](**fp1)
 
         mlp_cls = model_conv.mlp_cls
         self.conv1 = nn.Conv1d(fp1.mlp[-1], mlp_cls.mlp1, 1)
@@ -71,9 +71,9 @@ class get_model(nn.Module):
         return x, l4_points
 
 
-class get_loss(nn.Module):
+class SemSegLoss(nn.Module):
     def __init__(self):
-        super(get_loss, self).__init__()
+        super(SemSegLoss, self).__init__()
     def forward(self, pred, target, trans_feat, weight):
         total_loss = F.nll_loss(pred, target, weight=weight)
 
@@ -81,6 +81,6 @@ class get_loss(nn.Module):
 
 if __name__ == '__main__':
     import  torch
-    model = get_model(13)
+    model = PointNet2(13)
     xyz = torch.rand(6, 9, 2048)
     (model(xyz))

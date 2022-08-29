@@ -1,28 +1,17 @@
-"""
-Author: Benny
-Date: Nov 2019
-"""
 # CONFIGURATION HANDLING
-import hydra                                                                                                                                                                          │/usr/wiss/seidensc/Documents/Pointnet_Pointnet2_pytorch/data/s3dis/Stanford3dDataset_v1.2_Aligned_Version/Area_6/office_9/Annotations/clutter_6.txt
-from hydra.core.global_hydra import GlobalHydra                                                                                                                                       │/usr/wiss/seidensc/Documents/Pointnet_Pointnet2_pytorch/data/s3dis/Stanford3dDataset_v1.2_Aligned_Version/Area_6/office_9/Annotations/clutter_16.txt
-from omegaconf import OmegaConf                                                                                                                                                       │/usr/wiss/seidensc/Documents/Pointnet_Pointnet2_pytorch/data/s3dis/Stanford3dDataset_v1.2_Aligned_Version/Area_6/office_9/Annotations/wall_1.txt
-
 import os
-from data_utils.S3DISDataLoader import S3DISDataset
+import hydra
+from omegaconf import OmegaConf
 import torch
-import datetime
 import logging
-from pathlib import Path
-import sys
-import importlib
-import shutil
 from tqdm import tqdm
-import provider
 import numpy as np
-import time
-import models
 
-_dataset_factory = {'S3DISDataset': S3DISDataset}
+from models import _model_factory, _loss_factory
+from data_utils.PointCloudDataset import data_loaders
+from data_utils.helper_tool import DataProcessing as DP
+from data_utils import augmentation
+
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = BASE_DIR
@@ -32,29 +21,17 @@ def inplace_relu(m):
     if classname.find('ReLU') != -1:
         m.inplace=True
 
-def parse_args():
-    parser = argparse.ArgumentParser('Model')
-    parser.add_argument('--test_area', type=int, default=5, help='Which area to use for test, option: 1-6 [default: 5]')
 
-    return parser.parse_args()
-
-
-@hydra.main(config_path="conf", config_name="config")   
-def main(cfg):
-    OmegaConf.set_struct(cfg, False)  # This allows getattr and hasattr methods to function correctly
-
-    def log_string(str):
-        logger.info(str)
-        print(str)
-
+def initialize(cfg):
     '''HYPER PARAMETER'''
-    os.environ["CUDA_VISIBLE_DEVICES"] = cfg.training.gpu
+    #print(cfg.training.gpu)
+    #os.environ["CUDA_VISIBLE_DEVICES"] = cfg.training.gpu
 
     '''CREATE DIR'''
     experiment_dir = cfg.job_name
-    experiment_dir.mkdir(exist_ok=True)
-    checkpoints_dir = experiment_dir.joinpath('checkpoints/')
-    checkpoints_dir.mkdir(exist_ok=True)
+    os.makedirs(experiment_dir, exist_ok=True)
+    checkpoints_dir = os.path.join(experiment_dir, 'checkpoints/')
+    os.makedirs(checkpoints_dir, exist_ok=True)
 
     '''LOG'''
     logger = logging.getLogger("Model")
@@ -66,40 +43,36 @@ def main(cfg):
     logger.addHandler(ch)
     logger.info(cfg)
 
-    print("start loading training data ...")
-    dataset = _dataset_factory[cfg.data.data_class](
-        split='train',
-        data_root=cfg.data.dataset_info.dataroot,
-        **cfg.transforms)
-    print("start loading test data ...")
+    experiment_dir = "_".join([cfg.models.model_name, cfg.data.dataset_name])
+    experiment_dir = os.path.join(cfg.out_path, experiment_dir)
 
-    trainDataLoader = torch.utils.data.DataLoader(
-        dataset.train,
-        batch_size=cfg.training.batch_size,
-        shuffle=cfg.training.shuffle,
-        num_workers=cfg.training.num_workers,
-        pin_memory=True,
-        drop_last=True,
-        worker_init_fn=lambda x: np.random.seed(x + int(time.time())))
-    testDataLoader = torch.utils.data.DataLoader(
-        dataset.test,
-        batch_size=cfg.training.batch_size,
-        shuffle=False,
-        num_workers=cfg.training.num_workers,
-        pin_memory=True,
-        drop_last=True)
-    weights = torch.Tensor(dataset.train.labelweights).cuda()
+    return logger, experiment_dir, checkpoints_dir
 
-    log_string("The number of training data is: %d" % len(dataset.train))
-    log_string("The number of test data is: %d" % len(dataset.test))
+@hydra.main(config_path="conf", config_name="conf")   
+def main(cfg):
+    OmegaConf.set_struct(cfg, False)  # This allows getattr and hasattr methods to function correctly
+
+    logger, experiment_dir, checkpoints_dir = initialize(cfg)
+
+    def log_string(str):
+        logger.info(str)
+
+    logger.info("start loading training data ...")
+    
+    train_loader, val_loader = data_loaders(cfg)
+
+    weights = torch.Tensor(DP.get_class_weights(cfg.data.dataset_name)).cuda()
+
+    log_string("The number of training data is: %d" % len(train_loader.dataset))
+    log_string("The number of test data is: %d" % len(val_loader.dataset))
 
     '''MODEL LOADING'''
-    MODEL = importlib.import_module(args.model)
-    shutil.copy('models/%s.py' % args.model, str(experiment_dir))
-    shutil.copy('models/pointnet2_utils.py', str(experiment_dir))
+    seg_label_to_cat = {}
+    for i, cat in enumerate(range(cfg.data.num_classes)):
+        seg_label_to_cat[i] = cat
 
-    classifier = MODEL.get_model(NUM_CLASSES).cuda()
-    criterion = MODEL.get_loss().cuda()
+    classifier = _model_factory[cfg.models.model_name](cfg.data.num_classes, cfg.models).cuda()
+    criterion = _loss_factory[cfg.models.model_name]().cuda()
     classifier.apply(inplace_relu)
 
     def weights_init(m):
@@ -120,59 +93,64 @@ def main(cfg):
         log_string('No existing model, starting training from scratch...')
         start_epoch = 0
         classifier = classifier.apply(weights_init)
+    
 
-    if args.optimizer == 'Adam':
+    print(cfg.training.optim)
+    if cfg.training.optim.optimizer.o_class == 'Adam':
         optimizer = torch.optim.Adam(
             classifier.parameters(),
-            lr=args.learning_rate,
+            lr=cfg.training.optim.optimizer.params.lr,
             betas=(0.9, 0.999),
             eps=1e-08,
-            weight_decay=args.decay_rate
+            weight_decay=cfg.training.optim.weight_decay
         )
     else:
-        optimizer = torch.optim.SGD(classifier.parameters(), lr=args.learning_rate, momentum=0.9)
+        optimizer = torch.optim.SGD(
+            classifier.parameters(),
+            lr=cfg.training.optim.optimizer.params.lr,
+            momentum=0.9)
 
     def bn_momentum_adjust(m, momentum):
         if isinstance(m, torch.nn.BatchNorm2d) or isinstance(m, torch.nn.BatchNorm1d):
             m.momentum = momentum
 
-    LEARNING_RATE_CLIP = 1e-5
-    MOMENTUM_ORIGINAL = 0.1
-    MOMENTUM_DECCAY = 0.5
-    MOMENTUM_DECCAY_STEP = args.step_size
-
     global_epoch = 0
     best_iou = 0
 
-    for epoch in range(start_epoch, args.epoch):
+    for epoch in range(start_epoch, cfg.training.epochs):
         '''Train on chopped scenes'''
-        log_string('**** Epoch %d (%d/%s) ****' % (global_epoch + 1, epoch + 1, args.epoch))
-        lr = max(args.learning_rate * (args.lr_decay ** (epoch // args.step_size)), LEARNING_RATE_CLIP)
+        log_string('**** Epoch %d (%d/%s) ****' % (
+            global_epoch + 1, epoch + 1, cfg.training.epochs))
+
+        lr = max(cfg.training.optim.optimizer.params.lr * (
+            cfg.lr_scheduler.params.gamma ** (
+                epoch // cfg.lr_scheduler.params.step_size)), cfg.lr_scheduler.params.clip)
         log_string('Learning rate:%f' % lr)
         for param_group in optimizer.param_groups:
             param_group['lr'] = lr
-        momentum = MOMENTUM_ORIGINAL * (MOMENTUM_DECCAY ** (epoch // MOMENTUM_DECCAY_STEP))
-        if momentum < 0.01:
-            momentum = 0.01
+        momentum = max(cfg.training.optim.bn_scheduler.params.bn_momentum * (
+            cfg.training.optim.bn_scheduler.params.bn_decay ** (
+                epoch // cfg.training.optim.bn_scheduler.params.decay_step)), \
+                    cfg.training.optim.bn_scheduler.params.bn_clip)
         print('BN momentum updated to: %f' % momentum)
         classifier = classifier.apply(lambda x: bn_momentum_adjust(x, momentum))
-        num_batches = len(trainDataLoader)
+        num_batches = len(train_loader)
         total_correct = 0
         total_seen = 0
         loss_sum = 0
         classifier = classifier.train()
 
-        for i, (points, target) in tqdm(enumerate(trainDataLoader), total=len(trainDataLoader), smoothing=0.9):
+        for i, (points, target) in tqdm(enumerate(train_loader), total=len(train_loader), smoothing=0.9):
             optimizer.zero_grad()
 
             points = points.data.numpy()
-            points[:, :, :3] = provider.rotate_point_cloud_z(points[:, :, :3])
+            points[:, :, :3] = augmentation.rotate_point_cloud_z(points[:, :, :3])
             points = torch.Tensor(points)
             points, target = points.float().cuda(), target.long().cuda()
             points = points.transpose(2, 1)
 
             seg_pred, trans_feat = classifier(points)
-            seg_pred = seg_pred.contiguous().view(-1, NUM_CLASSES)
+            seg_pred = seg_pred.contiguous().view(-1, cfg.data.num_classes)
 
             batch_label = target.view(-1, 1)[:, 0].cpu().data.numpy()
             target = target.view(-1, 1)[:, 0]
@@ -183,14 +161,14 @@ def main(cfg):
             pred_choice = seg_pred.cpu().data.max(1)[1].numpy()
             correct = np.sum(pred_choice == batch_label)
             total_correct += correct
-            total_seen += (BATCH_SIZE * NUM_POINT)
+            total_seen += (cfg.training.batch_size * cfg.data.npoints)
             loss_sum += loss
         log_string('Training mean loss: %f' % (loss_sum / num_batches))
         log_string('Training accuracy: %f' % (total_correct / float(total_seen)))
 
         if epoch % 5 == 0:
             logger.info('Save model...')
-            savepath = str(checkpoints_dir) + '/model.pth'
+            savepath = str(checkpoints_dir) + '/latest_model.pth'
             log_string('Saving at %s' % savepath)
             state = {
                 'epoch': epoch,
@@ -202,18 +180,18 @@ def main(cfg):
 
         '''Evaluate on chopped scenes'''
         with torch.no_grad():
-            num_batches = len(testDataLoader)
+            num_batches = len(val_loader)
             total_correct = 0
             total_seen = 0
             loss_sum = 0
-            labelweights = np.zeros(NUM_CLASSES)
-            total_seen_class = [0 for _ in range(NUM_CLASSES)]
-            total_correct_class = [0 for _ in range(NUM_CLASSES)]
-            total_iou_deno_class = [0 for _ in range(NUM_CLASSES)]
+            labelweights = np.zeros(cfg.data.num_classes)
+            total_seen_class = [0 for _ in range(cfg.data.num_classes)]
+            total_correct_class = [0 for _ in range(cfg.data.num_classes)]
+            total_iou_deno_class = [0 for _ in range(cfg.data.num_classes)]
             classifier = classifier.eval()
 
             log_string('---- EPOCH %03d EVALUATION ----' % (global_epoch + 1))
-            for i, (points, target) in tqdm(enumerate(testDataLoader), total=len(testDataLoader), smoothing=0.9):
+            for i, (points, target) in tqdm(enumerate(val_loader), total=len(val_loader), smoothing=0.9):
                 points = points.data.numpy()
                 points = torch.Tensor(points)
                 points, target = points.float().cuda(), target.long().cuda()
@@ -221,7 +199,7 @@ def main(cfg):
 
                 seg_pred, trans_feat = classifier(points)
                 pred_val = seg_pred.contiguous().cpu().data.numpy()
-                seg_pred = seg_pred.contiguous().view(-1, NUM_CLASSES)
+                seg_pred = seg_pred.contiguous().view(-1, cfg.data.num_classes)
 
                 batch_label = target.cpu().data.numpy()
                 target = target.view(-1, 1)[:, 0]
@@ -230,11 +208,11 @@ def main(cfg):
                 pred_val = np.argmax(pred_val, 2)
                 correct = np.sum((pred_val == batch_label))
                 total_correct += correct
-                total_seen += (BATCH_SIZE * NUM_POINT)
-                tmp, _ = np.histogram(batch_label, range(NUM_CLASSES + 1))
+                total_seen += (cfg.training.batch_size * cfg.data.npoints)
+                tmp, _ = np.histogram(batch_label, range(cfg.data.num_classes + 1))
                 labelweights += tmp
 
-                for l in range(NUM_CLASSES):
+                for l in range(cfg.data.num_classes):
                     total_seen_class[l] += np.sum((batch_label == l))
                     total_correct_class[l] += np.sum((pred_val == l) & (batch_label == l))
                     total_iou_deno_class[l] += np.sum(((pred_val == l) | (batch_label == l)))
@@ -248,7 +226,7 @@ def main(cfg):
                 np.mean(np.array(total_correct_class) / (np.array(total_seen_class, dtype=np.float) + 1e-6))))
 
             iou_per_class_str = '------- IoU --------\n'
-            for l in range(NUM_CLASSES):
+            for l in range(cfg.data.num_classes):
                 iou_per_class_str += 'class %s weight: %.3f, IoU: %.3f \n' % (
                     seg_label_to_cat[l] + ' ' * (14 - len(seg_label_to_cat[l])), labelweights[l - 1],
                     total_correct_class[l] / float(total_iou_deno_class[l]))
@@ -275,5 +253,4 @@ def main(cfg):
 
 
 if __name__ == '__main__':
-    args = parse_args()
-    main(args)
+    main()
