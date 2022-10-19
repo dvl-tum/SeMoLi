@@ -1,0 +1,11 @@
+# @package models
+model_name: GNN
+hyperparams:
+    graph: knn
+    traj_channels: 75
+    pos_channels: 3
+    k: 8
+    r: 0.1
+    edge_attr: difftraj_diffpos
+loss_hyperparams:
+    bce_loss: 1

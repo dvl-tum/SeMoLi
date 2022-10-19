@@ -1,0 +1,6 @@
+# @package models
+model_name: DBSCAN
+hyperparams:
+    thresh: 1.1
+    min_samples: 5
+    input: pos #traj_pos # traj

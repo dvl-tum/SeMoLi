@@ -1,0 +1,12 @@
+# @package models
+model_name: SimpleGraph
+hyperparams:
+    graph: knn
+    k: 32
+    r: 0.1
+    edge_attr: difftraj
+    node_attr: traj
+    cut_edges: 1
+    min_samples: 20
+loss_hyperparams:
+    bce_loss: 1
