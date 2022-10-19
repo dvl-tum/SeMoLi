@@ -1,3 +1,9 @@
+slurm*
+*.jpg
+*.png
+outputs/
+RAMA/
+../outputs/
 data/
 data_utils/RandLA-Net/
 visualization/.ipynb_checkpoints
