@@ -104,7 +104,7 @@ class SimpleGraph(MessagePassing):
 
             # original score
             score_orig = torch.zeros((data['pc_list'].shape[0], data['pc_list'].shape[0]))
-            score_orig[src, dst] = score
+            score_orig[src, dst] = score.float()
 
             clusters = defaultdict(list)
             cluster_assignment = dict()
@@ -153,65 +153,13 @@ class SimpleGraph(MessagePassing):
                     clusters_new[c] = node_list
             clusters = clusters_new
 
-            self.visualize(torch.arange(pc.shape[0]), edge_index, pc[:, :-1], clusters)
+            # self.visualize(torch.arange(pc.shape[0]), edge_index, pc[:, :-1], clusters, data.timestamps[0])
 
             clusters = np.array([cluster_assignment[k] for k in sorted(cluster_assignment.keys())])
 
             return score, clusters, edge_index, batch_edge
 
         return score, edge_index, batch_edge
-    
-    def tarjan(self, nodes, scores):
-        time = 0
-        def SCCUtil(u, low, disc, stackMember, st):
-            # Initialize discovery time and low value
-            disc[u] = time
-            low[u] = time
-            time += 1
-            stackMember[u] = True
-            st.append(u)
-    
-            # Go through all vertices adjacent to this
-            for v in (scores > 0).nonzero(as_tuple=True)[0]:
-                
-                # If v is not visited yet, then recur for it
-                if disc[v] == -1 :
-                
-                    self.SCCUtil(v, low, disc, stackMember, st)
-    
-                    # Check if the subtree rooted with v has a connection to
-                    # one of the ancestors of u
-                    # Case 1 (per above discussion on Disc and Low value)
-                    low[u] = min(low[u], low[v])
-                            
-                elif stackMember[v] == True:
-    
-                    '''Update low value of 'u' only if 'v' is still in stack
-                    (i.e. it's a back edge, not cross edge).
-                    Case 2 (per above discussion on Disc and Low value) '''
-                    low[u] = min(low[u], disc[v])
-    
-            # head node found, pop the stack and print an SCC
-            w = -1 #To store stack extracted vertices
-            if low[u] == disc[u]:
-                while w != u:
-                    w = st.pop()
-                    stackMember[w] = False
-                      
-        # Mark all the vertices as not visited
-        # and Initialize parent and visited,
-        # and ap(articulation point) arrays
-        disc = [-1] * (nodes.shape[0])
-        low = [-1] * (nodes.shape[0])
-        stackMember = [False] * (nodes.shape[0])
-        st =[]
-
-        # Call the recursive helper function
-        # to find articulation points
-        # in DFS tree rooted with vertex 'i'
-        for i in range(nodes.shape[0]):
-            if disc[i] == -1:
-                SCCUtil(i, low, disc, stackMember, st)
 
     def make_symmetric(self, score_orig, mode='minimum'):
         for i in range(score_orig.shape[0]):
@@ -224,7 +172,7 @@ class SimpleGraph(MessagePassing):
                     score_orig[i, j] = score_orig[j, i] = max(score_orig[i, j], score_orig[j, i])
         return score_orig
     
-    def visualize(self, nodes, edge_indices, pos, clusters):
+    def visualize(self, nodes, edge_indices, pos, clusters, timestamp):
         import networkx as nx
         import matplotlib 
         matplotlib.use('Agg')
@@ -249,8 +197,7 @@ class SimpleGraph(MessagePassing):
         nx.draw_networkx_edges(G, pos, width=3)
         nx.draw_networkx_nodes(G, pos, node_size=2, node_color=colors)
         plt.axis("off")
-        plt.savefig('../../../vis_graph.png', bbox_inches='tight')
-        quit()
+        plt.savefig(f'../../../vis_graph_{timestamp}.png', bbox_inches='tight')
 
 class SimpleGraphLoss(nn.Module):
     def __init__(self, bce_loss=True) -> None:

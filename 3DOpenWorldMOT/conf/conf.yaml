@@ -28,3 +28,4 @@ tracker_options: # Extra options for the tracker
   a_threshold: 0.8
   i_threshold: 0.8
   num_interior: 10
+  overlap: 5

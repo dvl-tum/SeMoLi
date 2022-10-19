@@ -34,6 +34,7 @@ class TrajectoryDataset(PyGDataset):
         self._eval = _eval
         self.every_x_frame = every_x_frame
         self.seq = None # '04994d08-156c-3018-9717-ba0e29be8153'
+        self.loader = AV2SensorDataLoader(data_dir=self.split_dir, labels_dir=self.split_dir)
         super().__init__()
     
     @property
@@ -213,8 +214,18 @@ class TrajectoryDataset(PyGDataset):
 
     def get(self, idx):
         data = torch.load(self.processed_paths[idx])
-        print(data)
+
+        '''city_SE3_ego = self.loader.get_city_SE3_ego(
+                        data.log_id, data.timestamps[0].item())'''
+
         data['pc_list'] = data['pc_list'][0]
+        '''data['pc_list'] = city_SE3_ego.transform_point_cloud(
+                                data['pc_list'])
+
+        data['traj'] = city_SE3_ego.transform_point_cloud(
+                                data['traj'].view(-1, 3))
+        data['traj'] = data['traj'].view(data['pc_list'].shape[0], -1, 3)'''
+
         data['point_categories'] = data['point_categories'][0]
         data['point_instances'] = data['point_instances'][0]
         if self.remove_static:
@@ -245,11 +256,11 @@ class TrajectoryDataset(PyGDataset):
             data['point_categories'] = data['point_categories'][idxs]
             data['point_instances'] = data['point_instances'][idxs]
 
-        # self.visualize(data)
+        self.visualize(data, idx)
 
         return data
 
-    def visualize(self, data):
+    def visualize(self, data, idx):
         import matplotlib.pyplot as plt
         idxs = torch.randint(0, data['flow'].shape[0], size=(200, ))
         pc_list = data['pc_list'][idxs, :]
@@ -262,14 +273,19 @@ class TrajectoryDataset(PyGDataset):
 
         for p, t, f in zip(pc_list, traj, flow):
             future = p.repeat((t.shape[0], 1)) + t
+            if idx == 0:
+                future = future[10:15]
+            else:
+                future = future[:5]
+
             plt.scatter(future[:, 0], future[:, 1])
             # future2 = future[:-1, :] + flow
             # plt.scatter(future2[:, 0], future2[:, 1])
-        plt.savefig('../../../vis.jpg')
-        quit()
+        plt.savefig(f'../../../vis_{idx}.jpg')
+        plt.close()
 
 
-def get_TrajectoryDataLoader(cfg, train=True, val=True, test=False):
+def get_TrajectoryDataLoader(cfg, train=False, val=True, test=False):
     # get datasets
     if train:
         print('TRAIN')

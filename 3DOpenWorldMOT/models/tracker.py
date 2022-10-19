@@ -12,7 +12,7 @@ logger = logging.getLogger("Model.Tracker")
 
 
 class Tracker3D():
-    def __init__(self, out_path='out', a_threshold=0.8, i_threshold=0.8, split='val', inact_thresh=10, every_x_frame=1, num_interior=10) -> None:
+    def __init__(self, out_path='out', a_threshold=0.8, i_threshold=0.8, split='val', inact_thresh=10, every_x_frame=1, num_interior=10, overlap=5) -> None:
         self.active_tracks = list()
         self.inactive_tracks = list()
         self.track_id = 0
@@ -20,6 +20,7 @@ class Tracker3D():
         self.split = split
         self.inact_thresh = inact_thresh
         self.every_x_frame = every_x_frame
+        self.overlap = overlap
         self.num_interior = num_interior
 
         self.a_threshold = a_threshold
@@ -40,11 +41,12 @@ class Tracker3D():
         
         points = points.numpy()
         flows = flows.numpy()
+        traj = traj.numpy()
 
         # iterate over clusters that were found
         detections = list()
         for c in np.unique(clusters):
-            num_interior = sum([clusters==c])
+            num_interior = np.sum([clusters==c])
             if num_interior < self.num_interior:
                 continue
             c_detections = list()
@@ -52,7 +54,7 @@ class Tracker3D():
                 continue
             point_cluster = points[clusters==c]
             traj_cluster = traj[clusters==c]
-            for time in range(traj_cluster.shape):
+            for time in range(traj_cluster.shape[1]):
                 points_c_time = point_cluster + traj_cluster[:, time, :]
 
                 num_interior = points_c_time.shape[0]
@@ -66,7 +68,10 @@ class Tracker3D():
                     continue
 
                 translation = (maxs + mins)/2
-                mean_flow = (traj_cluster[:, time+1, :] - traj_cluster[:, time, :]).mean(axis=0)
+                if time < traj_cluster.shape[1] - 1:
+                    mean_flow = (traj_cluster[:, time+1, :] - traj_cluster[:, time, :]).mean(axis=0)
+                else:
+                    mean_flow = (traj_cluster[:, time, :] - traj_cluster[:, time-1, :]).mean(axis=0)
                 alpha = np.arctan(mean_flow[1]/mean_flow[0])
                 rot = np.array([
                     [np.cos(alpha), -np.sin(alpha), 0],
@@ -84,7 +89,7 @@ class Tracker3D():
         if not len(self.active_tracks):
             self.active_tracks = list()
             for d in detections:
-                self.active_tracks.append(Track(d, self.track_id))
+                self.active_tracks.append(Track(d, self.track_id, self.every_x_frame, self.overlap))
                 self.track_id += 1
             return
         
@@ -153,23 +158,30 @@ class Tracker3D():
         input values of numpy array:
             "tx_m", "ty_m", "tz_m", "length_m", "width_m", "height_m", "qw", "qx", "qy", "qz"
         '''
-        tracks = np.vstack([t.last_pos() for t in self.active_tracks])
+        tracks = np.asarray([t.ass_pos() for t in self.active_tracks])
+        print(tracks.shape)
         num_act = tracks.shape[0]
 
-        in_tracks = [t.last_pos() for t in self.inactive_tracks \
+        in_tracks = [t.ass_pos() for t in self.inactive_tracks \
                 if t.inactive_count < self.inact_thresh]
         num_inact = len (in_tracks)
         if num_inact:
             in_tracks = np.vstack(in_tracks)
             tracks = np.vstack([tracks, in_tracks])
 
-        detections = np.vstack([[t.translation for t in detections]])
-
-        dist = sklearn.metrics.pairwise_distances(tracks, detections)
-        dist = np.clip(dist, a_min=0, a_max=clip_val)
-        dist = dist/clip_val
-
-        return dist, num_act, num_inact
+        detections = np.asarray([[t.translation for t in detections_c[:self.overlap]] for detections_c in detections])
+        print(tracks[0])
+        print(detections)
+        all_dists = list()
+        for time in range(self.overlap):
+            dist = sklearn.metrics.pairwise_distances(tracks[:, time, :], detections[:, time, :])
+            dist = np.clip(dist, a_min=0, a_max=clip_val)
+            dist = dist/clip_val
+            print(dist.shape)
+            print(dist)
+            all_dists.append(dist)
+        quit()
+        return all_dists, num_act, num_inact
     
     def _calculate_3d_rotation(self, detections):
         '''
@@ -284,34 +296,55 @@ class Tracker3D():
 
 
 class Track():
-    def __init__(self, detection, track_id) -> None:
+    def __init__(self, detection, track_id, every_x_frame, overlap) -> None:
         self.detections = [detection]
         self.inactive_count = 0
         self.track_id = track_id
-        self.log_id = detection.log_id
+        self.log_id = detection[0].log_id
+        self.every_x_frame = every_x_frame
+        self.overlap = overlap
+        self.final = list()
     
     def add_detection(self, detection):
         self.detections.append(detection)
     
     def last_pos(self):
-        return self.detections[-1].translation
+        return self.detections[-1][self.every_x_frame-1].translation
     
     def last_rot(self):
-        return self.detections[-1].rotation
+        return self.detections[-1][self.every_x_frame-1].rotation
     
     def last_lwh(self):
-        return self.detections[-1].lwh
+        return self.detections[-1][self.every_x_frame-1].lwh
+    
+    def ass_pos(self):
+        return [d.translation for d in self.detections[-1][self.every_x_frame:self.every_x_frame+self.overlap]]
+    
+    def ass_rot(self):
+        return [d.rotation for d in self.detections[-1][self.every_x_frame:self.every_x_frame+self.overlap]]
+    
+    def ass_lwh(self):
+        return [d.lwh for d in self.detections[-1][self.every_x_frame:self.every_x_frame+self.overlap]]
+    
+    def final_detections(self):
+        for i, det in enumerate(self.detections):
+            if i != len(self.detections):
+                self.final.extend(self.detections[:self.every_x_frame-1])
+            else:
+                self.final.extend(self.detections)
     
     def __len__(self):
-        return len(self.detections)
+        if len(self.final):
+            return len(self.final)
+        return len(self.detections) * self.every_x_frame
     
     def __iter__(self):
         self.n = 0
         return self
 
     def __next__(self):
-        if self.n < len(self.detections):
-            result = self.detections[self.n]
+        if self.n < len(self.final):
+            result = self.final[self.n]
             self.n += 1
             return result
         else:

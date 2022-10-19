@@ -171,7 +171,8 @@ def main(cfg):
                 a_threshold=cfg.tracker_options.a_threshold,
                 i_threshold=cfg.tracker_options.i_threshold,
                 every_x_frame=cfg.data.every_x_frame,
-                num_interior=cfg.tracker_options.num_interior)
+                num_interior=cfg.tracker_options.num_interior,
+                overlap=cfg.tracker_options.overlap)
             with torch.no_grad():
                 if cfg.models.model_name != 'DBSCAN' and \
                     cfg.models.model_name != 'SpectralClustering':
