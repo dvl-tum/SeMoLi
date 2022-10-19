@@ -3,24 +3,28 @@ defaults: # for loading the default.yaml config
   # - task: ???                                                                                                       
                                                                                                                       
   # - visualization: default                                                                                     
-  - lr_scheduler: ???                                                                                 
+  - lr_scheduler: step                                                                                 
   - training: default                                                                                        
                                                                                                                   
   # - debugging: default                                                                                      
-  - models: ???                                                                                             
-  - data: ???                                                                                                     
+  - models: GNN                                                                                             
+  - data: argoverse2_traj                                                                                                     
   # - sota # Contains current SOTA results on different datasets (extracted from papers !).                          
 #  - hydra/job_logging: custom                                                                                   
 #  - hydra/output: custom  # add the support for user-defined experiment folder (where to save the experiment files)
                                                                                                                    
-job_name: benchmark # prefix name for saving the experiment file.                                              
+job_name: first_training # prefix name for saving the experiment file.                                              
 update_lr_scheduler_on: "on_epoch" # ["on_epoch", "on_num_batch", "on_num_sample"]                                           
 selection_stage: ""                                                                                                   
 pretty_print: True                                                                                                        
 eval_frequency: 1
-out_path: 'out'                                                                                                         
+out_path: 'out'                                                                                                      
                                                                                                                               
 tracker_options: # Extra options for the tracker                                                                        
   full_res: False                                                                                                          
   make_submission: False                                                                                             
-  track_boxes: False    
+  track_boxes: False   
+  inact_thresh: 10 
+  a_threshold: 0.8
+  i_threshold: 0.8
+  num_interior: 10

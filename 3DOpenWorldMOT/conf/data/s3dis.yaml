@@ -1,9 +1,0 @@
-# @package data
-class_class: S3DISDataLoader.S3DISDataset
-dataset_name: "s3dis"
-dataroot: "data"
-num_classes: 13
-test_area: 5
-npoints: 4096
-block_size: 1.0
-sample_rate: 1.0
