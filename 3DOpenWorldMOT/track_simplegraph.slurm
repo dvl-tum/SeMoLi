@@ -8,6 +8,6 @@
 #SBATCH --time=120:00:00
 
 source activate sf_av2
-HYDRA_FULL_ERROR=1 python trainer.py models=SimpleGraph job_name=SimpleGraph_TRAJ_POS models.hyperparams.edge_attr=difftraj models.hyperparams.node_attr=traj_pos data=argoverse2_traj models.hyperparams.cut_edges=0.75 data.static_thresh=0.3
+HYDRA_FULL_ERROR=1 python trainer.py models=SimpleGraph
 
 

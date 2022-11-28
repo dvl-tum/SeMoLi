@@ -39,6 +39,9 @@ tracker_dir = '/usr/wiss/seidensc/Documents/3DOpenWorldMOT/3DOpenWorldMOT/output
 seq_list = os.listdir('/usr/wiss/seidensc/Documents/3DOpenWorldMOT/3DOpenWorldMOT/outputs/2022-10-19/00-25-32/out/tracker_out' + '/SimpleGraph_TRAJ_POS/val' )
 seq_list.remove('e1d68dde-22a9-3918-a526-0850b21ff2eb')
 
+tracker_dir = '/usr/wiss/seidensc/Documents/3DOpenWorldMOT/3DOpenWorldMOT/outputs/2022-11-24/11-03-53/out/tracker_out'
+seq_list = os.listdir(tracker_dir + '/first_training/val' )
+
 gt_folder = '/storage/user/seidensc/datasets/argoverse2'
 print(tracker_dir)
 print(seq_list)
@@ -50,5 +53,8 @@ output_res, _ = evaluate_av2_ow_MOT(
     seq_to_eval=seq_list,
     remove_far=True,
     remove_non_drive=True,
+    remove_non_move=True,
+    remove_non_move_strategy='per_frame',
+    remove_non_move_thresh=3000/3600,
     do_print=True
     )

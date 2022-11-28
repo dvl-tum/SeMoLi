@@ -9,6 +9,7 @@ from tqdm import tqdm
 from models import _model_factory, _loss_factory, Tracker3D
 from data_utils.TrajectoryDataset import get_TrajectoryDataLoader
 from TrackEvalOpenWorld.scripts.run_av2_ow import evaluate_av2_ow_MOT
+import wandb
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -87,6 +88,7 @@ def main(cfg):
         criterion = criterion(**cfg.models.loss_hyperparams).cuda()
 
         if cfg.models.model_name != 'SimpleGraph':
+            wandb.init(config=cfg, name='GNNTraining')
             try:
                 checkpoint = torch.load(str(experiment_dir) + '/checkpoints/best_model.pth')
                 start_epoch = checkpoint['epoch']
@@ -150,6 +152,7 @@ def main(cfg):
                 optimizer.step()
 
                 loss_sum += loss
+                wandb.log({"loss": loss, "epoch": epoch, "batch": i})
             log_string('Training mean loss: %f' % (loss_sum / num_batches))
 
             savepath = str(checkpoints_dir) + '/latest_model.pth'
@@ -167,18 +170,23 @@ def main(cfg):
             tracker = Tracker3D(
                 os.path.join(cfg.out_path, 'tracker_out', cfg.job_name),
                 split='val',
-                inact_thresh=cfg.tracker_options.inact_thresh,
                 a_threshold=cfg.tracker_options.a_threshold,
                 i_threshold=cfg.tracker_options.i_threshold,
                 every_x_frame=cfg.data.every_x_frame,
                 num_interior=cfg.tracker_options.num_interior,
-                overlap=cfg.tracker_options.overlap)
+                overlap=cfg.tracker_options.overlap,
+                av2_loader=val_loader.dataset.loader)
             with torch.no_grad():
                 if cfg.models.model_name != 'DBSCAN' and \
                     cfg.models.model_name != 'SpectralClustering':
                     model = model.eval()
                 log_string('---- EPOCH %03d EVALUATION ----' % (global_epoch + 1))
                 for i, (data) in tqdm(enumerate(val_loader), total=len(val_loader), smoothing=0.9):
+
+                    '''if data.log_id != '04994d08-156c-3018-9717-ba0e29be8153':
+                        continue
+                    else:
+                        print(i)'''
                     
                     logits, clusters, edge_index, batch_edge = model(data, eval=True)
                     data = data.cpu()
@@ -188,15 +196,22 @@ def main(cfg):
                         data.traj,
                         clusters,
                         data.flow[:, 0, :],
-                        data.timestamps[0],
-                        data.log_id[0])
-                    tracker.associate(detections, i+1 == len(val_loader))
+                        data.timestamps,
+                        data.log_id[0],
+                        data['point_instances'])
+                    tracker.associate(
+                        detections,
+                        i+1 == len(val_loader),
+                        timestamp=data.timestamps[0].item(),
+                        matching=cfg.tracker_options.matching,
+                        alpha=cfg.tracker_options.alpha)
                     
                     if cfg.models.model_name != 'DBSCAN' \
                         and cfg.models.model_name != 'SpectralClustering' \
                             and cfg.models.model_name != 'SimpleGraph':
                         loss = criterion.eval(logits, data, edge_index)
                         eval_loss += loss
+                        wandb.log({"eval_loss": loss, "epoch": epoch, "batch": i})
 
                 tracker_dir = os.path.join(os.getcwd(), f"{os.sep}".join(tracker.out_path.split(os.sep)[:-1]))
                 seq_list = os.listdir(os.path.join(tracker.out_path, tracker.split))
@@ -207,15 +222,22 @@ def main(cfg):
                     seq_to_eval=seq_list,
                     remove_far='80' in cfg.data.trajectory_dir,
                     remove_non_drive='non_drive' in cfg.data.trajectory_dir,
-                    remove_non_move=0, #cfg.data.remove_static,
-                    remove_non_move_thresh=cfg.data.static_thresh,
+                    remove_non_move=cfg.data.remove_static,
+                    remove_non_move_strategy=cfg.data.remove_static_strategy,
+                    remove_non_move_thresh=3000/3600,
                     do_print=False
                     )
                 metric = 100*(sum(output_res['AV2_OW'][cfg.job_name]['COMBINED_SEQ'][
                     'cls_comb_cls_av']['HOTA']['RHOTA'])/len(output_res['AV2_OW'][
                         cfg.job_name]['COMBINED_SEQ']['cls_comb_cls_av']['HOTA']['RHOTA']))
 
-                log_string('eval mean loss: %f' % (loss_sum / float(num_batches)))
+                if cfg.models.model_name != 'DBSCAN' \
+                    and cfg.models.model_name != 'SpectralClustering' \
+                        and cfg.models.model_name != 'SimpleGraph':
+                    wandb.log({"RHOTA": loss, "epoch": epoch})
+
+                log_string('eval mean loss: %f' % (eval_loss / float(num_batches)))
+                
 
                 if metric >= best_metric and cfg.models.model_name != 'DBSCAN' \
                     and cfg.models.model_name != 'SpectralClustering' \

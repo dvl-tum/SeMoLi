@@ -4,9 +4,9 @@ hyperparams:
     graph: knn
     k: 32
     r: 0.1
-    edge_attr: difftraj
-    node_attr: traj
-    cut_edges: 1
+    edge_attr: diffpos
+    node_attr: traj_pos
+    cut_edges: 1.0
     min_samples: 20
 loss_hyperparams:
     bce_loss: 1

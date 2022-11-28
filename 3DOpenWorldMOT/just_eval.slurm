@@ -8,5 +8,5 @@
 #SBATCH --time=120:00:00
 
 source activate sf_av2
-python just_eval4.py
+python just_eval.py
 

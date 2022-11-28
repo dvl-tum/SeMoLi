@@ -6,6 +6,9 @@ hyperparams:
     pos_channels: 3
     k: 8
     r: 0.1
-    edge_attr: difftraj_diffpos
+    edge_attr: difftraj
+    node_attr: pos
+    cut_edges: 0.5
+    min_samples: 20
 loss_hyperparams:
     bce_loss: 1

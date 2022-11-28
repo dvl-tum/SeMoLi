@@ -33,20 +33,23 @@ class TrajectoryDataset(PyGDataset):
         self.debug = debug
         self._eval = _eval
         self.every_x_frame = every_x_frame
-        self.seq = None # '04994d08-156c-3018-9717-ba0e29be8153'
+        if split == 'val':
+            self.seq = '04994d08-156c-3018-9717-ba0e29be8153'
+        elif split == 'train':
+            self.seq = '00a6ffc1-6ce9-3bc3-a060-6006e9893a1a'
         self.loader = AV2SensorDataLoader(data_dir=self.split_dir, labels_dir=self.split_dir)
         super().__init__()
     
     @property
     def raw_file_names(self):
         return [flow_file for seq in os.listdir(self.trajectory_dir)\
-            for flow_file in sorted(os.listdir(osp.join(self.trajectory_dir, seq)))] #if len(os.listdir(osp.join(self.trajectory_dir, seq))) > 130]
+            for i, flow_file in enumerate(sorted(os.listdir(osp.join(self.trajectory_dir, seq)))) if i % self.every_x_frame == 0] #if len(os.listdir(osp.join(self.trajectory_dir, seq))) > 130]
     
     @property
     def raw_paths(self):
         return [os.path.join(self.trajectory_dir, seq, flow_file)\
             for seq in os.listdir(self.trajectory_dir)\
-                for flow_file in sorted(os.listdir(osp.join(self.trajectory_dir, seq)))] #if len(os.listdir(osp.join(self.trajectory_dir, seq))) > 130]
+                for i, flow_file in enumerate(sorted(os.listdir(osp.join(self.trajectory_dir, seq)))) if i % self.every_x_frame == 0] #if len(os.listdir(osp.join(self.trajectory_dir, seq))) > 130]
     @property
     def processed_file_names(self):
         if self.debug:
@@ -67,7 +70,7 @@ class TrajectoryDataset(PyGDataset):
             return processed_file_names
 
         return [flow_file[:-3] + 'pt' for seq in os.listdir(self.trajectory_dir)\
-            for flow_file in sorted(os.listdir(osp.join(self.trajectory_dir, seq)))] #if len(os.listdir(osp.join(self.trajectory_dir, seq))) > 130]
+            for i, flow_file in enumerate(sorted(os.listdir(osp.join(self.trajectory_dir, seq)))) if i % self.every_x_frame == 0] #if len(os.listdir(osp.join(self.trajectory_dir, seq))) > 130]
     
     @property
     def processed_paths(self):
@@ -89,10 +92,13 @@ class TrajectoryDataset(PyGDataset):
                         continue
                     processed_paths.append(os.path.join(self.processed_dir, seq, flow_file))
             return processed_paths
+        traj_dir =  os.listdir(self.trajectory_dir)
+        traj_dir.remove('04994d08-156c-3018-9717-ba0e29be8153')
+        traj_dir = ['04994d08-156c-3018-9717-ba0e29be8153'] + traj_dir
 
         return [os.path.join(self.processed_dir, seq, flow_file[:-3] + 'pt')\
-            for seq in os.listdir(self.trajectory_dir)\
-                for flow_file in sorted(os.listdir(osp.join(self.trajectory_dir, seq)))] #if len(os.listdir(osp.join(self.trajectory_dir, seq))) > 130] #  
+            for seq in traj_dir\
+                for i, flow_file in enumerate(sorted(os.listdir(osp.join(self.trajectory_dir, seq)))) if i % self.every_x_frame == 0] #if len(os.listdir(osp.join(self.trajectory_dir, seq))) > 130] #  
 
     def __len__(self):
         return len(self.processed_paths)
@@ -214,37 +220,35 @@ class TrajectoryDataset(PyGDataset):
 
     def get(self, idx):
         data = torch.load(self.processed_paths[idx])
-
-        '''city_SE3_ego = self.loader.get_city_SE3_ego(
-                        data.log_id, data.timestamps[0].item())'''
-
         data['pc_list'] = data['pc_list'][0]
-        '''data['pc_list'] = city_SE3_ego.transform_point_cloud(
-                                data['pc_list'])
-
-        data['traj'] = city_SE3_ego.transform_point_cloud(
-                                data['traj'].view(-1, 3))
-        data['traj'] = data['traj'].view(data['pc_list'].shape[0], -1, 3)'''
-
         data['point_categories'] = data['point_categories'][0]
         data['point_instances'] = data['point_instances'][0]
+
+        # remove static points
         if self.remove_static:
-            mean_traj = data['traj'][:, 1, :-1]
-            # mean_traj = mean_traj.reshape(mean_traj.shape[0], -1)
-            # mean_traj = torch.abs(torch.mean(mean_traj, dim=1))
-            mean_traj = torch.linalg.norm(mean_traj, axis=1)
+            mean_traj = data['traj'][:, :, :-1]
+            timestamps = data['timestamps']
+            # get mean velocity [m/s] along trajectory and check if > thresh
+            diff_cent = torch.linalg.norm(
+                mean_traj[:, :-1, :] - mean_traj[:, 1:, :] , axis=2)
+            diff_time = timestamps[1:diff_cent.shape[1]+1] - timestamps[:diff_cent.shape[1]]
+            diff_time = diff_time / torch.pow(torch.tensor(10), 9.0) 
+            mean_traj = torch.mean(diff_cent/diff_time, axis=1)
             mean_traj = mean_traj > self.static_thresh
 
+            # if no moving point and not evaluation, sample few random
             if not torch.all(~mean_traj) and not self._eval:
                 idxs = torch.randint(0, mean_traj.shape[0], size=(200, ))
                 mean_traj[idxs] = True
 
+            # apply mask
             data['flow'] = data['flow'][mean_traj]
             data['pc_list'] = data['pc_list'][mean_traj, :]
             data['traj'] = data['traj'][mean_traj]
             data['point_categories'] = data['point_categories'][mean_traj]
             data['point_instances'] = data['point_instances'][mean_traj]
 
+        # if you always want same number of points (during training), sample/re-sample
         if not self.use_all_points:
             idxs = torch.randint(0, data['flow'].shape[0], size=(self.num_points, ))
             mask = torch.arange(data['flow'].shape[0])
@@ -256,28 +260,27 @@ class TrajectoryDataset(PyGDataset):
             data['point_categories'] = data['point_categories'][idxs]
             data['point_instances'] = data['point_instances'][idxs]
 
-        self.visualize(data, idx)
+        # self.visualize(data, idx)
 
         return data
 
     def visualize(self, data, idx):
         import matplotlib.pyplot as plt
         idxs = torch.randint(0, data['flow'].shape[0], size=(200, ))
+        idxs = torch.arange(0, data['flow'].shape[0])
         pc_list = data['pc_list'][idxs, :]
         traj = data['traj'][idxs]
         flow = data['flow'][idxs]
 
-        print(pc_list.shape)
-        print(traj.shape)
-        print(flow.shape)
-
-        for p, t, f in zip(pc_list, traj, flow):
+        here = list(range(pc_list.shape[0]))[-3]
+        for i, (p, t, f) in enumerate(zip(pc_list, traj, flow)):
             future = p.repeat((t.shape[0], 1)) + t
             if idx == 0:
+                t = t[10:15]
                 future = future[10:15]
             else:
+                t = t[:5]
                 future = future[:5]
-
             plt.scatter(future[:, 0], future[:, 1])
             # future2 = future[:-1, :] + flow
             # plt.scatter(future2[:, 0], future2[:, 1])
@@ -291,7 +294,7 @@ def get_TrajectoryDataLoader(cfg, train=False, val=True, test=False):
         print('TRAIN')
         train_data = TrajectoryDataset(
             cfg.data.data_dir,
-            'train',
+            'val',
             cfg.data.trajectory_dir,
             cfg.data.use_all_points,
             cfg.data.num_points,

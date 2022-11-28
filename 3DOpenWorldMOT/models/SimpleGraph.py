@@ -29,16 +29,56 @@ class SimpleGraph(MessagePassing):
         self.cut_edges = cut_edges
         self.min_samples = min_samples
 
-    def initial_edge_attributes(self, x1, x2, edge_index):
+    def initial_edge_attributes(self, x1, x2, edge_index, distance='euclidean'):
         # Given edge-level attention coefficients for source and target nodes,
         # we simply need to sum them up to "emulate" concatenation:
         if self.edge_attr == 'diffpos':
-            edge_attr = x2[edge_index[0]] - x2[edge_index[1]]
+            a = [x2[edge_index[0]]]
+            b = [x2[edge_index[1]]]
         elif self.edge_attr == 'difftraj':
-            edge_attr = x1[edge_index[0]] - x1[edge_index[1]]
+            a = x1[edge_index[0]]
+            b = x1[edge_index[1]]
+            a_shape = a.shape
+            a = [a.view(a_shape[0], -1, 3)]
+            b = [b.view(a_shape[0], -1, 3)]
         elif self.edge_attr == 'difftraj_diffpos':
-            edge_attr = torch.hstack([x1[edge_index[0]] - x1[edge_index[1]], x2[edge_index[0]] - x2[edge_index[1]]])
+            a = torch.stack([x2[edge_index[0]], x1[edge_index[0]]])
+            b = torch.stack([x2[edge_index[1]], x1[edge_index[1]]])
+            print(a.shape)
+            a_shape = a.shape
+            a = [a.view(a_shape[0], -1, 3)]
+            print(a.view(a_shape[0], -1, 3).shape)
+            quit()
+        elif self.edge_attr == 'diffpostraj':
+            a = x2[edge_index[0]].repeat((1, int(x1.shape[1]/x2.shape[1]))) + x1[edge_index[0]]
+            b = x2[edge_index[1]].repeat((1, int(x1.shape[1]/x2.shape[1]))) + x1[edge_index[1]]
+            a_shape = a.shape
+            a = [a.view(a_shape[0], -1, 3)]
+            b = [b.view(a_shape[0], -1, 3)]
 
+        # get distance
+        edge_attr = None
+        if distance == 'cosine':
+            d = torch.nn.functional.cosine_similarity
+        elif distance == 'euclidean':
+            d = torch.nn.PairwiseDistance(p=2)
+        elif distance == 'l1':
+            d = torch.nn.PairwiseDistance(p=1)
+        for aa, bb in zip(a, b):
+            if edge_attr is None:
+                dist = d(aa, bb)
+                if self.edge_attr == 'diffpostraj' or self.edge_attr == 'difftraj':
+                    dist = dist.view(a_shape[0], int(a_shape[1]/3))
+                    dist = dist.mean(dim=1)
+                edge_attr = dist
+            else:
+                edge_attr += d(aa, bb)
+        edge_attr /= len(a)
+
+        # computation is cosine similarity --> 1-sim=dist
+        if distance == 'cosine':
+            edge_attr = 1 - edge_attr
+        
         return edge_attr
     
     def initial_node_attributes(self, x1, x2):
@@ -85,7 +125,7 @@ class SimpleGraph(MessagePassing):
             score = (node_attr[src] * node_attr[dst]).sum(dim=-1)
         # directly uses edge attirbutes
         else:
-            score = torch.linalg.norm(edge_attr, dim=1)
+            score = edge_attr
         
         if eval:
             score = score.cpu()
@@ -133,26 +173,33 @@ class SimpleGraph(MessagePassing):
                 if _id is None:
                     _id = id_count
                     id_count += 1
+
                 # change cluster ids and merge clusters
                 for change_id in set(other_ids):
                     for node in clusters[change_id]:
                         cluster_assignment[node] = _id
                     clusters[_id].extend(copy.deepcopy(clusters[change_id]))
                     del clusters[change_id]
-                
+
                 # add nodes that where in no cluster yet
                 clusters[_id].extend(to_add)
                 for node in to_add:
                     cluster_assignment[node] = _id
-            
+
             clusters_new = defaultdict(list)
+            cluster_assignment_new = dict()
             for c, node_list in clusters.items():
                 if len(node_list) < self.min_samples:
                     clusters_new[-1].extend(node_list)
+                    for n in node_list:
+                        cluster_assignment_new[n] = -1
                 else:
                     clusters_new[c] = node_list
-            clusters = clusters_new
+                    for n in node_list:
+                        cluster_assignment_new[n] = c
 
+            clusters = clusters_new
+            cluster_assignment = cluster_assignment_new
             # self.visualize(torch.arange(pc.shape[0]), edge_index, pc[:, :-1], clusters, data.timestamps[0])
 
             clusters = np.array([cluster_assignment[k] for k in sorted(cluster_assignment.keys())])
