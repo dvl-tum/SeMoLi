@@ -44,11 +44,8 @@ class SimpleGraph(MessagePassing):
         elif self.edge_attr == 'difftraj_diffpos':
             a = torch.stack([x2[edge_index[0]], x1[edge_index[0]]])
             b = torch.stack([x2[edge_index[1]], x1[edge_index[1]]])
-            print(a.shape)
             a_shape = a.shape
             a = [a.view(a_shape[0], -1, 3)]
-            print(a.view(a_shape[0], -1, 3).shape)
-            quit()
         elif self.edge_attr == 'diffpostraj':
             a = x2[edge_index[0]].repeat((1, int(x1.shape[1]/x2.shape[1]))) + x1[edge_index[0]]
             b = x2[edge_index[1]].repeat((1, int(x1.shape[1]/x2.shape[1]))) + x1[edge_index[1]]

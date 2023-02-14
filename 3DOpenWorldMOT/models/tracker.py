@@ -97,6 +97,21 @@ column_names = [
     'tz_m',
     'num_interior_pts']
 
+column_names_dets = [
+    'tx_m',
+    'ty_m',
+    'tz_m',
+    'length_m',
+    'width_m',
+    'height_m',
+    'qw',
+    'qx',
+    'qy',
+    'qz',
+    'timestamp_ns',
+    'category',
+    'num_interior_pts']
+
 column_dtypes = {
     'timestamp_ns': 'int64',
     'track_uuid': 'int32',
@@ -111,6 +126,20 @@ column_dtypes = {
     'ty_m': 'float32',
     'tz_m': 'float32'}
 
+column_dtypes_dets = {
+    'timestamp_ns': 'int64',
+    'length_m': 'float32',
+    'width_m': 'float32',
+    'height_m': 'float32',
+    'qw': 'float32',
+    'qx': 'float32',
+    'qy': 'float32',
+    'qz': 'float32',
+    'tx_m': 'float32',
+    'ty_m': 'float32',
+    'tz_m': 'float32',
+    'num_interior_pts': 'int64'}
+
 logger = logging.getLogger("Model.Tracker")
 
 
@@ -118,6 +147,7 @@ class Tracker3D():
     def __init__(self, out_path='out', a_threshold=0.8, i_threshold=0.8, split='val', every_x_frame=1, num_interior=10, overlap=5, av2_loader=None) -> None:
         self.active_tracks = list()
         self.inactive_tracks = list()
+        self.trajectories = list()
         self.track_id = 0
         self.log_id = -1
         self.split = split
@@ -132,25 +162,26 @@ class Tracker3D():
         
         self.filtered_gt = '../../../data/argoverse2/val_0.833_per_frame_remove_non_move_remove_far_remove_non_drive_filtered_version.feather'
     
-    def new_log_id(self, log_id):
+    def new_log_id(self, log_id, only_dets=True):
         # save tracks to feather and reset variables
         if self.log_id != -1:
-            print('here')
             self.active_tracks += self.inactive_tracks
-            self.to_feather()
+            found = self.to_feather(only_dets=only_dets)
+            if not found:
+                logger.info(f'No detections found in {log_id}')
             self.active_tracks = list()
             self.inactive_tracks = list()
+            self.trajectories = list()
+
         self.log_id = log_id
         logger.info(f"New log id {log_id}...")
     
-    def get_detections(self, points, traj, clusters, flows, timestamps, log_id, gt_instance_ids):
+    def get_detections(self, points, traj, clusters, timestamps, log_id, gt_instance_ids, last=False, only_dets=True):
         # set new log id
-        print(self.log_id)
         if self.log_id != log_id:
-            self.new_log_id(log_id)
-        print(self.log_id)
+            self.new_log_id(log_id, only_dets)
+
         points = points.numpy()
-        flows = flows.numpy()
         traj = traj.numpy()
 
         # iterate over clusters that were found and get detections with their 
@@ -159,7 +190,7 @@ class Tracker3D():
         for c in np.unique(clusters):
             num_interior = np.sum([clusters==c])
 
-            gt_id = (np.bincount(gt_instance_ids[clusters==c]).argmax())
+            gt_id = None #(np.bincount(gt_instance_ids[clusters==c]).argmax())
 
             # filter if cluster too small
             if num_interior < self.num_interior:
@@ -173,7 +204,7 @@ class Tracker3D():
             lwh = maxs - mins
             # remove bb if l, w, or h is 0
             if lwh[2] == 0 or lwh[0] == 0 or lwh[1] == 0:                                                                                                                                                  
-                continue  
+                continue
 
             '''if lwh[0] > 50 or lwh[1] > 50 or lwh[2] > 4:
                 continue
@@ -191,6 +222,13 @@ class Tracker3D():
                 num_interior=num_interior,
                 overlap=self.overlap,
                 gt_id=gt_id))
+            
+        if only_dets:
+            self.trajectories += trajectories
+
+        if last and only_dets:
+            self.to_feather(only_dets=only_dets)
+            self.trajectories = list()
             
         return trajectories
 
@@ -483,17 +521,48 @@ class Tracker3D():
         mat = Rotation.from_quat(quat_xyzw).as_matrix()
         return mat
 
-    def to_feather(self, visualize=False):       
+    def to_feather(self, visualize=False, only_dets=False):
         track_vals = list()
-        for track in self.active_tracks:
-            track.final_detections(self.av2_loader)
-            for det in track:
-                quat = self.mat_to_quat(det.rotation)
+        if not only_dets:
+            for track in self.active_tracks:
+                track.final_detections(self.av2_loader)
+                for det in track:
+                    # quaternion rotation around z axis
+                    quat = np.array([np.cos(det.rotation/2), 0, 0, np.sin(det.rotation/2)])
+                    # REGULAR_VEHICLE = only dummy class
+                    values = [
+                        int(det.timestamp.item()),
+                        track.track_id,
+                        'REGULAR_VEHICLE',
+                        det.lwh[0],
+                        det.lwh[1],
+                        det.lwh[2],
+                        quat[0],
+                        quat[1],
+                        quat[2],
+                        quat[3],
+                        det.translation[0],
+                        det.translation[1],
+                        det.translation[2],
+                        det.num_interior]
+                    track_vals.append(values)
+            
+            track_vals = np.asarray(track_vals)
+            df = pd.DataFrame(
+                data=track_vals,
+                columns=column_names)
+            df = df.astype(column_dtypes)
+        
+        else:
+            for track in self.trajectories:
+                det = track.final_detection()
+                # quaternion rotation around z axis
+                quat = np.array([np.cos(det.heading/2), 0, 0, np.sin(det.heading/2)])
                 # REGULAR_VEHICLE = only dummy class
                 values = [
-                    int(det.timestamp.item()),
-                    track.track_id,
-                    'REGULAR_VEHICLE',
+                    det.translation[0],
+                    det.translation[1],
+                    det.translation[2],
                     det.lwh[0],
                     det.lwh[1],
                     det.lwh[2],
@@ -501,29 +570,30 @@ class Tracker3D():
                     quat[1],
                     quat[2],
                     quat[3],
-                    det.translation[0],
-                    det.translation[1],
-                    det.translation[2],
+                    int(det.timestamp.item()),
+                    'REGULAR_VEHICLE',
                     det.num_interior]
                 track_vals.append(values)
         
-        track_vals = np.asarray(track_vals)
-        df = pd.DataFrame(
-            data=track_vals,
-            columns=column_names)
+            track_vals = np.asarray(track_vals)
+            if track_vals.shape[0] == 0:
+                return False
 
-        df = df.astype(column_dtypes)
-
+            df = pd.DataFrame(
+                data=track_vals,
+                columns=column_names_dets)
+            df = df.astype(column_dtypes_dets)
+        
         os.makedirs(os.path.join(self.out_path, self.split, self.log_id), exist_ok=True)
         write_path = os.path.join(self.out_path, self.split, self.log_id, 'annotations.feather')
-        logger.info(f'Stored tracks for sequence {self.log_id} at {write_path}')
+        logger.info(f'Stored tracks for sequence {self.log_id} at {os.getcwd()}/{write_path}')
         feather.write_feather(df, write_path)
-        for t in df['timestamp_ns'].unique():
-            d = df[df['timestamp_ns']==t]['track_uuid']
-            print(d.shape, d.unique().shape)
+
         if visualize:
             self.visualize_whole(df, track.log_id)
-    
+        
+        return True
+
     def visualize_whole(self, df, seq):
         gt = feather.read_feather(self.filtered_gt)
         gt = gt[gt['seq'] == self.log_id]
@@ -575,7 +645,7 @@ class Tracker3D():
             plt.ylim(y_lim)
             plt.savefig(f'../../../Visualization_Whole/{seq}/frame_{timestamp}.jpg')
             plt.close()
-
+            
 
 class Track():
     def __init__(self, trajectory, track_id, every_x_frame, overlap) -> None:
@@ -716,11 +786,27 @@ class Trajectory():
         canonical_points = self.canonical_points
         return canonical_points
 
+    def final_detection(self):
+        points_c_time = self.canonical_points
+        mins, maxs = points_c_time.min(axis=0), points_c_time.max(axis=0)
+        lwh = maxs - mins
 
+        translation = (maxs + mins)/2
+        mean_flow = (self.trajectory[:, 1, :] - self.trajectory[:, 0, :]).mean(axis=0)
+        alpha = np.arctan(mean_flow[1]/mean_flow[0])
+        rot = np.array([
+            [np.cos(alpha), np.sin(alpha), 0],
+            [np.sin(alpha), np.cos(alpha), 0],
+            [0, 0, 1]])
+
+        final = Detection(rot, alpha, translation, lwh, self.timestamps[0], self.log_id, self.num_interior)
+
+        return final
 
 class Detection():
-    def __init__(self, rotation, translation, lwh, timestamp, log_id, num_interior) -> None:
+    def __init__(self, rotation, heading, translation, lwh, timestamp, log_id, num_interior) -> None:
         self.rotation = rotation
+        self.heading = heading
         self.translation = translation
         self.lwh = lwh
         self.timestamp = timestamp

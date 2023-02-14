@@ -8,6 +8,6 @@
 #SBATCH --time=120:00:00
 
 source activate sf_av2
-HYDRA_FULL_ERROR=1 python trainer.py models=DBSCAN models.hyperparams.thresh=6.0 models.hyperparams.input=traj_pos data.every_x_frame=10 tracker_options.overlap=10
+HYDRA_FULL_ERROR=1 python trainer.py models=DBSCAN job_name=DBSCAN_WHOLE data=waymo_traj wandb=False training.batch_size=1 just_eval=True models.hyperparams.thresh=0.1 models.hyperparams.input=traj data.debug=False
 
 
