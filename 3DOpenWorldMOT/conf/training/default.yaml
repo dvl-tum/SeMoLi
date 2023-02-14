@@ -1,6 +1,6 @@
 # @package training
 # Those arguments defines the training hyper-parameters
-epochs: 32
+epochs: 100
 eval_per_seq: 10
 train_steps: 200  # Number of steps per epochs
 val_steps: 100    # Number of validation steps per epoch
@@ -24,7 +24,7 @@ optim:
     params:
       bn_momentum: 0.1
       bn_decay: 0.9
-      decay_step: 10
+      decay_step: 20
       bn_clip: 1e-2
 weight_name: "latest" # Used during resume, select with model to load from [miou, macc, acc..., latest]
 checkpoint_dir: ""

@@ -1,14 +1,23 @@
 # @package models
 model_name: GNN
+weight_path: None
 hyperparams:
-    graph: knn
-    traj_channels: 75
+    graph: radius
+    traj_channels: 6
     pos_channels: 3
-    k: 8
-    r: 0.1
-    edge_attr: difftraj
-    node_attr: pos
-    cut_edges: 0.5
-    min_samples: 20
+    k: 16
+    k_eval: 16
+    r: 5.0
+    graph_construction: traj
+    edge_attr: diffpostraj
+    node_attr: traj
+    cut_edges: 0.0
+    min_samples: 5
+    use_node_score: True
+    clustering: 'correlation'
+    do_visualize: False
+    my_graph: True
 loss_hyperparams:
-    bce_loss: 1
+    bce_loss: True
+    node_loss: False
+    focal_loss: False

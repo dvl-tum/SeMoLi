@@ -18,7 +18,10 @@ update_lr_scheduler_on: "on_epoch" # ["on_epoch", "on_num_batch", "on_num_sample
 selection_stage: ""                                                                                                   
 pretty_print: True                                                                                              
 eval_frequency: 1
-out_path: 'out'                                                                                                 
+wandb: False
+out_path: 'out'
+just_eval: False     
+metric: cluster                                                                                   
 
 tracker_options: # Extra options for the tracker                                                                        
   full_res: False                                                                                                          
@@ -26,7 +29,7 @@ tracker_options: # Extra options for the tracker
   track_boxes: False   
   a_threshold: 0.2
   i_threshold: 0.2
-  num_interior: 20
+  num_interior: 5
   overlap: 15
   matching: 'greedy'
   alpha: 0.95

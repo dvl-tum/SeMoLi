@@ -1,7 +1,7 @@
 from torch.utils.data import Dataset, DataLoader
 from torch_geometric.data import Dataset as PyGDataset
 from torch_geometric.data import Data as PyGData
-from torch_geometric.data import DataLoader as PyGDataLoader
+from torch_geometric.loader import DataLoader as PyGDataLoader
 import os
 import torch
 from pathlib import Path
@@ -56,10 +56,12 @@ class TrajectoryDataset(PyGDataset):
             self.seq = '00a6ffc1-6ce9-3bc3-a060-6006e9893a1a'
         elif split == 'val':
             self.seq = '16473613811052081539'
-
+        else:
+            self.seq = '2400780041057579262'
         self.loader = AV2SensorDataLoader(data_dir=self.split_dir, labels_dir=self.split_dir)
         self.class_dict = ARGOVERSE_CLASSES if 'argo' in self.data_dir else WAYMO_CLASSES
         super().__init__()
+        self._processed_paths = self.processed_paths
     
     @property
     def raw_file_names(self):
@@ -78,7 +80,7 @@ class TrajectoryDataset(PyGDataset):
                     if i % self.every_x_frame != 0:
                         continue
                     raw_file_names.append(flow_file)
-                    break
+                    
             return raw_file_names
         
         seqs = self.short_train if self.short_train is not None else os.listdir(self.trajectory_dir)
@@ -111,7 +113,7 @@ class TrajectoryDataset(PyGDataset):
                     if i % self.every_x_frame != 0:
                         continue
                     raw_paths.append(os.path.join(self.trajectory_dir, seq, flow_file))
-                    break
+
             return raw_paths
 
         seqs = self.short_train if self.short_train is not None else os.listdir(self.trajectory_dir)
@@ -148,7 +150,7 @@ class TrajectoryDataset(PyGDataset):
                     if i % self.every_x_frame != 0:
                         continue
                     processed_file_names.append(flow_file)
-                    break
+
             return processed_file_names
 
         seqs = self.short_train if self.short_train is not None else os.listdir(self.trajectory_dir)
@@ -184,7 +186,7 @@ class TrajectoryDataset(PyGDataset):
                             and len(os.listdir(os.path.join(self.trajectory_dir, seq))) != 1:
                         continue
                     processed_paths.append(os.path.join(self.processed_dir, seq, flow_file[:-3] + 'pt'))
-                    break
+
             return processed_paths
 
         seqs = self.short_train if self.short_train is not None else os.listdir(self.trajectory_dir)
@@ -202,7 +204,7 @@ class TrajectoryDataset(PyGDataset):
             return processed_paths
 
     def __len__(self):
-        return len(self.processed_paths)
+        return len(self._processed_paths)
     
     def len(self):
         return self.__len__()
@@ -262,14 +264,36 @@ class TrajectoryDataset(PyGDataset):
             traj = pred['traj']
             flow = pred['flows'] if 'flows' in [k for k in pred.keys()] else pred['flow']
             pc_list = pred['pcs'] if 'pcs' in [k for k in pred.keys()] else pred['pc_list']
-            timestamps = pred['timestamps'][0]
+            timestamps = pred['timestamps']
+            if len(pred['timestamps'].shape) > 1:
+                timestamps = timestamps[0]
 
-            all_instances = list()
+            # When using GT flow not all pcs have the same length
+            if len(np.unique([p.shape[0] for p in pc_list])) > 1:
+                num_points = min([p.shape[0] for p in pc_list])
+                pcs_sampled = list()
+                flows_sampled = list()
+                for i in range(len(pc_list)):
+                    mask1_flow = np.arange(len(pc_list[i]))
+                    
+                    if len(pc_list[i]) >= num_points:
+                        sample_idx1 = np.random.choice(mask1_flow, num_points, replace=False)
+                        pcs_sampled.append(pc_list[i][sample_idx1, :].astype('float32'))
+                        if i < len(flow):
+                            flows_sampled.append(flow[i][sample_idx1, :].astype('float32'))
+                    else:
+                        pcs_sampled.append(pc_list[i])
+                        flows_sampled.append(flow[i])
+
+                    if i == 0:
+                        traj = traj[sample_idx1, :, :].astype('float32')
+
+                pc_list = np.stack(pcs_sampled)
+                flow = np.stack(flows_sampled)
+
             # get labels
-            indicator = list()
-            categories = list()
+            all_instances = list()
             all_categories = list()
-            rots, trans, lwh = list(), list(), list()
             if self.split != 'test':
                 for i in range(len(timestamps)):
                     if i != 0:
@@ -292,26 +316,30 @@ class TrajectoryDataset(PyGDataset):
                         labels = [l for i, l in enumerate(labels) if bool_labels[i]]
 
                     # remove points of labels that are far away (>80,)
-                    all_centroids = np.asarray([label.dst_SE3_object.translation for label in labels])
-                    dists_to_center = np.sqrt(np.sum(all_centroids ** 2, 1))
-                    ind = np.where(dists_to_center <= 80)[0]
-                    labels = [labels[i] for i in ind]
+                    if 'far' in self._trajectory_dir:
+                        all_centroids = np.asarray([label.dst_SE3_object.translation for label in labels])
+                        dists_to_center = np.sqrt(np.sum(all_centroids ** 2, 1))
+                        ind = np.where(dists_to_center <= 80)[0]
+                        labels = [labels[i] for i in ind]
+                    
+                    # hemove points that hare high
+                    if 'low' in self._trajectory_dir:
+                        all_centroids = np.asarray([label.dst_SE3_object.translation for label in labels])[:, -1]
+                        ind = np.where(all_centroids <= 4)[0]
+                        labels = [labels[i] for i in ind]
 
                     # get per point and object masks and bounding boxs and their labels 
                     masks = list()
                     for label in labels:
-                        indicator.append(i)
                         interior = point_cloud_handling.compute_interior_points_mask(
                             pc_list[i], label.vertices_m)
                         int_label = self.class_dict[label.category] if 'argo' in self.data_dir else int(label.category)
                         interior = interior.astype(int) * int_label
                         masks.append(interior)
-                        categories.append(int_label)
-                        rots.append(label.dst_SE3_object.rotation)
-                        trans.append(label.dst_SE3_object.translation)
-                        lwh.append(np.asarray([label.length_m, label.width_m, label.height_m]))
+
                     if len(labels) == 0:
                         masks.append(np.zeros(pc_list[i].shape[0]))
+                    
                     masks = np.asarray(masks).T
                 
                     # assign unique label and instance to each point
@@ -338,13 +366,8 @@ class TrajectoryDataset(PyGDataset):
                     pc_list=torch.from_numpy(pc_list),
                     traj=torch.from_numpy(traj),
                     timestamps=torch.from_numpy(timestamps),
-                    rots=torch.at_least2d(torch.from_numpy(np.asarray(rots))),
-                    trans=torch.at_least2d(torch.from_numpy(np.asarray(trans))),
-                    lwh=torch.at_least2d(torch.from_numpy(np.asarray(lwh))),
-                    categories=torch.at_least2d(torch.from_numpy(np.asarray(categories))),
-                    point_categories=torch.at_least2d(torch.from_numpy(np.asarray(all_categories)).squeeze()),
-                    point_instances=torch.at_least2d(torch.from_numpy(np.asarray(all_instances)).squeeze()),
-                    indicator=torch.tensor(indicator),
+                    point_categories=torch.atleast_2d(torch.from_numpy(np.asarray(all_categories)).squeeze()),
+                    point_instances=torch.atleast_2d(torch.from_numpy(np.asarray(all_instances)).squeeze()),
                     log_id=seq)
             else:
                 data = PyGData(
@@ -360,15 +383,15 @@ class TrajectoryDataset(PyGDataset):
             idx += 1
 
     def get(self, idx):
-        path = self.processed_paths[idx]
-        print(path)
+        path = self._processed_paths[idx]
         exists = False
+
         if self.remove_static:
             if 'argo' in self.data_dir:
                 path2 = re.sub('argoverse2', 'argoverse2_remove_static', path)
             else:
                 path2 = re.sub('waymo', 'waymo_remove_static', path)
-            print(path2)
+
             exists = os.path.isfile(path2)
             path = path2 if exists else path
 
@@ -377,7 +400,6 @@ class TrajectoryDataset(PyGDataset):
         except:
             print(f"could not load file {path} of index {idx}/{len(self.processed_paths)}")
             quit()
-        print(data)
 
         if not exists:
             if len(data['pc_list'].shape) > 2:
@@ -386,6 +408,8 @@ class TrajectoryDataset(PyGDataset):
                 data['point_instances'] = data['point_instances'][0]
             if len(data['point_categories']) > 1:
                 data['point_categories'] = data['point_categories'][0]
+            if len(data['flow'].shape) > 2:
+                data['flow'] = data['flow'][0]
 
             # remove static points
             if self.remove_static:
@@ -412,12 +436,8 @@ class TrajectoryDataset(PyGDataset):
                 data['pc_list'] = data['pc_list'][mean_traj, :]
                 data['traj'] = data['traj'][mean_traj]
 
-                try:
-                    data['point_instances'] = data['point_instances'].squeeze()[mean_traj]
-                    data['point_categories'] = data['point_categories'].squeeze()[mean_traj]
-                except:
-                    print('shiiiiiiiiiit')
-                    quit()
+                data['point_instances'] = data['point_instances'].squeeze()[mean_traj]
+                data['point_categories'] = data['point_categories'].squeeze()[mean_traj]
 
                 os.makedirs(os.path.dirname(path2), exist_ok=True)
                 torch.save(data, path2)
@@ -436,9 +456,6 @@ class TrajectoryDataset(PyGDataset):
 
         if data['flow'].shape[1] == 24:
             data['flow'] = data['flow'][:, :-1, :]
-        
-        print(data)
-        quit()
 
         return data
 
