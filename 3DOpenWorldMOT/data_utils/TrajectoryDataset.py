@@ -260,7 +260,11 @@ class TrajectoryDataset(PyGDataset):
                     map_dict[seq] = ArgoverseStaticMap.from_map_dir(log_map_dirpath, build_raster=True)
 
             # load point clouds
-            pred = np.load(traj_file, allow_pickle=True)
+            try:
+                pred = np.load(traj_file, allow_pickle=True)
+            except:
+                print(traj_file)
+                pred = np.load(traj_file, allow_pickle=True)
             traj = pred['traj']
             flow = pred['flows'] if 'flows' in [k for k in pred.keys()] else pred['flow']
             pc_list = pred['pcs'] if 'pcs' in [k for k in pred.keys()] else pred['pc_list']
