@@ -66,7 +66,7 @@ class DBSCAN():
         inp = inp[mask]
         
         # if no moving point
-        if traj.shape[0] == 0:
+        if inp.shape[0] == 0:
             return None, labels, None, None
 
         # get clustering
