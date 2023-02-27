@@ -211,7 +211,6 @@ def main(cfg):
                 for i, (data) in tqdm(enumerate(val_loader), total=len(val_loader), smoothing=0.9):
                     
                     logits, clusters, edge_index, batch_edge = model(data, eval=True, name=name)
-
                     data = data.cpu()
                     non_background = data['point_instances'] != 0
                     if not len(clusters):

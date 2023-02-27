@@ -265,6 +265,7 @@ class TrajectoryDataset(PyGDataset):
             except:
                 print(traj_file)
                 pred = np.load(traj_file, allow_pickle=True)
+                
             traj = pred['traj']
             flow = pred['flows'] if 'flows' in [k for k in pred.keys()] else pred['flow']
             pc_list = pred['pcs'] if 'pcs' in [k for k in pred.keys()] else pred['pc_list']

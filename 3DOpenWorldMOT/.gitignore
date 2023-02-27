@@ -4,7 +4,6 @@ slurm*
 outputs/
 RAMA/
 ../outputs/
-data/
 data_utils/RandLA-Net/
 visualization/.ipynb_checkpoints
 data_utils/__pycache__/
