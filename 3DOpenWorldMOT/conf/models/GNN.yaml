@@ -8,7 +8,7 @@ hyperparams:
     k: 16
     k_eval: 16
     r: 5.0
-    graph_construction: traj
+    graph_construction: pos
     edge_attr: diffpostraj
     node_attr: traj
     cut_edges: 0.0
