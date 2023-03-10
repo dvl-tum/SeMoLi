@@ -15,6 +15,8 @@ import logging
 import csv
 import glob
 import re
+from multiprocessing.pool import Pool
+from functools import partial
 
 
 logger = logging.getLogger("Model.Dataset")
@@ -37,6 +39,10 @@ class TrajectoryDataset(PyGDataset):
         self.num_points = num_points
         self.debug = debug
         self.split_val = split_val
+        if self.split == 'val' or self.split == 'test':
+            self.loader = AV2SensorDataLoader(data_dir=self.split_dir, labels_dir=self.split_dir)
+        else:
+            self.loader = None
         self._eval = _eval
         self.every_x_frame = every_x_frame
         self.margin = margin
@@ -58,7 +64,7 @@ class TrajectoryDataset(PyGDataset):
             self.seq = '16473613811052081539'
         else:
             self.seq = '2400780041057579262'
-        self.loader = AV2SensorDataLoader(data_dir=self.split_dir, labels_dir=self.split_dir)
+
         self.class_dict = ARGOVERSE_CLASSES if 'argo' in self.data_dir else WAYMO_CLASSES
         super().__init__()
         self._processed_paths = self.processed_paths
@@ -213,10 +219,20 @@ class TrajectoryDataset(PyGDataset):
     def processed_dir(self) -> str:
         
         data = '_waymo' if 'waymo' in str(self.trajectory_dir) else ''
-        rubbish = '_rubbish' if 'rubbish' in str(self.trajectory_dir) else ''
+        if 'rubbish' in str(self.trajectory_dir):
+            add_on = 'rubbish'
+        elif 'local' in str(self.trajectory_dir):
+            add_on = 'local'
+        else:
+            add_on = 'normal'
 
-        return Path(os.path.join('/storage/user/seidensc/datasets/trajectories' + data,\
-            'processed' + rubbish, os.path.basename(os.path.dirname(self.trajectory_dir)), self.split))
+        processed_dir = os.path.join('/storage/user/seidensc/datasets/trajectories' + data,\
+            'processed', add_on , os.path.basename(os.path.dirname(self.trajectory_dir)), self.split)
+
+        if self.remove_static:
+            processed_dir = re.sub('processed', 'processed_remove_static', processed_dir)
+
+        return Path(processed_dir)
         
     def add_margin(self, label):
         # Add a margin to the cuboids. Some cuboids are very tight 
@@ -226,33 +242,61 @@ class TrajectoryDataset(PyGDataset):
             label.width_m += self.margin
             label.height_m += self.margin
         return label
+    
+    def _process(self):
+        logger.info('Processing...')
+        os.makedirs(self.processed_dir, exist_ok=True)
+        self.process()
+        logger.info('Done!')
 
-    def process(self):
-        self.loader = AV2SensorDataLoader(data_dir=self.split_dir, labels_dir=self.split_dir)
-        idx = 0
-        map_dict = dict()
+    def process(self, multiprocessing=True):
 
         already_processed = glob.glob(str(self.processed_dir)+'/*/*')
-
         missing_paths = set(self.processed_paths).difference(already_processed)
+
         missing_paths = [os.path.join(
             self.trajectory_dir, os.path.basename(os.path.dirname(m)), os.path.basename(m)[:-2] + 'npz')\
                 for m in missing_paths]
-                
-        for j, traj_file in enumerate(missing_paths): #self.raw_paths[start:]
-            if j % 50 == 0:
-                logger.info(f"sweep {idx}/{len(missing_paths)}, {j}-th file")
+
+        if len(missing_paths) and self.loader is None:
+            self.loader = AV2SensorDataLoader(data_dir=self.split_dir, labels_dir=self.split_dir)
+
+        data_loader = enumerate(missing_paths)
             
-            processed_path = os.path.join(
-                self.processed_dir,
-                os.path.basename(os.path.dirname(traj_file)),
-                os.path.basename(traj_file)[:-3] + 'pt')
+        if multiprocessing:
+            with Pool() as pool:
+                _eval_sequence = partial(self.process_sweep, len(missing_paths))
+                pool.map(_eval_sequence, data_loader)
+        else:
+            for data in data_loader:
+                self.process_sweep(data)
+    
+    def process_sweep(self, num_data, data):
+        j, traj_file = data
+        if j % 10000 == 0:
+            logger.info(f"sweep {j}/{num_data}, {j}-th file")
+        
+        processed_path = os.path.join(
+            self.processed_dir,
+            os.path.basename(os.path.dirname(traj_file)),
+            os.path.basename(traj_file)[:-3] + 'pt')
 
-            if os.path.isfile(processed_path):
-                print(f'Exists...{processed_path}, {idx}')
-                idx += 1
-                continue
+        if self.remove_static:
+            processed_path2 = processed_path
+            processed_path = re.sub('processed_remove_static', 'processed', processed_path)
 
+        # If processed file exists and not static gt removal
+        if os.path.isfile(processed_path) and not self.remove_static:
+            j += 1
+            return
+        
+        # If processed file exists and static gt removal and static removed exists
+        elif self.remove_static and os.path.isfile(processed_path) and os.path.isfile(processed_path2):
+            j += 1
+            return
+        
+        # If processed does not exist
+        elif not os.path.isfile(processed_path):
             seq = os.path.basename(os.path.dirname(traj_file))
             if 'non_drive' in self._trajectory_dir and not 'waymo' in self._trajectory_dir:
                 if seq not in map_dict.keys():
@@ -263,111 +307,89 @@ class TrajectoryDataset(PyGDataset):
             try:
                 pred = np.load(traj_file, allow_pickle=True)
             except:
-                print(traj_file)
+                print("could not load processed", traj_file)
                 pred = np.load(traj_file, allow_pickle=True)
-                
-            traj = pred['traj']
-            flow = pred['flows'] if 'flows' in [k for k in pred.keys()] else pred['flow']
+            
+            try:
+                traj = pred['traj']
+            except:
+                print("no traj in file", traj_file, [k for k in pred.keys()])
             pc_list = pred['pcs'] if 'pcs' in [k for k in pred.keys()] else pred['pc_list']
+            if len(pc_list.shape) > 2:
+                pc_list = pc_list[0]
+
             timestamps = pred['timestamps']
             if len(pred['timestamps'].shape) > 1:
                 timestamps = timestamps[0]
-
-            # When using GT flow not all pcs have the same length
-            if len(np.unique([p.shape[0] for p in pc_list])) > 1:
-                num_points = min([p.shape[0] for p in pc_list])
-                pcs_sampled = list()
-                flows_sampled = list()
-                for i in range(len(pc_list)):
-                    mask1_flow = np.arange(len(pc_list[i]))
-                    
-                    if len(pc_list[i]) >= num_points:
-                        sample_idx1 = np.random.choice(mask1_flow, num_points, replace=False)
-                        pcs_sampled.append(pc_list[i][sample_idx1, :].astype('float32'))
-                        if i < len(flow):
-                            flows_sampled.append(flow[i][sample_idx1, :].astype('float32'))
-                    else:
-                        pcs_sampled.append(pc_list[i])
-                        flows_sampled.append(flow[i])
-
-                    if i == 0:
-                        traj = traj[sample_idx1, :, :].astype('float32')
-
-                pc_list = np.stack(pcs_sampled)
-                flow = np.stack(flows_sampled)
 
             # get labels
             all_instances = list()
             all_categories = list()
             if self.split != 'test':
-                for i in range(len(timestamps)):
-                    if i != 0:
-                        continue
-                    labels = self.loader.get_labels_at_lidar_timestamp(
-                        log_id=seq, lidar_timestamp_ns=int(timestamps[i]))
-                    
-                    if self.margin:
-                        for label in labels:
-                            self.add_margin(label)
-
-                    # remove labels that are non in dirvable area
-                    if 'non_drive' in self._trajectory_dir and not 'waymo' in self._trajectory_dir:
-                        centroids_ego = np.asarray([label.dst_SE3_object.translation for label in labels])
-                        city_SE3_ego = self.loader.get_city_SE3_ego(seq, int(timestamps[i]))
-                        centroids_city = city_SE3_ego.transform_point_cloud(
-                                centroids_ego)
-                        bool_labels = map_dict[seq].get_raster_layer_points_boolean(
-                            centroids_city, layer_name=RasterLayerType.DRIVABLE_AREA)
-                        labels = [l for i, l in enumerate(labels) if bool_labels[i]]
-
-                    # remove points of labels that are far away (>80,)
-                    if 'far' in self._trajectory_dir:
-                        all_centroids = np.asarray([label.dst_SE3_object.translation for label in labels])
-                        dists_to_center = np.sqrt(np.sum(all_centroids ** 2, 1))
-                        ind = np.where(dists_to_center <= 80)[0]
-                        labels = [labels[i] for i in ind]
-                    
-                    # hemove points that hare high
-                    if 'low' in self._trajectory_dir:
-                        all_centroids = np.asarray([label.dst_SE3_object.translation for label in labels])[:, -1]
-                        ind = np.where(all_centroids <= 4)[0]
-                        labels = [labels[i] for i in ind]
-
-                    # get per point and object masks and bounding boxs and their labels 
-                    masks = list()
-                    for label in labels:
-                        interior = point_cloud_handling.compute_interior_points_mask(
-                            pc_list[i], label.vertices_m)
-                        int_label = self.class_dict[label.category] if 'argo' in self.data_dir else int(label.category)
-                        interior = interior.astype(int) * int_label
-                        masks.append(interior)
-
-                    if len(labels) == 0:
-                        masks.append(np.zeros(pc_list[i].shape[0]))
-                    
-                    masks = np.asarray(masks).T
+                labels = self.loader.get_labels_at_lidar_timestamp(
+                    log_id=seq, lidar_timestamp_ns=int(timestamps[0]))
                 
-                    # assign unique label and instance to each point
-                    # label 0 and instance 0 is background
-                    point_categories = list()
-                    point_instances = list()
-                    for j in range(masks.shape[0]):
-                        if np.where(masks[j]>0)[0].shape[0] != 0:
-                            point_categories.append(masks[j, np.where(masks[j]>0)[0][0]])
-                            point_instances.append(np.where(masks[j]>0)[0][0]+1)
-                        else:
-                            point_categories.append(0)
-                            point_instances.append(0)
+                if self.margin:
+                    for label in labels:
+                        self.add_margin(label)
 
-                    point_instances = np.asarray(point_instances, dtype=np.int64)
-                    point_categories = np.asarray(point_categories, dtype=np.int64)
+                # remove labels that are non in dirvable area
+                if 'non_drive' in self._trajectory_dir and not 'waymo' in self._trajectory_dir:
+                    centroids_ego = np.asarray([label.dst_SE3_object.translation for label in labels])
+                    city_SE3_ego = self.loader.get_city_SE3_ego(seq, int(timestamps[0]))
+                    centroids_city = city_SE3_ego.transform_point_cloud(
+                            centroids_ego)
+                    bool_labels = map_dict[seq].get_raster_layer_points_boolean(
+                        centroids_city, layer_name=RasterLayerType.DRIVABLE_AREA)
+                    labels = [l for i, l in enumerate(labels) if bool_labels[i]]
 
-                    all_categories.append(point_categories)
-                    all_instances.append(point_instances)
+                # remove points of labels that are far away (>80,)
+                if 'far' in self._trajectory_dir:
+                    all_centroids = np.asarray([label.dst_SE3_object.translation for label in labels])
+                    dists_to_center = np.sqrt(np.sum(all_centroids ** 2, 1))
+                    ind = np.where(dists_to_center <= 80)[0]
+                    labels = [labels[i] for i in ind]
+                
+                # hemove points that hare high
+                if 'low' in self._trajectory_dir:
+                    all_centroids = np.asarray([label.dst_SE3_object.translation for label in labels])[:, -1]
+                    ind = np.where(all_centroids <= 4)[0]
+                    labels = [labels[i] for i in ind]
+
+                # get per point and object masks and bounding boxs and their labels 
+                masks = list()
+                for label in labels:
+                    interior = point_cloud_handling.compute_interior_points_mask(
+                        pc_list, label.vertices_m)
+                    int_label = self.class_dict[label.category] if 'argo' in self.data_dir else int(label.category)
+                    interior = interior.astype(int) * int_label
+                    masks.append(interior)
+
+                if len(labels) == 0:
+                    masks.append(np.zeros(pc_list.shape[0]))
+                
+                masks = np.asarray(masks).T
+            
+                # assign unique label and instance to each point
+                # label 0 and instance 0 is background
+                point_categories = list()
+                point_instances = list()
+                for j in range(masks.shape[0]):
+                    if np.where(masks[j]>0)[0].shape[0] != 0:
+                        point_categories.append(masks[j, np.where(masks[j]>0)[0][0]])
+                        point_instances.append(np.where(masks[j]>0)[0][0]+1)
+                    else:
+                        point_categories.append(0)
+                        point_instances.append(0)
+
+                point_instances = np.asarray(point_instances, dtype=np.int64)
+                point_categories = np.asarray(point_categories, dtype=np.int64)
+
+                all_categories.append(point_categories)
+                all_instances.append(point_instances)
 
                 # putting it all together
                 data = PyGData(
-                    flow=torch.from_numpy(flow),
                     pc_list=torch.from_numpy(pc_list),
                     traj=torch.from_numpy(traj),
                     timestamps=torch.from_numpy(timestamps),
@@ -376,7 +398,6 @@ class TrajectoryDataset(PyGDataset):
                     log_id=seq)
             else:
                 data = PyGData(
-                    flow=torch.from_numpy(flow),
                     pc_list=torch.from_numpy(pc_list),
                     traj=torch.from_numpy(traj),
                     timestamps=torch.from_numpy(timestamps),
@@ -384,83 +405,84 @@ class TrajectoryDataset(PyGDataset):
 
             os.makedirs(os.path.dirname(processed_path), exist_ok=True)
             torch.save(data, osp.join(processed_path))
-            print(f"Save {osp.join(processed_path)}...")
-            idx += 1
+            # print(f"Save {osp.join(processed_path)}...")
+        
+        else:
+            try:
+                data = torch.load(osp.join(processed_path))
+            except:
+                print(f'Failed to load {processed_path}...')
+                quit()
 
-    def get(self, idx):
-        path = self._processed_paths[idx]
-        exists = False
-
-        if self.remove_static:
-            if 'argo' in self.data_dir:
-                path2 = re.sub('argoverse2', 'argoverse2_remove_static', path)
-            else:
-                path2 = re.sub('waymo', 'waymo_remove_static', path)
-
-            exists = os.path.isfile(path2)
-            path = path2 if exists else path
-
-        try:
-            data = torch.load(path)
-        except:
-            print(f"could not load file {path} of index {idx}/{len(self.processed_paths)}")
-            quit()
-
-        if not exists:
-            if len(data['pc_list'].shape) > 2:
-                data['pc_list'] = data['pc_list'][0]
+        ### If remove static file does not exist
+        if not os.path.isfile(processed_path2):
+            try:
+                if len(data['pc_list'].shape) > 2:
+                    data['pc_list'] = data['pc_list'][0]
+            except:
+                print("len oc list thing", data['pc_list'].shape)
             if len(data['point_instances'].shape) > 1:
                 data['point_instances'] = data['point_instances'][0]
             if len(data['point_categories']) > 1:
                 data['point_categories'] = data['point_categories'][0]
-            if len(data['flow'].shape) > 2:
-                data['flow'] = data['flow'][0]
 
             # remove static points
             if self.remove_static:
                 mean_traj = data['traj'][:, :, :-1]
                 timestamps = data['timestamps']
                 # get mean velocity [m/s] along trajectory and check if > thresh
-                diff_cent = torch.linalg.norm(
+                diff_dist = torch.linalg.norm(
                     mean_traj[:, :-1, :] - mean_traj[:, 1:, :] , axis=2)
-                diff_time = timestamps[1:diff_cent.shape[1]+1] - timestamps[:diff_cent.shape[1]]
+
+                diff_time = timestamps[1:diff_dist.shape[1]+1] - timestamps[:diff_dist.shape[1]]
+                # bring from nano / mili seconds to seconds
                 if 'argo' in self.data_dir:
                     diff_time = diff_time / torch.pow(torch.tensor(10), 9.0) 
                 else:
-                    diff_time = diff_time / torch.pow(torch.tensor(10), 6.0) 
-                mean_traj = torch.mean(diff_cent/diff_time, axis=1)
-                mean_traj = mean_traj > self.static_thresh
+                    diff_time = diff_time / torch.pow(torch.tensor(10), 6.0)
 
+                mean_traj = torch.mean(diff_dist/diff_time, axis=1)
+                mean_traj = mean_traj > self.static_thresh
+                
                 # if no moving point and not evaluation, sample few random
-                if not torch.all(~mean_traj) and not self._eval:
+                if torch.all(~mean_traj) and not self._eval:
                     idxs = torch.randint(0, mean_traj.shape[0], size=(200, ))
                     mean_traj[idxs] = True
                 
                 # apply mask
-                data['flow'] = data['flow'][mean_traj]
                 data['pc_list'] = data['pc_list'][mean_traj, :]
                 data['traj'] = data['traj'][mean_traj]
 
                 data['point_instances'] = data['point_instances'].squeeze()[mean_traj]
                 data['point_categories'] = data['point_categories'].squeeze()[mean_traj]
 
-                os.makedirs(os.path.dirname(path2), exist_ok=True)
-                torch.save(data, path2)
+                os.makedirs(os.path.dirname(processed_path2), exist_ok=True)
+                torch.save(data, processed_path2)
+
+    def get(self, idx):
+        path = self._processed_paths[idx]
+
+        '''if self.remove_static:
+            if 'argo' in self.data_dir:
+                path = re.sub('argoverse2', 'argoverse2_remove_static', path)
+            else:
+                path = re.sub('waymo', 'waymo_remove_static', path)'''
+        try:
+            data = torch.load(path)
+        except:
+            print(f"could not load file {path} of index {idx}/{len(self.processed_paths)}")
+            quit()
 
         # if you always want same number of points (during training), sample/re-sample
         if not self.use_all_points:
-            idxs = torch.randint(0, data['flow'].shape[0], size=(self.num_points, ))
-            mask = torch.arange(data['flow'].shape[0])
+            idxs = torch.randint(0, data['traj'].shape[0], size=(self.num_points, ))
+            mask = torch.arange(data['traj'].shape[0])
             mask = torch.isin(mask, idxs)
 
-            data['flow'] = data['flow'][idxs]
             data['pc_list'] = data['pc_list'][idxs, :]
             data['traj'] = data['traj'][idxs]
-            # data['point_categories'] = data['point_categories'][idxs]
+            data['point_categories'] = data['point_categories'][idxs]
             data['point_instances'] = data['point_instances'][idxs]
-
-        if data['flow'].shape[1] == 24:
-            data['flow'] = data['flow'][:, :-1, :]
 
         return data
 
@@ -507,8 +529,7 @@ def get_TrajectoryDataLoader(cfg, train=True, val=True, test=False):
                 train_data,
                 batch_size=cfg.training.batch_size,
                 drop_last=True,
-                shuffle=True,
-                num_workers=8)
+                shuffle=True)
         else:
             train_loader = None
     else:

@@ -68,7 +68,6 @@ def get_feather_files(
         classes_to_eval='all'):
 
     df = None
-
     try:
         for i, path in enumerate(os.listdir(paths)):
             if path not in seq_list:
@@ -135,7 +134,6 @@ def get_feather_files(
         map_dict = dict()
         track_ids = list()
         # iterate over sequences
-
         num_seqs = df['log_id'].unique().shape[0]
         for m, seq in enumerate(df['log_id'].unique()):
             print(f'Sequence {m}/{num_seqs}...')
@@ -310,11 +308,10 @@ def get_feather_files(
 def visualize_whole(df, gf, name):
     for seq in df['log_id'].unique():
         print(f'storing to ../../../Visualization_Whole_DETS/{seq}')
-
+        
         ddf = df[df['log_id'] == seq]
         gdf = gf[gf['log_id'] == seq]
         os.makedirs(f'../../../Visualization_Whole_DETS/{seq}', exist_ok=True)
-
         x_lim = (np.min(gdf['tx_m'].values) - 10, np.max(gdf['tx_m'].values) + 10)
         y_lim = (np.min(gdf['ty_m'].values) - 10, np.max(gdf['ty_m'].values) + 10)
 
@@ -421,7 +418,7 @@ def eval_detection(
     gts = gts.astype({'num_interior_pts': 'int64'})
     gts = gts[gts['num_interior_pts'] > 0] 
 
-    if visualize or debug:
+    if (visualize or debug) and dts.shape[0] and gts.shape[0]:
         visualize_whole(dts, gts, name)
 
     if just_eval:

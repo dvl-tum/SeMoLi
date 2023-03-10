@@ -228,37 +228,38 @@ class ClusterGNN(MessagePassing):
         for start, end in zip(batch_idx[:-1], batch_idx[1:]):
             X = node_attr[start:end]
             if self.edge_attr == 'diffpos':
-                dist = sklearn.metrics.pairwise_distances(X.cpu().numpy(), metric=metric)
+                dist = torch.from_numpy(sklearn.metrics.pairwise_distances(X.cpu().numpy(), metric=metric)).cuda()
             else:
-                node_attr_time = node_attr.view(node_attr.shape[0], -1, 3).cpu().numpy()
-                dist = np.zeros((node_attr_time.shape[0], node_attr_time.shape[0]))
-                for time in range(node_attr_time.shape[1]):
-                    dist += sklearn.metrics.pairwise_distances(node_attr_time[:, time, :], metric=metric)
-                dist = dist / node_attr_time.shape[1]
-            dist[np.arange(dist.shape[0]), np.arange(dist.shape[0])] = 100000
-            sorted_dist = np.argsort(dist)
-            idxs_0 = np.tile(np.expand_dims(np.arange(dist.shape[0]), axis=1), (1, max_num_neighbors)).flatten()
-            idxs_1 = sorted_dist[:, :max_num_neighbors].flatten()
+                X_time = X.view(X.shape[0], -1, 3).reshape(-1, X.shape[0], 3)
+                dist = torch.cdist(X_time, X_time)
+                dist = dist.mean(dim=0)
+
+            dist[torch.arange(dist.shape[0]), torch.arange(dist.shape[0])] = 100000
+            dist_sorted = torch.argsort(dist)
+
+            idxs_0 = torch.tile(torch.arange(dist.shape[0]).unsqueeze(1).cuda(), (1, max_num_neighbors)).flatten()
+            idxs_1 = dist_sorted[:, :max_num_neighbors].flatten()
             if type == 'radius':
                 _idxs_0.append(idxs_0[dist[idxs_0, idxs_1] < r])
                 _idxs_1.append(idxs_1[dist[idxs_0, idxs_1] < r])
             else:
                 _idxs_0.append(idxs_0)
                 _idxs_1.append(idxs_1)
-        _idxs_0 = np.hstack(_idxs_0)
-        _idxs_1 = np.hstack(_idxs_1)
 
-        edge_index = np.vstack([_idxs_0, _idxs_1])
-        edge_index = torch.from_numpy(edge_index).cuda()
+        _idxs_0 = torch.hstack(_idxs_0)
+        _idxs_1 = torch.hstack(_idxs_1)
+
+        edge_index = torch.vstack([_idxs_0, _idxs_1])
 
         return edge_index
 
-    def forward(self, data, eval=False, use_edge_att=True, augment=True, visualize=False, name='General'):
+    def forward(self, data, eval=False, use_edge_att=True, augment=True, visualize=False, name='General', oracle_node=False, oracle_edge=True):
         '''
         clustering: 'heuristic' / 'correlation'
         '''
         data = data.cuda()
         traj = data['traj']
+
         traj = traj.view(traj.shape[0], -1)
         batch = [torch.tensor([i] * (data._slice_dict['pc_list'][i+1]-data._slice_dict['pc_list'][i]).item()) for i in range(0, data._slice_dict['pc_list'].shape[0]-1)]
         batch = torch.cat(batch).cuda()
@@ -295,17 +296,17 @@ class ClusterGNN(MessagePassing):
             # fast version
             missing_neg = int((num_pos - num_neg))
             a, b = list(), list()
-            if missing_neg > 0:
-                for _ in range(math.ceil(missing_neg/point_instances.shape[0])*2):
+            if missing_neg > 0 and point_instances.shape[0]:
+                for _ in range(max(math.ceil(missing_neg/point_instances.shape[0])*2, 1)):
                     a.append(torch.randperm(point_instances.shape[0]))
                     b.append(torch.randperm(point_instances.shape[0]))
                 a = torch.cat(a)
                 b = torch.cat(b)
                 a, b = a[~point_instances[a, b]], b[~point_instances[a, b]]
                 a, b = a[:missing_neg], b[:missing_neg]
-            else:
+            elif point_instances.shape[0]:
                 missing_pos = -missing_neg
-                for _ in range(math.ceil(missing_pos/point_instances.shape[0])*2):
+                for _ in range(max(math.ceil(missing_pos/point_instances.shape[0])*2, 1)):
                     a.append(torch.randperm(point_instances.shape[0]))
                     b.append(torch.randperm(point_instances.shape[0]))
                 a = torch.cat(a)
@@ -314,18 +315,6 @@ class ClusterGNN(MessagePassing):
                 a, b = a[:missing_pos], b[:missing_pos]
             add_idxs = torch.stack([a, b]).cuda()
             edge_index = torch.cat([edge_index.T, add_idxs.T]).T
-
-            # slow version
-            # missing_neg = int((num_pos - num_neg)/(batch_idx.shape[0]-1))
-            # neg_idxs = list()
-            # for i in range(1, batch_idx.shape[0]-1):
-            #     to_sample = point_instances[
-            #         batch_idx[i]:batch_idx[i+1], batch_idx[i]:batch_idx[i+1]]
-            #     to_sample = torch.where(~to_sample)
-            #     indices = torch.randperm(to_sample[0].shape[0])[:missing_neg]
-            #     neg_idxs.extend([[to_sample[0][i], to_sample[1][i]] for i in indices])
-            # neg_idxs = torch.tensor(neg_idxs).T.cuda()
-            # edge_index = torch.cat([edge_index.T, neg_idxs.T]).T
 
         # get which edges belong to which batch
         batch_edge = torch.zeros(edge_index.shape[1]).cuda()
@@ -354,120 +343,16 @@ class ClusterGNN(MessagePassing):
         if eval:
             score = self.sigmoid(score)
             node_score = self.sigmoid(node_score)
-            if self.clustering == 'heuristic':
-                score = score.cpu()
-                data = data.cpu()
+            if oracle_edge:
+                score[data['point_instances'][src] == data['point_instances'][dst]] = 1
+                score[data['point_instances'][src] != data['point_instances'][dst]] = 0
+                score[data['point_instances'][src] <= 0] = 0
+                score[data['point_instances'][dst] <= 0] = 0
+            if oracle_node:
+                node_score[data['point_categories']>0] = 1
+                node_score[data['point_categories']<=0] = 1
 
-                edges_filtered = list()
-                scores_filtered = list()
-                for i, e in enumerate(edge_index.T):
-                    if self.use_node_score:
-                        valid_nodes = node_score[e[0]] > 0.5 or node_score[e[1]] > 0.5
-                    else:
-                        valid_nodes = True
-                    if score[i] > self.cut_edges and valid_nodes:
-                        edges_filtered.append(e)
-                        scores_filtered.append(score[i])
-
-                if self.do_visualize:
-                    # visualize with all the same cluster
-                    self.visualize(
-                        torch.arange(pc.shape[0]),
-                        edge_index,
-                        pc,
-                        np.ones(pc.shape[0]),
-                        data.timestamps[0],
-                        mode='before',
-                        name=name)
-
-                edge_index = torch.stack(edges_filtered).T
-                score = torch.stack(scores_filtered).T
-                src, dst = edge_index
-
-                if self.do_visualize:
-                    # visualize with all the same cluster
-                    self.visualize(
-                        torch.arange(pc.shape[0]),
-                        edge_index,
-                        pc,
-                        np.ones(pc.shape[0]),
-                        data.timestamps[0],
-                        mode='filtered',
-                        name=name)
-
-                # original score
-                score_orig = torch.zeros((data['pc_list'].shape[0], data['pc_list'].shape[0]))
-                score_orig[src, dst] = score.float()
-
-                clusters = defaultdict(list)
-                cluster_assignment = dict()
-                id_count = 0
-                import copy
-                for i, scores in enumerate(score_orig):
-                    # get edges
-                    idxs = (scores > 0).nonzero(as_tuple=True)[0]
-                    other_ids = list()
-
-                    # check if node A in any cluster yet
-                    to_add = [i] if i not in cluster_assignment.keys() else []
-                    _id = None if i not in cluster_assignment.keys() else cluster_assignment[i]
-                    
-                    # iterate over edges and find clusters that need to be merged
-                    for idx in idxs:
-                        if idx in cluster_assignment.keys() and _id is None:
-                            _id = cluster_assignment[idx.item()]
-                        elif idx.item() in cluster_assignment.keys():
-                            if _id != cluster_assignment[idx.item()]:
-                                other_ids.append(cluster_assignment[idx.item()])
-                        else:
-                            to_add.append(idx.item())
-
-                    # if no connected node as well as node i is not in cluster yet
-                    if _id is None:
-                        _id = id_count
-                        id_count += 1
-
-                    # change cluster ids and merge clusters
-                    for change_id in set(other_ids):
-                        for node in clusters[change_id]:
-                            cluster_assignment[node] = _id
-                        clusters[_id].extend(copy.deepcopy(clusters[change_id]))
-                        del clusters[change_id]
-
-                    # add nodes that where in no cluster yet
-                    clusters[_id].extend(to_add)
-                    for node in to_add:
-                        cluster_assignment[node] = _id
-
-                clusters_new = defaultdict(list)
-                cluster_assignment_new = dict()
-                for c, node_list in clusters.items():
-                    if len(node_list) < self.min_samples:
-                        clusters_new[-1].extend(node_list)
-                        for n in node_list:
-                            cluster_assignment_new[n] = -1
-                    else:
-                        clusters_new[c] = node_list
-                        for n in node_list:
-                            cluster_assignment_new[n] = c
-
-                clusters = clusters_new
-                cluster_assignment = cluster_assignment_new
-
-                clusters = np.array([cluster_assignment[k] for k in sorted(cluster_assignment.keys())])
-
-                if self.do_visualize:
-                    # visualize with all the with predicted cluster
-                    self.visualize(
-                        torch.arange(pc.shape[0]),
-                        edge_index,
-                        pc,
-                        clusters,
-                        data.timestamps[0],
-                        mode='after',
-                        name=name)
-            
-            elif self.clustering == 'correlation':
+            if self.clustering == 'correlation':
                 if self.do_visualize:
                     point_instances = data.point_instances.unsqueeze(
                         0) == data.point_instances.unsqueeze(0).T
@@ -534,12 +419,16 @@ class ClusterGNN(MessagePassing):
                     edge_index = torch.cat([edge_index.T, _edge_index.cuda().T]).T
                     score = torch.cat([score, torch.tensor([0]*len(diff)).cuda().unsqueeze(1)])
 
-                rama_out = rama_py.rama_cuda(
-                    [e[0] for e in edge_index.T.cpu().numpy()],
-                    [e[1] for e in edge_index.T.cpu().numpy()], 
-                    (score.cpu().numpy()*2)-1,
-                    self.opts)
-                clusters = rama_out[0]
+                try:
+                    rama_out = rama_py.rama_cuda(
+                        [e[0] for e in edge_index.T.cpu().numpy()],
+                        [e[1] for e in edge_index.T.cpu().numpy()], 
+                        (score.cpu().numpy()*2)-1,
+                        self.opts)
+                    clusters = rama_out[0]
+                except:
+                    logger.info('Was not able to solve correlation clustering...')
+                    clusters = -1 * np.ones(node_score.shape[0])
 
                 # filter out nodes thatare classified as non-objects
                 if self.use_node_score:
@@ -618,7 +507,7 @@ class ClusterGNN(MessagePassing):
             else:
                 print('Invalid clustering choice')
                 quit()
-
+            
             return [score, node_score], clusters, edge_index, batch_edge
 
         return [score, node_score], edge_index, batch_edge
@@ -727,7 +616,7 @@ class GNNLoss(nn.Module):
                 logits_rounded[logits_rounded<=0.5] = 0
                 correct = torch.sum(logits_rounded == point_instances.squeeze())
                 edge_accuracy = correct/logits_rounded.shape[0]
-                log_dict['train edge accuracy'] = edge_accuracy
+                log_dict['train edge accuracy'] = edge_accuracy.item()
 
             if self.focal_loss:
                 focal_loss = models.losses.FocalLoss()
@@ -759,7 +648,7 @@ class GNNLoss(nn.Module):
             logits_rounded[logits_rounded<=0.5] = 0
             correct = torch.sum(logits_rounded == is_object.squeeze())
             node_accuracy = correct/logits_rounded.shape[0]
-            log_dict['train node accuracy'] = node_accuracy
+            log_dict['train node accuracy'] = node_accuracy.item()
 
         return loss, log_dict
     
@@ -777,7 +666,7 @@ class GNNLoss(nn.Module):
                 edge_index[0, :], edge_index[1, :]].type(torch.FloatTensor).cuda()
             bce_loss_edge = torch.nn.functional.binary_cross_entropy(
                 edge_logits.squeeze(), point_instances.squeeze())
-            log_dict['eval bce loss edge'] = bce_loss_edge
+            log_dict['eval bce loss edge'] = bce_loss_edge.item()
             loss += bce_loss_edge
 
             # get accuracy
@@ -786,7 +675,7 @@ class GNNLoss(nn.Module):
             logits_rounded[logits_rounded<=0.5] = 0
             correct = torch.sum(logits_rounded == point_instances.squeeze())
             edge_accuracy = correct/logits_rounded.shape[0]
-            log_dict['eval edge accuracy'] = edge_accuracy
+            log_dict['eval edge accuracy'] = edge_accuracy.item()
         
         if self.node_loss:
             is_object = data.point_instances != 0
@@ -794,7 +683,7 @@ class GNNLoss(nn.Module):
             # compute loss
             bce_loss_node = torch.nn.functional.binary_cross_entropy(
                 node_logits.squeeze(), is_object.squeeze())
-            log_dict['eval bce loss node'] = bce_loss_node
+            log_dict['eval bce loss node'] = bce_loss_node.item()
 
             # get accuracy
             logits_rounded = node_logits.squeeze()
@@ -802,6 +691,6 @@ class GNNLoss(nn.Module):
             logits_rounded[logits_rounded<=0.5] = 0
             correct = torch.sum(logits_rounded == is_object.squeeze())
             node_accuracy = correct/logits_rounded.shape[0]
-            log_dict['eval node accuracy'] = node_accuracy
+            log_dict['eval node accuracy'] = node_accuracy.item()
 
         return loss, log_dict
