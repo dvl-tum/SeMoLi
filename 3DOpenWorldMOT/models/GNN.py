@@ -253,7 +253,7 @@ class ClusterGNN(MessagePassing):
 
         return edge_index
 
-    def forward(self, data, eval=False, use_edge_att=True, augment=True, visualize=False, name='General', oracle_node=False, oracle_edge=True):
+    def forward(self, data, eval=False, use_edge_att=True, augment=True, visualize=False, name='General', oracle_node=False, oracle_edge=False):
         '''
         clustering: 'heuristic' / 'correlation'
         '''

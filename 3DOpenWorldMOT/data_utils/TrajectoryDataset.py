@@ -68,6 +68,10 @@ class TrajectoryDataset(PyGDataset):
         self.class_dict = ARGOVERSE_CLASSES if 'argo' in self.data_dir else WAYMO_CLASSES
         super().__init__()
         self._processed_paths = self.processed_paths
+        import glob
+        a = len(self._processed_paths)
+        self._processed_paths = glob.glob(self.processed_dir)
+        logger.info(f'Missing files {a-len(self._processed_paths)}')
     
     @property
     def raw_file_names(self):
@@ -249,7 +253,7 @@ class TrajectoryDataset(PyGDataset):
         self.process()
         logger.info('Done!')
 
-    def process(self, multiprocessing=True):
+    def process(self, multiprocessing=False):
 
         already_processed = glob.glob(str(self.processed_dir)+'/*/*')
         missing_paths = set(self.processed_paths).difference(already_processed)
@@ -260,7 +264,8 @@ class TrajectoryDataset(PyGDataset):
 
         if len(missing_paths) and self.loader is None:
             self.loader = AV2SensorDataLoader(data_dir=self.split_dir, labels_dir=self.split_dir)
-
+        import random
+        random.shuffle(missing_paths)
         data_loader = enumerate(missing_paths)
             
         if multiprocessing:
@@ -269,8 +274,8 @@ class TrajectoryDataset(PyGDataset):
                 pool.map(_eval_sequence, data_loader)
         else:
             for data in data_loader:
-                self.process_sweep(data)
-    
+                self.process_sweep(len(missing_paths), data)
+                
     def process_sweep(self, num_data, data):
         j, traj_file = data
         if j % 10000 == 0:
@@ -307,13 +312,16 @@ class TrajectoryDataset(PyGDataset):
             try:
                 pred = np.load(traj_file, allow_pickle=True)
             except:
-                print("could not load processed", traj_file)
-                pred = np.load(traj_file, allow_pickle=True)
+                logger.info("could not load processed", traj_file)
+                return
+                
             
             try:
                 traj = pred['traj']
             except:
-                print("no traj in file", traj_file, [k for k in pred.keys()])
+                logger.info("no traj111 in file", traj_file, [k for k in pred.keys()])
+                return
+
             pc_list = pred['pcs'] if 'pcs' in [k for k in pred.keys()] else pred['pc_list']
             if len(pc_list.shape) > 2:
                 pc_list = pc_list[0]
@@ -411,8 +419,8 @@ class TrajectoryDataset(PyGDataset):
             try:
                 data = torch.load(osp.join(processed_path))
             except:
-                print(f'Failed to load {processed_path}...')
-                quit()
+                logger.info(f'Failed to load {processed_path}...')
+                return
 
         ### If remove static file does not exist
         if not os.path.isfile(processed_path2):
@@ -420,7 +428,8 @@ class TrajectoryDataset(PyGDataset):
                 if len(data['pc_list'].shape) > 2:
                     data['pc_list'] = data['pc_list'][0]
             except:
-                print("len oc list thing", data['pc_list'].shape)
+                logger.info("len oc list thing", data['pc_list'].shape)
+                return
             if len(data['point_instances'].shape) > 1:
                 data['point_instances'] = data['point_instances'][0]
             if len(data['point_categories']) > 1:
@@ -470,8 +479,8 @@ class TrajectoryDataset(PyGDataset):
         try:
             data = torch.load(path)
         except:
-            print(f"could not load file {path} of index {idx}/{len(self.processed_paths)}")
-            quit()
+            logger.info(f"could not load file {path} of index {idx}/{len(self.processed_paths)}")
+            return
 
         # if you always want same number of points (during training), sample/re-sample
         if not self.use_all_points:
@@ -513,7 +522,7 @@ class TrajectoryDataset(PyGDataset):
 def get_TrajectoryDataLoader(cfg, train=True, val=True, test=False):
     # get datasets
     if train and not cfg.just_eval:
-        print('TRAIN')
+        logger.info('TRAIN')
         train_data = TrajectoryDataset(
             cfg.data.data_dir,
             'train',
@@ -535,7 +544,7 @@ def get_TrajectoryDataLoader(cfg, train=True, val=True, test=False):
     else:
         train_loader = None
     if val:
-        print("VAL")
+        logger.info("VAL")
         val_data = TrajectoryDataset(cfg.data.data_dir,
             'val',
             cfg.data.trajectory_dir,
@@ -554,7 +563,7 @@ def get_TrajectoryDataLoader(cfg, train=True, val=True, test=False):
     else:
         val_loader = None
     if test:
-        print("TEST")
+        logger.info("TEST")
         test_data = TrajectoryDataset(cfg.data.data_dir,
             'test',
             cfg.data.trajectory_dir,
