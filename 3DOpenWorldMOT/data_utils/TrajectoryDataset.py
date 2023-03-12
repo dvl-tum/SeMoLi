@@ -253,7 +253,7 @@ class TrajectoryDataset(PyGDataset):
         self.process()
         logger.info('Done!')
 
-    def process(self, multiprocessing=False):
+    def process(self, multiprocessing=True):
 
         already_processed = glob.glob(str(self.processed_dir)+'/*/*')
         missing_paths = set(self.processed_paths).difference(already_processed)
@@ -312,14 +312,14 @@ class TrajectoryDataset(PyGDataset):
             try:
                 pred = np.load(traj_file, allow_pickle=True)
             except:
-                logger.info("could not load processed", traj_file)
+                logger.info(f"could not load processed {traj_file}")
                 return
                 
             
             try:
                 traj = pred['traj']
             except:
-                logger.info("no traj111 in file", traj_file, [k for k in pred.keys()])
+                logger.info(f"no traj111 in file {traj_file}, {[k for k in pred.keys()]}")
                 return
 
             pc_list = pred['pcs'] if 'pcs' in [k for k in pred.keys()] else pred['pc_list']
@@ -428,7 +428,7 @@ class TrajectoryDataset(PyGDataset):
                 if len(data['pc_list'].shape) > 2:
                     data['pc_list'] = data['pc_list'][0]
             except:
-                logger.info("len oc list thing", data['pc_list'].shape)
+                logger.info(f"len oc list thing {data['pc_list'].shape}")
                 return
             if len(data['point_instances'].shape) > 1:
                 data['point_instances'] = data['point_instances'][0]
