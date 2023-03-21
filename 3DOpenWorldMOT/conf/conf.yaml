@@ -29,7 +29,7 @@ tracker_options: # Extra options for the tracker
   track_boxes: False   
   a_threshold: -0.1
   i_threshold: -0.1
-  num_interior: 5
+  num_interior: 1
   overlap: 1
   matching: 'greedy'
   alpha: 0.95

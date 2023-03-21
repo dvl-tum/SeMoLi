@@ -5,7 +5,7 @@ eval_per_seq: 10
 train_steps: 200  # Number of steps per epochs
 val_steps: 100    # Number of validation steps per epoch
 num_workers: 4
-batch_size: 32
+batch_size: 8
 batch_size_val: 1
 shuffle: True
 gpu: 0 # -1 -> no cuda otherwise takes the specified index

@@ -3,10 +3,10 @@ model_name: GNN
 weight_path: None
 hyperparams:
     graph: radius
-    traj_channels: 6
+    traj_channels: 75
     pos_channels: 3
-    k: 16
-    k_eval: 16
+    k: 8
+    k_eval: 32
     r: 5.0
     graph_construction: pos
     edge_attr: diffpostraj
@@ -17,6 +17,9 @@ hyperparams:
     clustering: 'correlation'
     do_visualize: False
     my_graph: True
+    oracle_node: False
+    oracle_edge: False
+    dataset: ${data.dataset_name}
 loss_hyperparams:
     bce_loss: True
     node_loss: False

@@ -4,12 +4,13 @@ dataset_name: 'waymo_traj'
 trajectory_dir: '/storage/user/seidensc/datasets/trajectories_waymo/traj_dataset_waymo/gt_all_egocomp_margin0.6_width2' #'/storage/user/seidensc/datasets/trajectories_waymo/trajectories_rubbish/egocomp_remgroundrc_remclosepts_remlowpts_remstatic_alllaseridx_2000'
 data_dir: '../../../data/waymo_converted'
 num_classes: 1
-use_all_points: True
+use_all_points: False
 use_all_points_eval: True
 num_points: 4096
+num_points_eval: 4096
 remove_static: 1
 remove_static_strategy: 'per_frame' #'per_frame' #'per_seq' #'per_frame' #'per_seq'
-static_thresh: 0.2 #1.1
+static_thresh: 1.0 #1.1
 remove_static_thresh: 1.0
 debug: 1
 short_train: False
