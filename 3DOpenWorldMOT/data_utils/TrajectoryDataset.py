@@ -67,11 +67,13 @@ class TrajectoryDataset(PyGDataset):
 
         self.class_dict = ARGOVERSE_CLASSES if 'argo' in self.data_dir else WAYMO_CLASSES
         super().__init__()
-        self._processed_paths = self.processed_paths
-        import glob
-        a = len(self._processed_paths)
-        self._processed_paths = glob.glob(self.processed_dir)
-        logger.info(f'Missing files {a-len(self._processed_paths)}')
+
+        # import glob
+        # a = len(self._processed_paths)
+        # self._processed_paths = glob.glob(str(self.processed_dir)+'/*/*')
+        # logger.info(f'Missing files {a-len(self._processed_paths)}')
+        self._processed_paths_0 = self._processed_paths[0]
+        # self._processed_paths = ['/storage/user/seidensc/datasets/trajectories_waymo/processed_remove_static/normal/gt_all_egocomp_margin0.6_width25/val/16473613811052081539/1543280278723549.pt']
     
     @property
     def raw_file_names(self):
@@ -205,10 +207,10 @@ class TrajectoryDataset(PyGDataset):
             for seq in seqs\
                 for i, flow_file in enumerate(sorted(os.listdir(osp.join(self.trajectory_dir, seq))))\
                      if i % self.every_x_frame == 0 and i < len(os.listdir(os.path.join(self.trajectory_dir, seq)))-1]
-        
+
         if self.split_val and self.split == 'val':
             return processed_paths[:int(len(processed_paths)/2)]
-        elif self.split_val and self.split == 'val':
+        elif self.split_val and self.split == 'train':
             return processed_paths[int(len(processed_paths)/2):]
         else:
             return processed_paths
@@ -247,16 +249,22 @@ class TrajectoryDataset(PyGDataset):
             label.height_m += self.margin
         return label
     
-    def _process(self):
-        logger.info('Processing...')
-        os.makedirs(self.processed_dir, exist_ok=True)
-        self.process()
-        logger.info('Done!')
+    def _process(self, process=True):
+        if process:
+            logger.info('Processing...')
+            os.makedirs(self.processed_dir, exist_ok=True)
+            self.process()
+            logger.info('Done!')
+        else:
+            self._processed_paths = self.processed_paths
+            logger.info('Not Processing this time :) ')
 
     def process(self, multiprocessing=True):
-
+        self._processed_paths = self.processed_paths
+        print(len(self._processed_paths))
         already_processed = glob.glob(str(self.processed_dir)+'/*/*')
-        missing_paths = set(self.processed_paths).difference(already_processed)
+        # already_processed = list()
+        missing_paths = set(self._processed_paths).difference(already_processed)
 
         missing_paths = [os.path.join(
             self.trajectory_dir, os.path.basename(os.path.dirname(m)), os.path.basename(m)[:-2] + 'npz')\
@@ -264,10 +272,8 @@ class TrajectoryDataset(PyGDataset):
 
         if len(missing_paths) and self.loader is None:
             self.loader = AV2SensorDataLoader(data_dir=self.split_dir, labels_dir=self.split_dir)
-        import random
-        random.shuffle(missing_paths)
-        data_loader = enumerate(missing_paths)
-            
+
+        data_loader = enumerate(missing_paths)            
         if multiprocessing:
             with Pool() as pool:
                 _eval_sequence = partial(self.process_sweep, len(missing_paths))
@@ -301,126 +307,134 @@ class TrajectoryDataset(PyGDataset):
             return
         
         # If processed does not exist
-        elif not os.path.isfile(processed_path):
-            seq = os.path.basename(os.path.dirname(traj_file))
-            if 'non_drive' in self._trajectory_dir and not 'waymo' in self._trajectory_dir:
-                if seq not in map_dict.keys():
-                    log_map_dirpath = self.split_dir / seq / "map"
-                    map_dict[seq] = ArgoverseStaticMap.from_map_dir(log_map_dirpath, build_raster=True)
+        
+        seq = os.path.basename(os.path.dirname(traj_file))
+        if 'non_drive' in self._trajectory_dir and not 'waymo' in self._trajectory_dir:
+            if seq not in map_dict.keys():
+                log_map_dirpath = self.split_dir / seq / "map"
+                map_dict[seq] = ArgoverseStaticMap.from_map_dir(log_map_dirpath, build_raster=True)
 
-            # load point clouds
-            try:
-                pred = np.load(traj_file, allow_pickle=True)
-            except:
-                logger.info(f"could not load processed {traj_file}")
-                return
-                
+        # load point clouds
+        try:
+            pred = np.load(traj_file)
+        except:
+            logger.info(f"could not load processed {traj_file}")
+            return
             
-            try:
-                traj = pred['traj']
-            except:
-                logger.info(f"no traj111 in file {traj_file}, {[k for k in pred.keys()]}")
-                return
-
+        
+        try:
+            traj = pred['traj']
+        except:
+            logger.info(f"Bad zip failed at traj {traj_file}, {[k for k in pred.keys()]}")
+            return
+        
+        try:
             pc_list = pred['pcs'] if 'pcs' in [k for k in pred.keys()] else pred['pc_list']
-            if len(pc_list.shape) > 2:
-                pc_list = pc_list[0]
-
+        except:
+            logger.info(f"Bad zip failed at pc {traj_file}, {[k for k in pred.keys()]}")
+            return
+        
+        try:
             timestamps = pred['timestamps']
-            if len(pred['timestamps'].shape) > 1:
-                timestamps = timestamps[0]
+        except:
+            logger.info(f"Bad zip failed at time {traj_file}, {[k for k in pred.keys()]}")
+            return
 
-            # get labels
-            all_instances = list()
-            all_categories = list()
-            if self.split != 'test':
-                labels = self.loader.get_labels_at_lidar_timestamp(
-                    log_id=seq, lidar_timestamp_ns=int(timestamps[0]))
-                
-                if self.margin:
-                    for label in labels:
-                        self.add_margin(label)
+        if len(pc_list.shape) > 2:
+            pc_list = pc_list[0]
 
-                # remove labels that are non in dirvable area
-                if 'non_drive' in self._trajectory_dir and not 'waymo' in self._trajectory_dir:
-                    centroids_ego = np.asarray([label.dst_SE3_object.translation for label in labels])
-                    city_SE3_ego = self.loader.get_city_SE3_ego(seq, int(timestamps[0]))
-                    centroids_city = city_SE3_ego.transform_point_cloud(
-                            centroids_ego)
-                    bool_labels = map_dict[seq].get_raster_layer_points_boolean(
-                        centroids_city, layer_name=RasterLayerType.DRIVABLE_AREA)
-                    labels = [l for i, l in enumerate(labels) if bool_labels[i]]
+        if len(pred['timestamps'].shape) > 1:
+            timestamps = timestamps[0]
 
-                # remove points of labels that are far away (>80,)
-                if 'far' in self._trajectory_dir:
-                    all_centroids = np.asarray([label.dst_SE3_object.translation for label in labels])
-                    dists_to_center = np.sqrt(np.sum(all_centroids ** 2, 1))
-                    ind = np.where(dists_to_center <= 80)[0]
-                    labels = [labels[i] for i in ind]
-                
-                # hemove points that hare high
-                if 'low' in self._trajectory_dir:
-                    all_centroids = np.asarray([label.dst_SE3_object.translation for label in labels])[:, -1]
-                    ind = np.where(all_centroids <= 4)[0]
-                    labels = [labels[i] for i in ind]
-
-                # get per point and object masks and bounding boxs and their labels 
-                masks = list()
+        # get labels
+        all_instances = list()
+        all_categories = list()
+        if self.split != 'test':
+            labels = self.loader.get_labels_at_lidar_timestamp(
+                log_id=seq, lidar_timestamp_ns=int(timestamps[0]))
+            
+            if self.margin:
                 for label in labels:
+                    self.add_margin(label)
+
+            # remove labels that are non in dirvable area
+            if 'non_drive' in self._trajectory_dir and not 'waymo' in self._trajectory_dir:
+                centroids_ego = np.asarray([label.dst_SE3_object.translation for label in labels])
+                city_SE3_ego = self.loader.get_city_SE3_ego(seq, int(timestamps[0]))
+                centroids_city = city_SE3_ego.transform_point_cloud(
+                        centroids_ego)
+                bool_labels = map_dict[seq].get_raster_layer_points_boolean(
+                    centroids_city, layer_name=RasterLayerType.DRIVABLE_AREA)
+                labels = [l for i, l in enumerate(labels) if bool_labels[i]]
+
+            # remove points of labels that are far away (>80,)
+            if 'far' in self._trajectory_dir:
+                all_centroids = np.asarray([label.dst_SE3_object.translation for label in labels])
+                dists_to_center = np.sqrt(np.sum(all_centroids ** 2, 1))
+                ind = np.where(dists_to_center <= 80)[0]
+                labels = [labels[i] for i in ind]
+            
+            # hemove points that hare high
+            if 'low' in self._trajectory_dir:
+                all_centroids = np.asarray([label.dst_SE3_object.translation for label in labels])[:, -1]
+                ind = np.where(all_centroids <= 4)[0]
+                labels = [labels[i] for i in ind]
+
+            # get per point and object masks and bounding boxs and their labels 
+            masks = list()
+            for label in labels:
+                try:
                     interior = point_cloud_handling.compute_interior_points_mask(
                         pc_list, label.vertices_m)
-                    int_label = self.class_dict[label.category] if 'argo' in self.data_dir else int(label.category)
-                    interior = interior.astype(int) * int_label
-                    masks.append(interior)
+                except:
+                    print(pc_list, label.vertices_m)
+                    quit()
 
-                if len(labels) == 0:
-                    masks.append(np.zeros(pc_list.shape[0]))
-                
-                masks = np.asarray(masks).T
+                int_label = self.class_dict[label.category] if 'argo' in self.data_dir else int(label.category)
+                interior = interior.astype(int) * int_label
+                masks.append(interior)
+
+            if len(labels) == 0:
+                masks.append(np.zeros(pc_list.shape[0]))
             
-                # assign unique label and instance to each point
-                # label 0 and instance 0 is background
-                point_categories = list()
-                point_instances = list()
-                for j in range(masks.shape[0]):
-                    if np.where(masks[j]>0)[0].shape[0] != 0:
-                        point_categories.append(masks[j, np.where(masks[j]>0)[0][0]])
-                        point_instances.append(np.where(masks[j]>0)[0][0]+1)
-                    else:
-                        point_categories.append(0)
-                        point_instances.append(0)
-
-                point_instances = np.asarray(point_instances, dtype=np.int64)
-                point_categories = np.asarray(point_categories, dtype=np.int64)
-
-                all_categories.append(point_categories)
-                all_instances.append(point_instances)
-
-                # putting it all together
-                data = PyGData(
-                    pc_list=torch.from_numpy(pc_list),
-                    traj=torch.from_numpy(traj),
-                    timestamps=torch.from_numpy(timestamps),
-                    point_categories=torch.atleast_2d(torch.from_numpy(np.asarray(all_categories)).squeeze()),
-                    point_instances=torch.atleast_2d(torch.from_numpy(np.asarray(all_instances)).squeeze()),
-                    log_id=seq)
-            else:
-                data = PyGData(
-                    pc_list=torch.from_numpy(pc_list),
-                    traj=torch.from_numpy(traj),
-                    timestamps=torch.from_numpy(timestamps),
-                    log_id=seq)
-
-            os.makedirs(os.path.dirname(processed_path), exist_ok=True)
-            torch.save(data, osp.join(processed_path))
-            # print(f"Save {osp.join(processed_path)}...")
+            masks = np.asarray(masks).T
         
+            # assign unique label and instance to each point
+            # label 0 and instance 0 is background
+            point_categories = list()
+            point_instances = list()
+            for j in range(masks.shape[0]):
+                if np.where(masks[j]>0)[0].shape[0] != 0:
+                    point_categories.append(masks[j, np.where(masks[j]>0)[0][0]])
+                    point_instances.append(np.where(masks[j]>0)[0][0]+1)
+                else:
+                    point_categories.append(0)
+                    point_instances.append(0)
+
+            point_instances = np.asarray(point_instances, dtype=np.int64)
+            point_categories = np.asarray(point_categories, dtype=np.int64)
+
+            all_categories.append(point_categories)
+            all_instances.append(point_instances)
+
+            # putting it all together
+            data = PyGData(
+                pc_list=torch.from_numpy(pc_list),
+                traj=torch.from_numpy(traj),
+                timestamps=torch.from_numpy(timestamps),
+                point_categories=torch.atleast_2d(torch.from_numpy(np.asarray(all_categories)).squeeze()),
+                point_instances=torch.atleast_2d(torch.from_numpy(np.asarray(all_instances)).squeeze()),
+                log_id=seq)
         else:
-            try:
-                data = torch.load(osp.join(processed_path))
-            except:
-                logger.info(f'Failed to load {processed_path}...')
-                return
+            data = PyGData(
+                pc_list=torch.from_numpy(pc_list),
+                traj=torch.from_numpy(traj),
+                timestamps=torch.from_numpy(timestamps),
+                log_id=seq)
+
+        os.makedirs(os.path.dirname(processed_path), exist_ok=True)
+        torch.save(data, osp.join(processed_path))
+        # print(f"Save {osp.join(processed_path)}...")
 
         ### If remove static file does not exist
         if not os.path.isfile(processed_path2):
@@ -453,10 +467,12 @@ class TrajectoryDataset(PyGDataset):
                 mean_traj = torch.mean(diff_dist/diff_time, axis=1)
                 mean_traj = mean_traj > self.static_thresh
                 
+                empty = False
                 # if no moving point and not evaluation, sample few random
-                if torch.all(~mean_traj) and not self._eval:
+                if torch.all(~mean_traj):
                     idxs = torch.randint(0, mean_traj.shape[0], size=(200, ))
                     mean_traj[idxs] = True
+                    empty = True                    
                 
                 # apply mask
                 data['pc_list'] = data['pc_list'][mean_traj, :]
@@ -464,6 +480,7 @@ class TrajectoryDataset(PyGDataset):
 
                 data['point_instances'] = data['point_instances'].squeeze()[mean_traj]
                 data['point_categories'] = data['point_categories'].squeeze()[mean_traj]
+                data['empty'] = empty
 
                 os.makedirs(os.path.dirname(processed_path2), exist_ok=True)
                 torch.save(data, processed_path2)
@@ -479,11 +496,53 @@ class TrajectoryDataset(PyGDataset):
         try:
             data = torch.load(path)
         except:
-            logger.info(f"could not load file {path} of index {idx}/{len(self.processed_paths)}")
-            return
+            logger.info(f"could not load file {path} of index {idx}/{len(self._processed_paths)}")
+            data = torch.load(self._processed_paths_0)
+        
+        '''if self.remove_static and data['pc_list'].shape[0]:
+            mean_traj = data['traj'][:, :, :-1]
+            timestamps = data['timestamps']
+
+            # get mean velocity [m/s] along trajectory and check if > thresh
+            #diff_dist = torch.linalg.norm(
+            #    mean_traj[:, :-1, :-1] - mean_traj[:, 1:, :-1] , axis=2)
+            diff_dist = torch.linalg.norm(
+                mean_traj[:, 1, :-1].unsqueeze(1) - mean_traj[:, 0, :-1].unsqueeze(1), axis=2)
+            diff_time = timestamps[1:diff_dist.shape[1]+1] - timestamps[:diff_dist.shape[1]]
+
+            # bring from nano / mili seconds to seconds
+            if 'argo' in self.data_dir:
+                diff_time = diff_time / torch.pow(torch.tensor(10), 9.0) 
+            else:
+                diff_time = diff_time / torch.pow(torch.tensor(10), 6.0)
+
+            mean_traj = torch.mean(diff_dist/diff_time, axis=1)
+            mean_traj = mean_traj > self.static_thresh
+            
+            empty = False
+
+            # if no moving point and not evaluation, sample few random
+            if torch.all(~mean_traj):
+                idxs = torch.randint(0, mean_traj.shape[0], size=(200, ))
+                mean_traj[idxs] = True
+                empty = True
+            
+            # apply mask
+            data['pc_list'] = data['pc_list'][mean_traj, :]
+            data['traj'] = data['traj'][mean_traj]
+            if data['point_instances'].shape[0] > 1:
+                data['point_instances'] = data['point_instances'].squeeze()[mean_traj]
+                data['point_categories'] = data['point_categories'].squeeze()[mean_traj]
+            else:
+                data['point_instances'] = data['point_instances'][mean_traj]
+                data['point_categories'] = data['point_categories'][mean_traj]
+            data['empty'] = empty
+
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            torch.save(data, path)'''
 
         # if you always want same number of points (during training), sample/re-sample
-        if not self.use_all_points:
+        if not self.use_all_points and data['traj'].shape[0] > self.num_points:
             idxs = torch.randint(0, data['traj'].shape[0], size=(self.num_points, ))
             mask = torch.arange(data['traj'].shape[0])
             mask = torch.isin(mask, idxs)
@@ -492,6 +551,15 @@ class TrajectoryDataset(PyGDataset):
             data['traj'] = data['traj'][idxs]
             data['point_categories'] = data['point_categories'][idxs]
             data['point_instances'] = data['point_instances'][idxs]
+        
+        data['batch'] = torch.ones(data['pc_list'].shape[0])*idx
+        if 'empty' not in data.keys:
+            if data['pc_list'].shape[0] == 0:
+                data = torch.load(path)
+                data['empty'] = True
+            else:
+                data['empty'] = False
+        data['timestamps'] = data['timestamps'].unsqueeze(0)
 
         return data
 
@@ -549,7 +617,7 @@ def get_TrajectoryDataLoader(cfg, train=True, val=True, test=False):
             'val',
             cfg.data.trajectory_dir,
             cfg.data.use_all_points_eval,
-            cfg.data.num_points,
+            cfg.data.num_points_eval,
             cfg.data.remove_static,
             cfg.data.static_thresh,
             cfg.data.debug,
@@ -568,7 +636,7 @@ def get_TrajectoryDataLoader(cfg, train=True, val=True, test=False):
             'test',
             cfg.data.trajectory_dir,
             cfg.data.use_all_points_eval,
-            cfg.data.num_points,
+            cfg.data.num_points_eval,
             cfg.data.remove_static,
             cfg.data.static_thresh,
             cfg.data.debug,
