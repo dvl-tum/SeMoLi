@@ -26,7 +26,7 @@ class DBSCAN():
         pc = clustering['pc_list'].numpy()
         if len(pc.shape) != 2:
             pc = pc[0]
-        timestamps = clustering['timestamps'].numpy()
+        timestamps = clustering['timestamps'].squeeze().numpy()
         diff_traj = traj[:, :-1] - traj[:, 1:]
         
         # if no moving point

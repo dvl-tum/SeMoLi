@@ -285,48 +285,29 @@ class ClusterGNN(MessagePassing):
                 # following two lines are faster but cuda oom
                 # dist = torch.cdist(X_time, X_time)
                 # dist = dist.mean(dim=0)
-                import time
-                s = time.time()
                 dist = torch.zeros(X.shape[0], X.shape[0]).cuda()
                 for t in range(X.shape[1]):
                     dist += torch.cdist(X[:, t, :].unsqueeze(0),X[:, t, :].unsqueeze(0)).squeeze()
                 dist = dist / X.shape[1]
-                print('dist', time.time()-s)
-                s = time.time()
 
             # set diagonal elements to 0to have no self-loops
             dist.fill_diagonal_(100)
-            print('rem self loops', time.time()-s)
-            s = time.time()
-            # get idxs where dist , radius
-            if type == 'radius':
-                idx_0 = torch.nonzero(dist < r)
-                idx_0, idx_1 = idx_0[:, 0], idx_0[:, 1]
-            print('radius', time.time()-s)
-            s = time.time()
+
             # get indices up to max_num_neighbors per node --> knn neighbors
             num_neighbors = min(max_num_neighbors, dist.shape[0])
             idxs_0 = torch.tile(torch.arange(dist.shape[0]).unsqueeze(1).cuda(), (1, num_neighbors)).flatten()
             idxs_1 = dist.topk(k=num_neighbors, dim=1, largest=False).indices.flatten()
-            print('topk', time.time()-s)
-            s = time.time()
+
             # if radius graph, filter nodes that are within radius 
             # but don't exceed max num neighbors
             if type == 'radius':
-                '''
                 dist = dist[idxs_0, idxs_1]
                 idx = torch.where(dist<r)[0]
                 idxs_0, idxs_1 = idxs_0[idx], idxs_1[idx]
-                '''
-                dist = torch.zeros([dist.shape[0], dist.shape[1]]).cuda()
-                dist[idx_0, idx_1] += 1
-                dist[idxs_0, idxs_1] += 1
-                idxs_0, idxs_1 = torch.where(dist == 2)
 
             _idxs_0.append(idxs_0)
             _idxs_1.append(idxs_1)
-            print('combine radius and topk', time.time()-s)
-            print()
+
         _idxs_0 = torch.hstack(_idxs_0)
         _idxs_1 = torch.hstack(_idxs_1)
 

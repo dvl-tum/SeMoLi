@@ -37,7 +37,7 @@ class DBSCAN_Intersection():
     def forward(self, clustering):
         traj = clustering.traj.numpy()
         pc = clustering['pc_list'].numpy()
-        timestamps = clustering['timestamps'].numpy()
+        timestamps = clustering['timestamps'].squeeze().numpy()
 
         # if no moving point
         if traj.shape[0] == 0:
