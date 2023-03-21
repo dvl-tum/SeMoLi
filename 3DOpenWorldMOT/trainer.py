@@ -69,8 +69,15 @@ def load_model(cfg, checkpoints_dir, logger):
             cluster = '_' + cfg.models.hyperparams.clustering
             my_graph = "_mygraph" if cfg.models.hyperparams.my_graph else '_torchgraph'
 
-            name = cfg.models.hyperparams.edge_attr + "_" + cfg.models.hyperparams.node_attr + node + cluster + my_graph
+            name = cfg.models.hyperparams.graph_construction + '_' + cfg.models.hyperparams.edge_attr + "_" + cfg.models.hyperparams.node_attr + node + cluster + my_graph
+            name = f'{cfg.data.num_points_eval}' + "_" + name if not cfg.data.use_all_points_eval else name
+            name = f'{cfg.data.num_points}' + "_" + name if not cfg.data.use_all_points else name
+            
+            name = 'nooracle' + "_" + name if not cfg.models.hyperparams.oracle_node and not cfg.models.hyperparams.oracle_edge else name
+            name = 'oracleedge' + "_" + name if cfg.models.hyperparams.oracle_edge else name
+            name = 'oraclenode' + "_" + name if cfg.models.hyperparams.oracle_node else name
             name = os.path.basename(cfg.data.trajectory_dir) + "_" + name
+            
             logger.info(f'Using this name: {name}')
             os.makedirs(checkpoints_dir + name, exist_ok=True)
 
@@ -101,7 +108,7 @@ def load_model(cfg, checkpoints_dir, logger):
                     momentum=0.9)
     elif cfg.models.model_name == 'DBSCAN':
         name = cfg.models.hyperparams.input + "_" + str(cfg.models.hyperparams.thresh) + "_" + str(cfg.models.hyperparams.min_samples)
-        name = os.path.basename(cfg.data.trajectory_dir) + "_" + nam
+        name = os.path.basename(cfg.data.trajectory_dir) + "_" + name
     elif cfg.models.model_name == 'DBSCAN_Intersection':
         name = cfg.models.hyperparams.input_traj + "_" + str(cfg.models.hyperparams.thresh_traj) + "_" + str(cfg.models.hyperparams.min_samples_traj) + "_" + str(cfg.models.hyperparams.thresh_pos) + "_" + str(cfg.models.hyperparams.min_samples_pos) + "_" + str(cfg.models.hyperparams.flow_thresh)
         name = os.path.basename(cfg.data.trajectory_dir) + "_" + name
@@ -117,7 +124,6 @@ def bn_momentum_adjust(m, momentum):
 @hydra.main(config_path="conf", config_name="conf")   
 def main(cfg):
     OmegaConf.set_struct(cfg, False)  # This allows getattr and hasattr methods to function correctly
-
     logger, experiment_dir, checkpoints_dir, out_path = initialize(cfg)
 
     logger.info("start loading training data ...")
@@ -134,7 +140,8 @@ def main(cfg):
 
     is_neural_net = cfg.models.model_name != 'DBSCAN' \
                 and cfg.models.model_name != 'SpectralClustering'\
-                    and cfg.models.model_name != 'SimpleGraph'
+                    and cfg.models.model_name != 'SimpleGraph'\
+                    and cfg.models.model_name != 'DBSCAN_Intersection'
     
     global_epoch = 0
     best_metric = 0
@@ -223,19 +230,19 @@ def main(cfg):
                     model = model.eval()
                     _log_dict = None
                 logger.info('---- EPOCH %03d EVALUATION ----' % (global_epoch + 1))
-
                 # Iterate over validation set
                 for i, (data) in tqdm(enumerate(val_loader), total=len(val_loader), smoothing=0.9):
-                    
-                    logits, clusters, edge_index, batch_edge = model(data, eval=True, name=name)
-                    data = data.cpu()
+                    if data['empty']:
+                        continue
+                    logits, clusters, edge_index, _ = model(data, eval=True, name=name)
+
                     if not len(clusters):
                         continue
 
                     # clusters = data['point_instances']
 
                     nmi = calc_nmi.calc_normalized_mutual_information(
-                        data['point_instances'], clusters)
+                        data['point_instances'].cpu(), clusters)
                     nmis.append(nmi)
 
                     # generate detections
@@ -248,7 +255,7 @@ def main(cfg):
                         data['point_instances'],
                         last=i+1 == len(val_loader))
                     
-                    if is_neural_net:
+                    if is_neural_net and logits[0] is not None:
                         loss, log_dict = criterion.eval(logits, data, edge_index)
                         eval_loss += loss
                         if cfg.wandb:

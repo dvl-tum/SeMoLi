@@ -163,15 +163,14 @@ class Tracker3D():
         
         self.filtered_gt = '../../../data/argoverse2/val_0.833_per_frame_remove_non_move_remove_far_remove_non_drive_filtered_version.feather'
     
-    def new_log_id(self, log_id, only_dets=True):
+    def new_log_id(self, log_id, only_dets=True, associate=False):
         # save tracks to feather and reset variables
         if self.log_id != -1:
-            self.active_tracks += self.inactive_tracks
-            found = self.to_feather(only_dets=only_dets)
-            if not found:
-                logger.info(f'No detections found in {log_id}')
             self.active_tracks = list()
             self.inactive_tracks = list()
+            found = self.to_feather(only_dets=only_dets, associate=associate)
+            if not found:
+                logger.info(f'No detections found in {log_id}')
 
         self.log_id = log_id
         logger.info(f"New log id {log_id}...")
@@ -210,10 +209,10 @@ class Tracker3D():
             # generate new detected trajectory
             traj_cluster = traj[clusters==c]
             detections.append(InitialDetection(
-                traj_cluster,
-                point_cluster,
+                traj_cluster.cpu(),
+                point_cluster.cpu(),
                 log_id=log_id,
-                timestamps=timestamps,
+                timestamps=timestamps.cpu(),
                 num_interior=num_interior,
                 overlap=self.overlap,
                 gt_id=gt_id))
@@ -223,7 +222,9 @@ class Tracker3D():
             self.detections.extend(detections)
 
         if last and only_dets:
-            self.to_feather(only_dets=only_dets, associate=associate)
+            found = self.to_feather(only_dets=only_dets, associate=associate)
+            if not found:
+                logger.info(f'No detections found in {log_id}')
             
         return detections
 
@@ -554,7 +555,7 @@ class Tracker3D():
                 for det in track.detections:
                     det = det.final_detection()
                     # quaternion rotation around z axis
-                    quat = np.array([np.cos(det.heading/2), 0, 0, np.sin(det.heading/2)])
+                    quat = torch.tensor([torch.cos(det.heading/2), 0, 0, torch.sin(det.heading/2)]).numpy()
                     # REGULAR_VEHICLE = only dummy class
                     values = [
                         det.translation[0],
@@ -587,7 +588,7 @@ class Tracker3D():
             for det in self.detections:
                 det = det.final_detection()
                 # quaternion rotation around z axis
-                quat = np.array([np.cos(det.heading/2), 0, 0, np.sin(det.heading/2)])
+                quat = torch.tensor([torch.cos(det.heading/2), 0, 0, torch.sin(det.heading/2)]).numpy()
                 # REGULAR_VEHICLE = only dummy class
                 values = [
                     det.translation[0].item(),
@@ -846,7 +847,6 @@ class Track():
                     [torch.cos(alpha), torch.sin(alpha), 0],
                     [torch.sin(alpha), torch.cos(alpha), 0],
                     [0, 0, 1]])
-
                 self.final.append(Detection(rot, translation, lwh, det.timestamps[time], det.log_id, det.num_interior))
     
     def _get_traj(self, i=-1):
@@ -944,8 +944,7 @@ class InitialDetection():
             [torch.cos(alpha), torch.sin(alpha), 0],
             [torch.sin(alpha), torch.cos(alpha), 0],
             [0, 0, 1]])
-
-        final = Detection(rot, alpha, translation, lwh, self.timestamps[0], self.log_id, self.num_interior)
+        final = Detection(rot, alpha, translation, lwh, self.timestamps[0, 0], self.log_id, self.num_interior)
 
         return final
 
