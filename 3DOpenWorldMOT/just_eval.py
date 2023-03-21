@@ -39,8 +39,10 @@ tracker_dir = '/usr/wiss/seidensc/Documents/3DOpenWorldMOT/3DOpenWorldMOT/output
 seq_list = os.listdir('/usr/wiss/seidensc/Documents/3DOpenWorldMOT/3DOpenWorldMOT/outputs/2022-10-19/00-25-32/out/tracker_out' + '/SimpleGraph_TRAJ_POS/val' )
 seq_list.remove('e1d68dde-22a9-3918-a526-0850b21ff2eb')
 
-tracker_dir = '/usr/wiss/seidensc/Documents/3DOpenWorldMOT/3DOpenWorldMOT/outputs/2022-11-24/11-03-53/out/tracker_out'
-seq_list = os.listdir(tracker_dir + '/first_training/val' )
+tracker_dir = 'out/gt_all_egocomp_margin0.6_width25_oraclenode_oracleedge_min_mean_max_diffpostrajtime_min_mean_max_vel_nodescore_correlation_mygraph'
+seq_list = os.listdir(tracker_dir + '/val' )
+
+# 1543280286123574
 
 gt_folder = '/storage/user/seidensc/datasets/argoverse2'
 print(tracker_dir)
