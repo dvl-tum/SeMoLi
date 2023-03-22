@@ -5,6 +5,7 @@ from omegaconf import OmegaConf
 import torch
 import logging
 from tqdm import tqdm
+import torch.nn as nn
 
 from models import _model_factory, _loss_factory, Tracker3D
 from data_utils.TrajectoryDataset import get_TrajectoryDataLoader
@@ -137,6 +138,9 @@ def main(cfg):
 
     model, start_epoch, name, optimizer, criterion = \
         load_model(cfg, checkpoints_dir, logger)
+
+    if cfg.multi_gpu:
+        model = nn.DataParallel(model)
 
     is_neural_net = cfg.models.model_name != 'DBSCAN' \
                 and cfg.models.model_name != 'SpectralClustering'\
