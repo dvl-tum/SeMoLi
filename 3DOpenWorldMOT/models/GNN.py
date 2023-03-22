@@ -364,8 +364,8 @@ class ClusterGNN(MessagePassing):
                 for _ in range(max(math.ceil(missing_neg/point_instances.shape[0])*2, 1)):
                     a.append(torch.randperm(point_instances.shape[0]))
                     b.append(torch.randperm(point_instances.shape[0]))
-                a = torch.cat(a)
-                b = torch.cat(b)
+                a = torch.cat(a).cuda()
+                b = torch.cat(b).cuda()
                 a, b = a[~point_instances[a, b]], b[~point_instances[a, b]]
                 a, b = a[:missing_neg], b[:missing_neg]
             elif point_instances.shape[0]:
@@ -373,8 +373,8 @@ class ClusterGNN(MessagePassing):
                 for _ in range(max(math.ceil(missing_pos/point_instances.shape[0])*2, 1)):
                     a.append(torch.randperm(point_instances.shape[0]))
                     b.append(torch.randperm(point_instances.shape[0]))
-                a = torch.cat(a)
-                b = torch.cat(b)
+                a = torch.cat(a).cuda()
+                b = torch.cat(b).cuda()
                 a, b = a[point_instances[a, b]], b[point_instances[a, b]]
                 a, b = a[:missing_pos], b[:missing_pos]
             add_idxs = torch.stack([a, b]).cuda()
