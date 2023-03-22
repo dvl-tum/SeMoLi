@@ -27,7 +27,7 @@ WAYMO_CLASSES = {'TYPE_UNKNOWN': 0, 'TYPE_VECHICLE': 1, 'TYPE_PEDESTRIAN': 2, 'T
 
 
 class TrajectoryDataset(PyGDataset):
-    def __init__(self, data_dir, split, trajectory_dir, use_all_points, num_points, remove_static, static_thresh, debug, _eval=False, every_x_frame=1, margin=0.6, split_val=False, short_train=False):
+    def __init__(self, data_dir, split, trajectory_dir, use_all_points, num_points, remove_static, static_thresh, debug, _eval=False, every_x_frame=1, margin=0.6, split_val=False, short_train=False, _processed_dir=False, do_process=True):
         self.split_dir = Path(os.path.join(data_dir, split))
         self.trajectory_dir = Path(os.path.join(trajectory_dir, split))
         self.data_dir = data_dir
@@ -46,6 +46,8 @@ class TrajectoryDataset(PyGDataset):
         self._eval = _eval
         self.every_x_frame = every_x_frame
         self.margin = margin
+        self._processed_dir = _processed_dir
+        self.do_process =  do_process
 
         # use subset of seqs for training
         if short_train:
@@ -180,33 +182,46 @@ class TrajectoryDataset(PyGDataset):
     
     @property
     def processed_paths(self):
-        if self.debug:
-            processed_paths = list()
-            for seq in os.listdir(self.trajectory_dir):
-                # ignore pre_transfor files
-                if seq[-3:] == '.pt':
-                    continue
-                # to get results just for specific seq
-                if self.seq is not None:
-                    if seq != self.seq:
-                        continue
-                # don't take last file in directory cos some how only 24 not 25 long
-                for i, flow_file in enumerate(sorted(os.listdir(os.path.join(self.trajectory_dir, seq)))):
+        if not self.do_process:
+            if self.debug:
+                processed_paths = list()
+                for i, flow_file in enumerate(sorted(os.listdir(os.path.join(self.processed_dir, self.seq)))):
                     if i % self.every_x_frame != 0:
                         continue
-                    if i >= len(os.listdir(os.path.join(self.trajectory_dir, seq)))-1 \
-                            and len(os.listdir(os.path.join(self.trajectory_dir, seq))) != 1:
+                    processed_paths.append(os.path.join(self.processed_dir, self.seq, flow_file))
+            else:
+                seqs = self.short_train if self.short_train is not None else os.listdir(self.processed_dir)
+                processed_paths = [os.path.join(self.processed_dir, seq, flow_file)\
+                    for seq in seqs\
+                        for i, flow_file in enumerate(sorted(os.listdir(osp.join(self.processed_dir, seq))))\
+                            if i % self.every_x_frame == 0]
+        else:
+            if self.debug:
+                processed_paths = list()
+                for seq in os.listdir(self.trajectory_dir):
+                    # ignore pre_transfor files
+                    if seq[-3:] == '.pt':
                         continue
-                    processed_paths.append(os.path.join(self.processed_dir, seq, flow_file[:-3] + 'pt'))
+                    # to get results just for specific seq
+                    if self.seq is not None:
+                        if seq != self.seq:
+                            continue
+                    # don't take last file in directory cos some how only 24 not 25 long
+                    for i, flow_file in enumerate(sorted(os.listdir(os.path.join(self.trajectory_dir, seq)))):
+                        if i % self.every_x_frame != 0:
+                            continue
+                        if i >= len(os.listdir(os.path.join(self.trajectory_dir, seq)))-1 \
+                                and len(os.listdir(os.path.join(self.trajectory_dir, seq))) != 1:
+                            continue
+                        processed_paths.append(os.path.join(self.processed_dir, seq, flow_file[:-3] + 'pt'))
 
-            return processed_paths
-
-        seqs = self.short_train if self.short_train is not None else os.listdir(self.trajectory_dir)
-
-        processed_paths = [os.path.join(self.processed_dir, seq, flow_file[:-3] + 'pt')\
-            for seq in seqs\
-                for i, flow_file in enumerate(sorted(os.listdir(osp.join(self.trajectory_dir, seq))))\
-                     if i % self.every_x_frame == 0 and i < len(os.listdir(os.path.join(self.trajectory_dir, seq)))-1]
+                return processed_paths
+            else:
+                seqs = self.short_train if self.short_train is not None else os.listdir(self.trajectory_dir)
+                processed_paths = [os.path.join(self.processed_dir, seq, flow_file[:-3] + 'pt')\
+                    for seq in seqs\
+                        for i, flow_file in enumerate(sorted(os.listdir(osp.join(self.trajectory_dir, seq))))\
+                             if i % self.every_x_frame == 0 and i < len(os.listdir(os.path.join(self.trajectory_dir, seq)))-1]
 
         if self.split_val and self.split == 'val':
             return processed_paths[:int(len(processed_paths)/2)]
@@ -224,6 +239,9 @@ class TrajectoryDataset(PyGDataset):
     @property
     def processed_dir(self) -> str:
         
+        if self._processed_dir:
+            return Path(os.path.join(self._processed_dir, self.split))
+
         data = '_waymo' if 'waymo' in str(self.trajectory_dir) else ''
         if 'rubbish' in str(self.trajectory_dir):
             add_on = 'rubbish'
@@ -249,8 +267,8 @@ class TrajectoryDataset(PyGDataset):
             label.height_m += self.margin
         return label
     
-    def _process(self, process=True):
-        if process:
+    def _process(self):
+        if self.do_process:
             logger.info('Processing...')
             os.makedirs(self.processed_dir, exist_ok=True)
             self.process()
@@ -594,28 +612,22 @@ def get_TrajectoryDataLoader(cfg, train=True, val=True, test=False):
         train_data = TrajectoryDataset(
             cfg.data.data_dir,
             'train',
-            cfg.data.trajectory_dir,
+            cfg.data.trajectory_dir + '_train',
             cfg.data.use_all_points,
             cfg.data.num_points,
             cfg.data.remove_static,
             cfg.data.static_thresh,
             cfg.data.debug,
-            short_train=cfg.data.short_train)
-        if len(train_data):
-            train_loader = PyGDataLoader(
-                train_data,
-                batch_size=cfg.training.batch_size,
-                drop_last=True,
-                shuffle=True)
-        else:
-            train_loader = None
+            short_train=cfg.data.short_train,
+            do_process=cfg.data.do_process,
+            _processed_dir=cfg.data.processed_dir + '_train')
     else:
-        train_loader = None
+        train_data = None
     if val:
         logger.info("VAL")
         val_data = TrajectoryDataset(cfg.data.data_dir,
             'val',
-            cfg.data.trajectory_dir,
+            cfg.data.trajectory_dir + '_val',
             cfg.data.use_all_points_eval,
             cfg.data.num_points_eval,
             cfg.data.remove_static,
@@ -623,13 +635,11 @@ def get_TrajectoryDataLoader(cfg, train=True, val=True, test=False):
             cfg.data.debug,
             _eval=True, 
             every_x_frame=cfg.data.every_x_frame,
-            split_val=cfg.data.split_val)
-        if len(val_data):
-            val_loader = PyGDataLoader(val_data, batch_size=cfg.training.batch_size_val)
-        else:
-            val_loader = None
+            split_val=cfg.data.split_val,
+            do_process=cfg.data.do_process,
+            _processed_dir=cfg.data.processed_dir + '_val')
     else:
-        val_loader = None
+        val_data = None
     if test:
         logger.info("TEST")
         test_data = TrajectoryDataset(cfg.data.data_dir,
@@ -642,12 +652,10 @@ def get_TrajectoryDataLoader(cfg, train=True, val=True, test=False):
             cfg.data.debug,
             _eval=True, 
             every_x_frame=cfg.data.every_x_frame,
-            split_val=cfg.data.split_val)
-        if len(test_data):
-            test_loader = PyGDataLoader(test_data, batch_size=cfg.training.batch_size_val)
-        else:
-            test_loader = None
+            split_val=cfg.data.split_val,
+            do_process=cfg.data.do_process,
+            _processed_dir=cfg.data.processed_dir)
     else:
-        test_loader = None
+        test_data = None
 
-    return train_loader, val_loader, test_loader
+    return train_data, val_data, test_data

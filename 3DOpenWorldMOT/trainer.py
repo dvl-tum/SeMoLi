@@ -4,8 +4,13 @@ import hydra
 from omegaconf import OmegaConf
 import torch
 import logging
-from tqdm import tqdm
+from tqdm import tqdm 
+
 import torch.nn as nn
+from torch.utils.data.distributed import DistributedSampler
+import torch.multiprocessing as mp
+from torch_geometric.loader import DataLoader as PyGDataLoader
+import torch.distributed as dist
 
 from models import _model_factory, _loss_factory, Tracker3D
 from data_utils.TrajectoryDataset import get_TrajectoryDataLoader
@@ -128,8 +133,50 @@ def main(cfg):
     logger, experiment_dir, checkpoints_dir, out_path = initialize(cfg)
 
     logger.info("start loading training data ...")
-    
-    train_loader, val_loader, test_loader = get_TrajectoryDataLoader(cfg)
+    world_size = torch.cuda.device_count()
+    in_args = (cfg, world_size)
+    mp.spawn(train, args=in_args, nprocs=world_size, join=True)
+
+
+def train(rank, cfg, world_size):
+    os.environ['MASTER_ADDR'] = 'localhost'
+    os.environ['MASTER_PORT'] = '12355'
+    torch.cuda.set_device(rank)
+    dist.init_process_group('nccl', rank=rank, world_size=world_size)
+    logger, experiment_dir, checkpoints_dir, out_path = initialize(cfg)
+
+    train_data, val_data, test_data = get_TrajectoryDataLoader(cfg)
+
+    # get dataloaders 
+    if len(train_data):
+        if not cfg.multi_gpu:
+            train_loader = PyGDataLoader(
+                train_data,
+                batch_size=cfg.training.batch_size,
+                drop_last=True,
+                shuffle=True)
+        else:
+            train_sampler = DistributedSampler(
+                    train_data,
+                    num_replicas=torch.cuda.device_count(),
+                    rank=rank)
+            train_loader = PyGDataLoader(
+                train_data,
+                batch_size=cfg.training.batch_size,
+                sampler=train_sampler)
+    else:
+        train_loader = None
+
+    if len(val_data):
+        val_loader = PyGDataLoader(val_data, batch_size=cfg.training.batch_size_val)
+    else:
+        val_loader = None
+
+    if test_data is not None:
+        test_loader = PyGDataLoader(test_data, batch_size=cfg.training.batch_size_val)
+    else:
+        test_loader = None
+
 
     if train_loader is not None:
         logger.info("The number of training data is: %d" % len(train_loader.dataset))
@@ -140,7 +187,7 @@ def main(cfg):
         load_model(cfg, checkpoints_dir, logger)
 
     if cfg.multi_gpu:
-        model = nn.DataParallel(model)
+        model = nn.parallel.DistributedDataParallel(model)
 
     is_neural_net = cfg.models.model_name != 'DBSCAN' \
                 and cfg.models.model_name != 'SpectralClustering'\
@@ -177,10 +224,12 @@ def main(cfg):
                 # iterate over dataset
                 num_batches = len(train_loader)
                 loss_sum = 0
-                _log_dict = None
                 model = model.train()
                 logger.info('---- EPOCH %03d TRAINING ----' % (global_epoch + 1))
-                
+                node_loss = torch.zeros(2).to(rank)
+		node_acc = torch.zeros(2).to(rank)
+		edge_loss = torch.zeros(2).to(rank)
+		edge_acc = torch.zeros(2).to(rank)
                 for i, data in tqdm(enumerate(train_loader), total=len(train_loader), smoothing=0.9):
                     data = data.cuda()
                     optimizer.zero_grad()
@@ -193,12 +242,13 @@ def main(cfg):
                     if cfg.wandb:
                         for k, v in log_dict.items():
                             wandb.log({k: v, "epoch": epoch, "batch": i})
-                    if _log_dict is None:
-                        _log_dict = {k: [v] for k, v in log_dict.items()}
-                    else:
-                        for k, v in log_dict.items():
-                            _log_dict[k].append(v)
-                
+                    if 'train bce loss edge' in log_dict.keys():
+                	egde_loss[0] += float(loss)
+			egde_loss[1] += data.num_graphs
+		    if 'train bce loss node' in log_dict.keys():
+		        node_loss[0] += float(loss)
+			node_loss[1] += data.num_graphs
+			
                 _log_dict = {k: sum(v)/len(v) for k, v in _log_dict.items()}
                 logger.info(f'Training mean losses: {_log_dict}')
 
@@ -236,6 +286,7 @@ def main(cfg):
                 logger.info('---- EPOCH %03d EVALUATION ----' % (global_epoch + 1))
                 # Iterate over validation set
                 for i, (data) in tqdm(enumerate(val_loader), total=len(val_loader), smoothing=0.9):
+                    print(data)
                     if data['empty']:
                         continue
                     logits, clusters, edge_index, _ = model(data, eval=True, name=name)
