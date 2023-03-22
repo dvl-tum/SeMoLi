@@ -18,6 +18,7 @@ import models.losses
 import math
 import sklearn.metrics
 import copy
+import time
 
 
 rgb_colors = {}
@@ -328,8 +329,9 @@ class ClusterGNN(MessagePassing):
         pc = data['pc_list']
 
         node_attr = self.initial_node_attributes(traj, pc, self.node_attr, data['timestamps'], data['batch'])
+                
         graph_attr = self.initial_node_attributes(traj, pc, self.graph_construction)
-
+        
         # get edges using knn graph (for computational feasibility)
         k = self.k if not eval else self.k_eval
         if self.graph == 'knn':
@@ -344,7 +346,7 @@ class ClusterGNN(MessagePassing):
                     graph_attr, self.r, max_num_neighbors=k, batch_idx=data._slice_dict['pc_list'], type='radius', batch=data['batch'])
             else:
                 edge_index = radius_graph(graph_attr, self.r, data['batch'], max_num_neighbors=k)
-
+        
         # add negative edges to edge_index
         if not eval and augment:
             point_instances = data.point_instances.unsqueeze(
@@ -377,17 +379,18 @@ class ClusterGNN(MessagePassing):
                 a, b = a[:missing_pos], b[:missing_pos]
             add_idxs = torch.stack([a, b]).cuda()
             edge_index = torch.cat([edge_index.T, add_idxs.T]).T
-        
+                
         if edge_index.shape[1] == 0:
             return [None, None], torch.tensor(list(range(pc.shape[0]))), None, None
         
         edge_attr = self.initial_edge_attributes(traj, pc, edge_index)
+
         edge_attr = edge_attr.float()
         node_attr = node_attr.float()
 
         node_attr, edge_attr = self.layer1(node_attr, edge_index, edge_attr)
         node_attr, edge_attr = self.layer2(node_attr, edge_index, edge_attr)
-
+        
         src, dst = edge_index
         # computes per edge index by computing dot product between node features
         if not use_edge_att:
@@ -396,7 +399,7 @@ class ClusterGNN(MessagePassing):
         else:
             score = self.final(edge_attr)
         node_score = self.final_node(node_attr)
-
+                        
         if eval:
             score = self.sigmoid(score)
             node_score = self.sigmoid(node_score)

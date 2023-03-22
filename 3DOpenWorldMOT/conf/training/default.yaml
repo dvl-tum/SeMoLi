@@ -1,7 +1,7 @@
 # @package training
 # Those arguments defines the training hyper-parameters
 epochs: 100
-eval_per_seq: 10
+eval_per_seq: 5
 train_steps: 200  # Number of steps per epochs
 val_steps: 100    # Number of validation steps per epoch
 num_workers: 4

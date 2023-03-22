@@ -128,7 +128,7 @@ def get_feather_files(
 
             if classes_to_eval != 'all':
                 df = df[df['category'] == class_dict[classes_to_eval]]
-
+            
             if seq_list is not None:
                 df = df[df['log_id'].isin(seq_list)]
             df = df.astype({'num_interior_pts': 'int64'})
@@ -394,7 +394,6 @@ def eval_detection(
         dataset_dir=dataset_dir, eval_only_roi_instances=eval_only_roi_instances)
     if just_eval:
         print("Loading data...")
-    print(seq_to_eval)
 
     gts = get_feather_files(
         gt_folder,
@@ -430,12 +429,13 @@ def eval_detection(
     gts['category'] = ['REGULAR_VEHICLE'] * gts.shape[0]
 
     # remove gt objects without lidar points inside
+    print(gts.shape)
     print(gts[gts['num_interior_pts'] == 0].shape)
-    gts = gts[gts['num_interior_pts'] > 0]
     print(gts[gts['num_interior_pts'] < 5].shape)
     print(gts[gts['num_interior_pts'] < 10].shape)
     print(gts[gts['num_interior_pts'] < 15].shape)
     print(gts[gts['num_interior_pts'] < 20].shape)
+    gts = gts[gts['num_interior_pts'] > 0]
 
     if (visualize or debug) and dts.shape[0] and gts.shape[0]:
         visualize_whole(dts, gts, name)
@@ -457,3 +457,24 @@ def eval_detection(
         metric = metrics.loc[classes_to_eval].values
 
     return metrics, metric
+
+
+if __name__ == '__main__':
+    name = 'gt_all_egocomp_margin0.6_width25_oraclenode_oracleedge_4096_8000_mean_dist_over_time_min_mean_max_diffpostrajtime_min_mean_max_vel_nodescore_correlation_mygraph'
+    tracker_dir = f'out/{name}/val'
+    gt_folder = 'data/waymo_converted'
+    seq_list = os.listdir(tracker_dir)
+    seq_list= ['16473613811052081539']
+    _, detection_metric = eval_detection(
+        gt_folder=gt_folder,
+        trackers_folder=tracker_dir,
+        seq_to_eval=seq_list,
+        remove_far=False,
+        remove_non_drive=False,
+        remove_non_move=True,
+        remove_non_move_strategy='per_frame',
+        remove_non_move_thresh=1.0,
+        classes_to_eval='all',
+        debug=False,
+        visualize=True,
+        name=name)
