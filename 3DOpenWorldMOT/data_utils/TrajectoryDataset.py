@@ -455,16 +455,16 @@ class TrajectoryDataset(PyGDataset):
                 timestamps = data['timestamps']
                 # get mean velocity [m/s] along trajectory and check if > thresh
                 diff_dist = torch.linalg.norm(
-                    mean_traj[:, :-1, :] - mean_traj[:, 1:, :] , axis=2)
+                    mean_traj[:, 1, :] - mean_traj[:, 0, :] , axis=1)
 
-                diff_time = timestamps[1:diff_dist.shape[1]+1] - timestamps[:diff_dist.shape[1]]
+                diff_time = timestamps[1] - timestamps[0]
                 # bring from nano / mili seconds to seconds
                 if 'argo' in self.data_dir:
                     diff_time = diff_time / torch.pow(torch.tensor(10), 9.0) 
                 else:
                     diff_time = diff_time / torch.pow(torch.tensor(10), 6.0)
 
-                mean_traj = torch.mean(diff_dist/diff_time, axis=1)
+                mean_traj = diff_dist/diff_time
                 mean_traj = mean_traj > self.static_thresh
                 
                 empty = False
@@ -488,58 +488,11 @@ class TrajectoryDataset(PyGDataset):
     def get(self, idx):
         path = self._processed_paths[idx]
 
-        '''if self.remove_static:
-            if 'argo' in self.data_dir:
-                path = re.sub('argoverse2', 'argoverse2_remove_static', path)
-            else:
-                path = re.sub('waymo', 'waymo_remove_static', path)'''
         try:
             data = torch.load(path)
         except:
             logger.info(f"could not load file {path} of index {idx}/{len(self._processed_paths)}")
             data = torch.load(self._processed_paths_0)
-        
-        '''if self.remove_static and data['pc_list'].shape[0]:
-            mean_traj = data['traj'][:, :, :-1]
-            timestamps = data['timestamps']
-
-            # get mean velocity [m/s] along trajectory and check if > thresh
-            #diff_dist = torch.linalg.norm(
-            #    mean_traj[:, :-1, :-1] - mean_traj[:, 1:, :-1] , axis=2)
-            diff_dist = torch.linalg.norm(
-                mean_traj[:, 1, :-1].unsqueeze(1) - mean_traj[:, 0, :-1].unsqueeze(1), axis=2)
-            diff_time = timestamps[1:diff_dist.shape[1]+1] - timestamps[:diff_dist.shape[1]]
-
-            # bring from nano / mili seconds to seconds
-            if 'argo' in self.data_dir:
-                diff_time = diff_time / torch.pow(torch.tensor(10), 9.0) 
-            else:
-                diff_time = diff_time / torch.pow(torch.tensor(10), 6.0)
-
-            mean_traj = torch.mean(diff_dist/diff_time, axis=1)
-            mean_traj = mean_traj > self.static_thresh
-            
-            empty = False
-
-            # if no moving point and not evaluation, sample few random
-            if torch.all(~mean_traj):
-                idxs = torch.randint(0, mean_traj.shape[0], size=(200, ))
-                mean_traj[idxs] = True
-                empty = True
-            
-            # apply mask
-            data['pc_list'] = data['pc_list'][mean_traj, :]
-            data['traj'] = data['traj'][mean_traj]
-            if data['point_instances'].shape[0] > 1:
-                data['point_instances'] = data['point_instances'].squeeze()[mean_traj]
-                data['point_categories'] = data['point_categories'].squeeze()[mean_traj]
-            else:
-                data['point_instances'] = data['point_instances'][mean_traj]
-                data['point_categories'] = data['point_categories'][mean_traj]
-            data['empty'] = empty
-
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            torch.save(data, path)'''
 
         # if you always want same number of points (during training), sample/re-sample
         if not self.use_all_points and data['traj'].shape[0] > self.num_points:
@@ -551,7 +504,7 @@ class TrajectoryDataset(PyGDataset):
             data['traj'] = data['traj'][idxs]
             data['point_categories'] = data['point_categories'][idxs]
             data['point_instances'] = data['point_instances'][idxs]
-        
+
         data['batch'] = torch.ones(data['pc_list'].shape[0])*idx
         if 'empty' not in data.keys:
             if data['pc_list'].shape[0] == 0:
