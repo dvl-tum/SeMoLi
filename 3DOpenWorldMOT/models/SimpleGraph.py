@@ -1,5 +1,4 @@
 from collections import defaultdict
-from turtle import forward
 from sklearn import cluster
 import torch
 from torch_geometric.nn.conv.message_passing import MessagePassing

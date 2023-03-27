@@ -1,4 +1,3 @@
-from turtle import forward
 import torch
 from torch_geometric.nn.conv.message_passing import MessagePassing
 from torch_geometric.nn import knn_graph, radius_graph

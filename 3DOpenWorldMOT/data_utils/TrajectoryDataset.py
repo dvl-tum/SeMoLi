@@ -333,30 +333,10 @@ class TrajectoryDataset(PyGDataset):
                 map_dict[seq] = ArgoverseStaticMap.from_map_dir(log_map_dirpath, build_raster=True)
 
         # load point clouds
-        try:
-            pred = np.load(traj_file)
-        except:
-            logger.info(f"could not load processed {traj_file}")
-            return
-            
-        
-        try:
-            traj = pred['traj']
-        except:
-            logger.info(f"Bad zip failed at traj {traj_file}, {[k for k in pred.keys()]}")
-            return
-        
-        try:
-            pc_list = pred['pcs'] if 'pcs' in [k for k in pred.keys()] else pred['pc_list']
-        except:
-            logger.info(f"Bad zip failed at pc {traj_file}, {[k for k in pred.keys()]}")
-            return
-        
-        try:
-            timestamps = pred['timestamps']
-        except:
-            logger.info(f"Bad zip failed at time {traj_file}, {[k for k in pred.keys()]}")
-            return
+        pred = np.load(traj_file)
+        traj = pred['traj']
+        pc_list = pred['pcs'] if 'pcs' in [k for k in pred.keys()] else pred['pc_list']
+        timestamps = pred['timestamps']
 
         if len(pc_list.shape) > 2:
             pc_list = pc_list[0]
@@ -371,7 +351,7 @@ class TrajectoryDataset(PyGDataset):
             labels = self.loader.get_labels_at_lidar_timestamp(
                 log_id=seq, lidar_timestamp_ns=int(timestamps[0]))
             
-            if self.margin:
+            if self.margin and 'argo' in self.data_dir:
                 for label in labels:
                     self.add_margin(label)
 
@@ -401,13 +381,8 @@ class TrajectoryDataset(PyGDataset):
             # get per point and object masks and bounding boxs and their labels 
             masks = list()
             for label in labels:
-                try:
-                    interior = point_cloud_handling.compute_interior_points_mask(
+                interior = point_cloud_handling.compute_interior_points_mask(
                         pc_list, label.vertices_m)
-                except:
-                    print(pc_list, label.vertices_m)
-                    quit()
-
                 int_label = self.class_dict[label.category] if 'argo' in self.data_dir else int(label.category)
                 interior = interior.astype(int) * int_label
                 masks.append(interior)
@@ -473,18 +448,18 @@ class TrajectoryDataset(PyGDataset):
                 timestamps = data['timestamps']
                 # get mean velocity [m/s] along trajectory and check if > thresh
                 diff_dist = torch.linalg.norm(
-                    mean_traj[:, :-1, :] - mean_traj[:, 1:, :] , axis=2)
+                    mean_traj[:, 1, :] - mean_traj[:, 0, :] , axis=1)
 
-                diff_time = timestamps[1:diff_dist.shape[1]+1] - timestamps[:diff_dist.shape[1]]
+                diff_time = timestamps[1] - timestamps[0]
                 # bring from nano / mili seconds to seconds
                 if 'argo' in self.data_dir:
                     diff_time = diff_time / torch.pow(torch.tensor(10), 9.0) 
                 else:
                     diff_time = diff_time / torch.pow(torch.tensor(10), 6.0)
 
-                mean_traj = torch.mean(diff_dist/diff_time, axis=1)
+                mean_traj = diff_dist/diff_time
                 mean_traj = mean_traj > self.static_thresh
-                
+
                 empty = False
                 # if no moving point and not evaluation, sample few random
                 if torch.all(~mean_traj):
@@ -495,7 +470,7 @@ class TrajectoryDataset(PyGDataset):
                 # apply mask
                 data['pc_list'] = data['pc_list'][mean_traj, :]
                 data['traj'] = data['traj'][mean_traj]
-
+                
                 data['point_instances'] = data['point_instances'].squeeze()[mean_traj]
                 data['point_categories'] = data['point_categories'].squeeze()[mean_traj]
                 data['empty'] = empty
@@ -506,58 +481,11 @@ class TrajectoryDataset(PyGDataset):
     def get(self, idx):
         path = self._processed_paths[idx]
 
-        '''if self.remove_static:
-            if 'argo' in self.data_dir:
-                path = re.sub('argoverse2', 'argoverse2_remove_static', path)
-            else:
-                path = re.sub('waymo', 'waymo_remove_static', path)'''
         try:
             data = torch.load(path)
         except:
             logger.info(f"could not load file {path} of index {idx}/{len(self._processed_paths)}")
             data = torch.load(self._processed_paths_0)
-        
-        '''if self.remove_static and data['pc_list'].shape[0]:
-            mean_traj = data['traj'][:, :, :-1]
-            timestamps = data['timestamps']
-
-            # get mean velocity [m/s] along trajectory and check if > thresh
-            #diff_dist = torch.linalg.norm(
-            #    mean_traj[:, :-1, :-1] - mean_traj[:, 1:, :-1] , axis=2)
-            diff_dist = torch.linalg.norm(
-                mean_traj[:, 1, :-1].unsqueeze(1) - mean_traj[:, 0, :-1].unsqueeze(1), axis=2)
-            diff_time = timestamps[1:diff_dist.shape[1]+1] - timestamps[:diff_dist.shape[1]]
-
-            # bring from nano / mili seconds to seconds
-            if 'argo' in self.data_dir:
-                diff_time = diff_time / torch.pow(torch.tensor(10), 9.0) 
-            else:
-                diff_time = diff_time / torch.pow(torch.tensor(10), 6.0)
-
-            mean_traj = torch.mean(diff_dist/diff_time, axis=1)
-            mean_traj = mean_traj > self.static_thresh
-            
-            empty = False
-
-            # if no moving point and not evaluation, sample few random
-            if torch.all(~mean_traj):
-                idxs = torch.randint(0, mean_traj.shape[0], size=(200, ))
-                mean_traj[idxs] = True
-                empty = True
-            
-            # apply mask
-            data['pc_list'] = data['pc_list'][mean_traj, :]
-            data['traj'] = data['traj'][mean_traj]
-            if data['point_instances'].shape[0] > 1:
-                data['point_instances'] = data['point_instances'].squeeze()[mean_traj]
-                data['point_categories'] = data['point_categories'].squeeze()[mean_traj]
-            else:
-                data['point_instances'] = data['point_instances'][mean_traj]
-                data['point_categories'] = data['point_categories'][mean_traj]
-            data['empty'] = empty
-
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            torch.save(data, path)'''
 
         # if you always want same number of points (during training), sample/re-sample
         if not self.use_all_points and data['traj'].shape[0] > self.num_points:
@@ -569,7 +497,7 @@ class TrajectoryDataset(PyGDataset):
             data['traj'] = data['traj'][idxs]
             data['point_categories'] = data['point_categories'][idxs]
             data['point_instances'] = data['point_instances'][idxs]
-        
+
         data['batch'] = torch.ones(data['pc_list'].shape[0])*idx
         if 'empty' not in data.keys:
             if data['pc_list'].shape[0] == 0:

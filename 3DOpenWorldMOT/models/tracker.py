@@ -200,11 +200,6 @@ class Tracker3D():
                 continue
             # get points, bounding boxes
             point_cluster = points[clusters==c]
-            mins, maxs = point_cluster.min(dim=0), point_cluster.max(dim=0)                                                                                         
-            lwh = maxs.values - mins.values
-            # remove bb if l, w, or h is 0
-            if lwh[2] == 0 or lwh[0] == 0 or lwh[1] == 0:  
-                continue
 
             # generate new detected trajectory
             traj_cluster = traj[clusters==c]
