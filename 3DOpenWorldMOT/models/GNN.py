@@ -301,7 +301,7 @@ class ClusterGNN(MessagePassing):
                 dist = dist[idxs_0, idxs_1]
                 idx = torch.where(dist<r)[0]
                 idxs_0, idxs_1 = idxs_0[idx], idxs_1[idx]
-
+            
             _idxs_0.append(idxs_0)
             _idxs_1.append(idxs_1)
 
@@ -463,7 +463,7 @@ class ClusterGNN(MessagePassing):
                         data.timestamps[0,0],
                         mode='filtered',
                         name=name)
-                
+
                 # add edges to nodes not in edge set with dummy score
                 edges = set(
                     edge_index.cpu().numpy()[0, :].tolist() +
@@ -489,11 +489,11 @@ class ClusterGNN(MessagePassing):
                     clusters = torch.tensor(clusters)
                     clusters[(node_score.cpu() < 0.5).squeeze()] = -1
                     clusters = clusters.numpy()
-                
+
                 _clusters = defaultdict(list)
                 for i, c in enumerate(clusters):
                     _clusters[c].append(i)
-                
+
                 cluster_assignment_new = dict()
                 for c, node_list in _clusters.items():
                     if len(node_list) < self.min_samples:
@@ -600,7 +600,7 @@ class ClusterGNN(MessagePassing):
         G.add_nodes_from(nodes.numpy())
         G.add_edges_from(edge_indices.T.cpu().numpy())
 
-        colors = [(255, 255, 255)] * nodes.shape[0] 
+        colors = [(255, 255, 255)] * nodes.shape[0]
         col_dict = dict()
         for i, (c, node_list) in enumerate(clusters.items()):
             for node in node_list:
