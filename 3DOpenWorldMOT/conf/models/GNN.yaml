@@ -2,7 +2,7 @@
 model_name: GNN
 weight_path: None
 hyperparams:
-    graph: radius
+    graph: knn
     traj_channels: 75
     pos_channels: 3
     k: 8
