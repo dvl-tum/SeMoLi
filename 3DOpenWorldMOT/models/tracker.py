@@ -11,7 +11,7 @@ import sklearn.metrics
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import matplotlib.patches as patches
-import pytorch3d.loss
+# import pytorch3d.loss
 import torch
 from collections import defaultdict
 import copy

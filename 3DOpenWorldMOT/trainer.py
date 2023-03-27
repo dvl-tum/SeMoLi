@@ -223,13 +223,12 @@ def train(rank, cfg, world_size):
 
                 # iterate over dataset
                 num_batches = len(train_loader)
-                loss_sum = 0
                 model = model.train()
                 logger.info('---- EPOCH %03d TRAINING ----' % (global_epoch + 1))
                 node_loss = torch.zeros(2).to(rank)
-		node_acc = torch.zeros(2).to(rank)
-		edge_loss = torch.zeros(2).to(rank)
-		edge_acc = torch.zeros(2).to(rank)
+                node_acc = torch.zeros(2).to(rank)
+                edge_loss = torch.zeros(2).to(rank)
+                edge_acc = torch.zeros(2).to(rank)
                 for i, data in tqdm(enumerate(train_loader), total=len(train_loader), smoothing=0.9):
                     data = data.cuda()
                     optimizer.zero_grad()
@@ -238,19 +237,39 @@ def train(rank, cfg, world_size):
                     loss.backward()
                     optimizer.step()
 
-                    loss_sum += loss
                     if cfg.wandb:
                         for k, v in log_dict.items():
                             wandb.log({k: v, "epoch": epoch, "batch": i})
                     if 'train bce loss edge' in log_dict.keys():
-                	egde_loss[0] += float(loss)
-			egde_loss[1] += data.num_graphs
-		    if 'train bce loss node' in log_dict.keys():
-		        node_loss[0] += float(loss)
-			node_loss[1] += data.num_graphs
-			
-                _log_dict = {k: sum(v)/len(v) for k, v in _log_dict.items()}
-                logger.info(f'Training mean losses: {_log_dict}')
+                        edge_loss[0] += float(log_dict['train bce loss edge'])
+                        edge_loss[1] += len(data.log_id)
+                    if 'train bce loss node' in log_dict.keys():
+                        node_loss[0] += float(log_dict['train bce loss node'])
+                        node_loss[1] += len(data.log_id)
+                    if 'train accuracy edge' in log_dict.keys():
+                        edge_acc[0] += float(log_dict['train accuracy edge'])
+                        edge_acc[1] += len(data.log_id)
+                    if 'train accuracy node' in log_dict.keys():
+                        node_acc[0] += float(log_dict['train accuracy node'])
+                        node_acc[1] += len(data.log_id)
+
+                dist.all_reduce(node_loss, op=dist.ReduceOp.SUM)
+                node_loss = float(node_loss[0] / node_loss[1])
+
+                dist.all_reduce(edge_loss, op=dist.ReduceOp.SUM)
+                edge_loss = float(edge_loss[0] / edge_loss[1])
+
+                dist.all_reduce(edge_acc, op=dist.ReduceOp.SUM)
+                edge_acc = float(edge_acc[0] / edge_acc[1])
+
+                dist.all_reduce(node_acc, op=dist.ReduceOp.SUM)
+                node_acc = float(node_acc[0] / node_acc[1])
+
+                if rank == 0:
+                    logger.info(f'train bce loss edge: {edge_loss}')
+                    logger.info(f'train bce loss node: {node_loss}')
+                    logger.info(f'train accuracy edge: {edge_acc}')
+                    logger.info(f'train accuracy node: {node_acc}')
 
                 savepath = str(checkpoints_dir) + name + '/latest_model.pth'
                 logger.info(f'Saving at {savepath}...')
@@ -263,10 +282,13 @@ def train(rank, cfg, world_size):
                 torch.save(state, savepath)
 
         # evaluate
-        if epoch % cfg.training.eval_per_seq == 0: # and (epoch != 0 or cfg.just_eval):
+        if epoch % cfg.training.eval_per_seq == 0 and rank==0: # and (epoch != 0 or cfg.just_eval):
             num_batches = len(val_loader)
-            eval_loss = 0
-            nmis = list()
+            node_loss = torch.zeros(2).to(rank)
+            node_acc = torch.zeros(2).to(rank)
+            edge_loss = torch.zeros(2).to(rank)
+            edge_acc = torch.zeros(2).to(rank)
+            nmis = torch.zeros(2).to(rank)
 
             # intialize tracker 
             tracker = Tracker3D(
@@ -282,11 +304,10 @@ def train(rank, cfg, world_size):
             with torch.no_grad():
                 if is_neural_net:
                     model = model.eval()
-                    _log_dict = None
                 logger.info('---- EPOCH %03d EVALUATION ----' % (global_epoch + 1))
                 # Iterate over validation set
                 for i, (data) in tqdm(enumerate(val_loader), total=len(val_loader), smoothing=0.9):
-                    print(data)
+                    # print(data)
                     if data['empty']:
                         continue
                     logits, clusters, edge_index, _ = model(data, eval=True, name=name)
@@ -298,7 +319,8 @@ def train(rank, cfg, world_size):
 
                     nmi = calc_nmi.calc_normalized_mutual_information(
                         data['point_instances'].cpu(), clusters)
-                    nmis.append(nmi)
+                    nmis[0] += float(torch.tensor(nmi).to(rank))
+                    nmis[1] += len(data.log_id)
 
                     # generate detections
                     detections = tracker.get_detections(
@@ -311,20 +333,45 @@ def train(rank, cfg, world_size):
                         last=i+1 == len(val_loader))
                     
                     if is_neural_net and logits[0] is not None:
-                        loss, log_dict = criterion.eval(logits, data, edge_index)
-                        eval_loss += loss
+                        loss, log_dict = criterion.eval(logits, data, edge_index, rank)
                         if cfg.wandb:
                             for k, v in log_dict.items():
                                 wandb.log({k: v, "epoch": epoch, "batch": i})
-                        if _log_dict is None:
-                            _log_dict = {k: [v] for k, v in log_dict.items()}
-                        else:
-                            for k, v in log_dict.items():
-                                _log_dict[k].append(v)
+                        if 'train bce loss edge' in log_dict.keys():
+                            edge_loss[0] += float(log_dict['train bce loss node'])
+                            edge_loss[1] += len(data.log_id)
+                        if 'train bce loss node' in log_dict.keys():
+                            node_loss[0] += float(log_dict['train bce loss node'])
+                            node_loss[1] += len(data.log_id)
+                        if 'train accuracy edge' in log_dict.keys():
+                            edge_acc[0] += float(log_dict['train bce loss node'])
+                            edge_acc[1] += len(data.log_id)
+                        if 'train accuracy node' in log_dict.keys():
+                            node_acc[0] += float(log_dict['train bce loss node'])
+                            node_acc[1] += len(data.log_id)
                     
                 if is_neural_net:
-                    _log_dict = {k: sum(v)/len(v) for k, v in _log_dict.items()}
-                    logger.info(f'Evaluation mean losses: {_log_dict}')
+                    dist.all_reduce(nmis, op=dist.ReduceOp.SUM)
+                    nmis = float(nmis[0] / nmis[1])
+
+                    dist.all_reduce(node_loss, op=dist.ReduceOp.SUM)
+                    node_loss = float(node_loss[0] / node_loss[1])
+
+                    dist.all_reduce(edge_loss, op=dist.ReduceOp.SUM)
+                    edge_loss = float(edge_loss[0] / edge_loss[1])
+
+                    dist.all_reduce(edge_acc, op=dist.ReduceOp.SUM)
+                    edge_acc = float(edge_acc[0] / edge_acc[1])
+
+                    dist.all_reduce(node_acc, op=dist.ReduceOp.SUM)
+                    node_acc = float(node_acc[0] / node_acc[1])
+
+                    if rank == 0:
+                        logger.info(f'nmi: {nmis}')
+                        logger.info(f'eval bce loss edge: {edge_loss}')
+                        logger.info(f'eval bce loss node: {node_loss}')
+                        logger.info(f'eval accuracy edge: {edge_acc}')
+                        logger.info(f'eval accuracy node: {node_acc}')
 
                 # get sequence list for evaluation
                 tracker_dir = os.path.join(tracker.out_path, tracker.split)
@@ -393,3 +440,13 @@ def train(rank, cfg, world_size):
 
 if __name__ == '__main__':
     main()
+ 
+
+
+ 
+
+    main()
+ 
+
+
+ 

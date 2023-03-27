@@ -711,18 +711,19 @@ class GNNLoss(nn.Module):
 
         return loss, log_dict
     
-    def eval(self, logits, data, edge_index):
+    def eval(self, logits, data, edge_index, rank):
         edge_logits, node_logits = logits
+        edge_index = edge_index.to(rank)
         loss = 0
         log_dict = dict()
         if self.bce_loss:
-            edge_logits = edge_logits.cuda()
+            edge_logits = edge_logits.to(rank)
             point_instances = data.point_instances.unsqueeze(
                 0) == data.point_instances.unsqueeze(0).T
             point_instances[data.point_instances == 0, :] = False
-            point_instances = point_instances.cuda()
+            point_instances = point_instances.to(rank)
             point_instances = point_instances[
-                edge_index[0, :], edge_index[1, :]].type(torch.FloatTensor).cuda()
+                edge_index[0, :], edge_index[1, :]].type(torch.FloatTensor).to(rank)
             bce_loss_edge = torch.nn.functional.binary_cross_entropy(
                 edge_logits.squeeze(), point_instances.squeeze())
             log_dict['eval bce loss edge'] = bce_loss_edge.item()
