@@ -141,8 +141,6 @@ def get_feather_files(
         # iterate over sequences
         num_seqs = df['log_id'].unique().shape[0]
         for m, seq in enumerate(df['log_id'].unique()):
-            if seq != '16473613811052081539':
-                continue
             print(f'Sequence {m}/{num_seqs}...')
             seq_df = df[df['log_id'] == seq]
             timestamps = sorted(seq_df['timestamp_ns'].unique().tolist())
@@ -175,9 +173,6 @@ def get_feather_files(
             # iterate over timesyeps to get argoverse map and labels
             for i, t in enumerate(sorted(seq_df['timestamp_ns'].unique().tolist())):
                 track_ids = list()
-
-                if t == 1543280286123574:
-                    print(seq_df[seq_df['timestamp_ns'] == t])
                 time_df = seq_df[seq_df['timestamp_ns'] == t]
 
                 # get labels
@@ -305,16 +300,30 @@ def visualize_whole(df, gf, name, base_dir='../../../'):
         gdf = gf[gf['log_id'] == seq]
         os.makedirs(f'{base_dir}Visualization_Whole_DETS/{seq}', exist_ok=True)
         
-        mins = np.min(gdf[['tx_m', 'ty_m', 'tz_m']], axis=0).values
-        maxs = np.max(gdf[['tx_m', 'ty_m', 'tz_m']], axis=0).values
+        lims_mins = list()
+        lims_maxs = list()
+        for i, timestamp in enumerate(sorted(ddf['timestamp_ns'].unique())):
+            city_SE3_ego = loader.get_city_SE3_ego(seq, int(timestamp))
+            time_gdf = gdf[gdf['timestamp_ns'] == timestamp]
+            gdf_city = city_SE3_ego.transform_point_cloud(
+                        time_gdf[['tx_m', 'ty_m', 'tz_m']].values)
+            mins = np.min(gdf_city, axis=0)
+            maxs = np.max(gdf_city, axis=0)
+
+            lims_mins.append(mins)
+            lims_maxs.append(maxs)
+        lims_mins = np.vstack(lims_mins)
+        lims_maxs = np.vstack(lims_maxs)
+
+        mins = np.min(lims_mins, axis=0)
+        maxs = np.max(lims_maxs, axis=0)
+
         lims = np.vstack([mins, maxs])
-        lims = loader.get_city_SE3_ego(seq, int(ddf['timestamp_ns'].unique()[0])
-                                       ).transform_point_cloud(lims)
-        
-        x_lim = (lims[0, 0] - 100,
-                 lims[1, 0] + 100)
-        y_lim = (lims[0, 1] - 100,
-                 lims[1, 1] + 100)
+
+        x_lim = (lims[0, 0] - 10,
+                 lims[1, 0] + 10)
+        y_lim = (lims[0, 1] - 10,
+                 lims[1, 1] + 10)
 
         for i, timestamp in enumerate(sorted(ddf['timestamp_ns'].unique())):
             city_SE3_ego = loader.get_city_SE3_ego(seq, int(timestamp))
@@ -325,15 +334,6 @@ def visualize_whole(df, gf, name, base_dir='../../../'):
                         time_ddf[['tx_m', 'ty_m', 'tz_m']].values)
             gdf_city = city_SE3_ego.transform_point_cloud(
                         time_gdf[['tx_m', 'ty_m', 'tz_m']].values)
-            
-            mins = np.min(gdf_city, axis=0)
-            maxs = np.max(gdf_city, axis=0)
-            lims = np.vstack([mins, maxs])
-            
-            x_lim = (lims[0, 0] - 10,
-                    lims[1, 0] + 10)
-            y_lim = (lims[0, 1] - 10,
-                    lims[1, 1] + 10)
 
             fig, ax = plt.subplots()
             j = 0
@@ -380,7 +380,7 @@ def visualize_whole(df, gf, name, base_dir='../../../'):
                 ax.add_patch(rect)
                 j += 1
 
-            # plt.axis('off')
+            plt.axis('off')
             plt.xlim(x_lim)
             plt.ylim(y_lim)
             plt.savefig(
@@ -499,6 +499,8 @@ def eval_detection(
 if __name__ == '__main__':
     name = 'gt_all_egocomp_margin0.6_width25_oraclenode_oracleedge_4096_8000_mean_dist_over_time_min_mean_max_diffpostrajtime_min_mean_max_vel_nodescore_correlation_mygraph'
     name = 'gt_all_egocomp_margin0.6_width25_oraclenode_oracleedge_4096_8000_pos_min_mean_max_diffpostrajtime_min_mean_max_vel_nodescore_correlation_torchgraph'
+    name = 'gt_all_egocomp_margin0.6_width25_oraclenode_oracleedge_4096_8000_pos_min_mean_max_diffpostrajtime_min_mean_max_vel_nodescore_correlation_torchgraph'
+    name = 'gt_all_egocomp_margin0.6_width25_oraclenode_oracleedge_4096_20000_pos_min_mean_max_diffpostrajtime_min_mean_max_vel_nodescore_correlation_torchgraph'
     tracker_dir = f'out/{name}/val'
     gt_folder = 'data/waymo_converted'
     seq_list = os.listdir(tracker_dir)
