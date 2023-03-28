@@ -106,7 +106,7 @@ def get_feather_files(
         # get file name
         split_dir = paths
         split = os.path.basename(paths)
-        split_dir = os.path.dirname(paths)
+        split_dir = os.path.dirname(paths) + '_filtered'
 
         file = 'filtered_version.feather'
         file = 'remove_non_drive_' + file if remove_non_drive else file
@@ -115,14 +115,13 @@ def get_feather_files(
         file = remove_non_move_strategy + '_' + file if remove_non_move else file
         file = str(remove_non_move_thresh)[
             :5] + '_' + file if remove_non_move else file
-        file = split + '_' + file if remove_far else file
+        file = split + '_' + file
 
         path_filtered = \
             os.path.join(split_dir, file)
 
         # check if filtered version already exists
         if os.path.isfile(path_filtered):
-
             df = feather.read_feather(path_filtered)
 
             if 'seq' in df.columns:
@@ -553,7 +552,7 @@ if __name__ == '__main__':
         gt_folder=gt_folder,
         trackers_folder=tracker_dir,
         seq_to_eval=seq_list,
-        remove_far=True,
+        remove_far=False,
         remove_non_drive=False,
         remove_non_move=True,
         remove_non_move_strategy='per_frame',
