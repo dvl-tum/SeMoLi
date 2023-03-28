@@ -632,10 +632,13 @@ class GNNLoss(nn.Module):
         edge_logits, node_logits = logits
         loss = 0
         log_dict = dict()
+        same_graph = data['batch'].unsqueeze(0) == data['batch'].unsqueeze(0).T
+
         if self.bce_loss or self.focal_loss:
             # get all positive egdes
             point_instances = data.point_instances.unsqueeze(
                 0) == data.point_instances.unsqueeze(0).T
+            point_instances = torch.logical_and(point_instances, same_graph)
             # setting edges that do not belong to object to zero
             # --> instance 0 is no object
             point_instances[data.point_instances == 0, :] = False
@@ -725,10 +728,11 @@ class GNNLoss(nn.Module):
             loss += bce_loss_edge
 
             # get accuracy
-            logits_rounded = edge_logits.squeeze()
+            logits_rounded = torch.atleast_1d(edge_logits.squeeze())
             logits_rounded[logits_rounded>0.5] = 1
             logits_rounded[logits_rounded<=0.5] = 0
             correct = torch.sum(logits_rounded == point_instances.squeeze())
+            # if logits_rounded.shape
             edge_accuracy = correct/logits_rounded.shape[0]
             log_dict['eval edge accuracy'] = edge_accuracy.item()
         
@@ -741,7 +745,7 @@ class GNNLoss(nn.Module):
             log_dict['eval bce loss node'] = bce_loss_node.item()
 
             # get accuracy
-            logits_rounded = node_logits.squeeze()
+            logits_rounded = torch.atleast_1d(node_logits.squeeze())
             logits_rounded[logits_rounded>0.5] = 1
             logits_rounded[logits_rounded<=0.5] = 0
             correct = torch.sum(logits_rounded == is_object.squeeze())
