@@ -5,6 +5,8 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 from scipy.optimize import linear_sum_assignment
 from pyarrow import feather
+import warnings
+warnings.simplefilter(action='ignore', category=FutureWarning)
 import pandas as pd
 import logging
 import sklearn.metrics
@@ -111,7 +113,8 @@ column_names_dets = [
     'qz',
     'timestamp_ns',
     'category',
-    'num_interior_pts']
+    'num_interior_pts',
+    'log_id']
 
 column_dtypes = {
     'timestamp_ns': 'int64',
@@ -145,7 +148,7 @@ logger = logging.getLogger("Model.Tracker")
 
 
 class Tracker3D():
-    def __init__(self, out_path='out', a_threshold=0.8, i_threshold=0.8, split='val', every_x_frame=1, num_interior=10, overlap=5, av2_loader=None) -> None:
+    def __init__(self, out_path='out', a_threshold=0.8, i_threshold=0.8, split='val', every_x_frame=1, num_interior=10, overlap=5, av2_loader=None, rank=None) -> None:
         self.active_tracks = list()
         self.inactive_tracks = list()
         self.detections = list()
@@ -162,7 +165,8 @@ class Tracker3D():
         self.out_path = os.path.join(out_path)
         
         self.filtered_gt = '../../../data/argoverse2/val_0.833_per_frame_remove_non_move_remove_far_remove_non_drive_filtered_version.feather'
-    
+        self.rank = rank
+        
     def new_log_id(self, log_id, only_dets=True, associate=False):
         # save tracks to feather and reset variables
         if self.log_id != -1:
@@ -186,7 +190,7 @@ class Tracker3D():
         detections = list()
 
         if type(clusters) == np.ndarray:
-                clusters = torch.from_numpy(clusters).cuda()
+            clusters = torch.from_numpy(clusters).to(self.rank)
 
         for c in torch.unique(clusters):
             num_interior = torch.sum(clusters==c).item()
@@ -565,7 +569,8 @@ class Tracker3D():
                         quat[3],
                         int(det.timestamp.item()),
                         'REGULAR_VEHICLE',
-                        det.num_interior]
+                        det.num_interior,
+                        det.log_id]
                     track_vals.append(values)
         
             track_vals = np.asarray(track_vals)
@@ -598,9 +603,11 @@ class Tracker3D():
                     quat[3],
                     int(det.timestamp.item()),
                     'REGULAR_VEHICLE',
-                    det.num_interior]
+                    det.num_interior,
+                    det.log_id]
                 track_vals.append(values)
             track_vals = np.asarray(track_vals)
+
             if track_vals.shape[0] == 0:
                 return False
 
@@ -611,9 +618,19 @@ class Tracker3D():
             self.detections = list()
 
         os.makedirs(os.path.join(self.out_path, self.split, self.log_id), exist_ok=True)
-        write_path = os.path.join(self.out_path, self.split, self.log_id, 'annotations.feather')
-        logger.info(f'Stored tracks for sequence {self.log_id} at {os.getcwd()}/{write_path}')
-        feather.write_feather(df, write_path)
+        os.makedirs(os.path.join(self.out_path, self.split, 'feathers'), exist_ok=True)
+        write_path = os.path.join(self.out_path, self.split, 'feathers', f'all_{self.rank}.feather') 
+        # write_path = os.path.join(self.out_path, self.split, self.log_id, 'annotations.feather')
+
+        if os.path.isfile(write_path):
+            # with open(write_path, 'rb') as f:
+            df_all = feather.read_feather(write_path)
+            df_all = df_all.append(df)
+        else:
+            df_all = df
+
+        # with open(write_path, 'wb') as f:
+        feather.write_feather(df_all, write_path)
 
         if visualize:
             self.visualize_whole(df, track.log_id)
@@ -952,4 +969,6 @@ class Detection():
         self.timestamp = timestamp
         self.log_id = log_id
         self.num_interior = num_interior
+
+
 

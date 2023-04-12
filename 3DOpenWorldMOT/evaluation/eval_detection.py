@@ -69,30 +69,29 @@ def get_feather_files(
         classes_to_eval='all'):
 
     df = None
-    try:
-        for i, path in enumerate(os.listdir(paths)):
-            if seq_list is not None:
-                if path not in seq_list and not is_gt:
-                    continue
-            data = feather.read_feather(
-                os.path.join(paths, path, 'annotations.feather'))
-            if 'argo' in paths or not is_gt:
-                def convert2int(x): return class_dict[x]
-                data['category'] = data['category'].apply(convert2int)
-            else:
-                def str2ing(x): return int(x)
-                data['category'] = data['category'].apply(str2ing)
 
-            if classes_to_eval != 'all':
-                data = data[data['category'] == class_dict[classes_to_eval]]
-            data['log_id'] = [path] * data.shape[0]
+    for i, path in enumerate(os.listdir(paths)):
+        if seq_list is not None:
+            if path not in seq_list and not is_gt:
+                continue
+        data = feather.read_feather(
+            os.path.join(paths, path, 'annotations.feather'))
 
-            if df is None:
-                df = data
-            else:
-                df = df.append(data)
-    except:
-        return None
+        if 'argo' in paths or not is_gt:
+            def convert2int(x): return class_dict[x]
+            data['category'] = data['category'].apply(convert2int)
+        else:
+            def str2ing(x): return int(x)
+            data['category'] = data['category'].apply(str2ing)
+
+        if classes_to_eval != 'all':
+            data = data[data['category'] == class_dict[classes_to_eval]]
+        data['log_id'] = [path] * data.shape[0]
+
+        if df is None:
+            df = data
+        else:
+            df = df.append(data)
 
     df = df.astype({'num_interior_pts': 'int64'})
 
@@ -106,7 +105,7 @@ def get_feather_files(
         # get file name
         split_dir = paths
         split = os.path.basename(paths)
-        split_dir = os.path.dirname(paths) + '_filtered'
+        split_dir = os.path.dirname(os.path.dirname(paths)) + '_filtered'
 
         file = 'filtered_version.feather'
         file = 'remove_non_drive_' + file if remove_non_drive else file
@@ -123,7 +122,6 @@ def get_feather_files(
         # check if filtered version already exists
         if os.path.isfile(path_filtered):
             df = feather.read_feather(path_filtered)
-
             if 'seq' in df.columns:
                 df.rename(columns={'seq': 'log_id'}, inplace=True)
 
@@ -140,7 +138,7 @@ def get_feather_files(
         num_seqs = df['log_id'].unique().shape[0]
         data_loader = [
             [log_id, num_seqs, remove_non_move, remove_non_move_strategy, loader, remove_non_move_thresh, remove_non_drive, path, remove_far, df] for log_id in df['log_id'].unique()]
-        print(len(data_loader))
+
         data_loader = enumerate(data_loader)
 
         all_filtered = list()
@@ -160,7 +158,7 @@ def get_feather_files(
         
         # store filtered df
         df = filtered
-        print(df)
+
         with open(path_filtered, 'wb') as f:
             feather.write_feather(df, f)
     
@@ -169,7 +167,7 @@ def get_feather_files(
 
     return df
 
-def filter_seq(data):
+def filter_seq(data, width=25):
     # generate filtered version
     filtered = None
     map_dict = dict()
@@ -204,8 +202,11 @@ def filter_seq(data):
             if np.mean(diff_cent/diff_time) > remove_non_move_thresh:
                 movers.append(track)
 
-    # iterate over timesyeps to get argoverse map and labels
-    for i, t in enumerate(sorted(seq_df['timestamp_ns'].unique().tolist())):
+    ## iterate over timesyeps to get argoverse map and labels
+    timestamp_list = sorted(seq_df['timestamp_ns'].unique().tolist())
+    for i, t in enumerate(timestamp_list):
+        if i > len(timestamp_list) - width:
+            break
         track_ids = list()
         time_df = seq_df[seq_df['timestamp_ns'] == t]
 
@@ -445,11 +446,14 @@ def eval_detection(
         max_points=1000000,
         base_dir='../../../'):
 
+    if not len(seq_to_eval):
+        return None, np.array([0, 2, 1, 3.142, 0])
+
     gt_folder = os.path.join(gt_folder, split)
     loader = AV2SensorDataLoader(data_dir=Path(
         gt_folder), labels_dir=Path(gt_folder))
     dataset_dir = Path(gt_folder)
-    eval_only_roi_instances = False if 'waymo' in gt_folder else True
+    eval_only_roi_instances = False if 'waymo' in gt_folder or 'Waymo' in gt_folder else True
     # Defaults to competition parameters.
     competition_cfg = DetectionCfg(
         dataset_dir=dataset_dir, eval_only_roi_instances=eval_only_roi_instances)
@@ -481,27 +485,26 @@ def eval_detection(
         classes_to_eval=classes_to_eval)
     if just_eval:
         print("Loaded detections...")
-
+        
     if dts is None:
         return None, np.array([0, 2, 1, 3.142, 0])
 
     gts['category'] = [_class_dict[c] for c in gts['category']]
     dts['category'] = [_class_dict[c] for c in dts['category']]
     gts['category'] = ['REGULAR_VEHICLE'] * gts.shape[0]
+    
+    if just_eval:
+        print('All GT objects: ', gts.shape[0])
+        print('GT objects with 0 points: ', gts[gts['num_interior_pts'] == 0].shape[0])
+        print('GT objects with less than 5 points and more than 0: ', gts[np.logical_and(gts['num_interior_pts'] < 5, gts['num_interior_pts'] >= 0)].shape[0])
+        print('GT objects with less than 10 points and more than 5: ', gts[np.logical_and(gts['num_interior_pts'] < 10, gts['num_interior_pts'] >= 5)].shape[0])
+        print('GT objects with less than 15 points and more than 10: ', gts[np.logical_and(gts['num_interior_pts'] < 15, gts['num_interior_pts'] >= 10)].shape[0])
+        print('GT objects with less than 20 points and more than 15: ', gts[np.logical_and(gts['num_interior_pts'] < 20, gts['num_interior_pts'] >= 15)].shape[0])
+        print('GT objects with less than 25 points and more than 20: ', gts[np.logical_and(gts['num_interior_pts'] < 25, gts['num_interior_pts'] >= 20)].shape[0])
+        print('GT objects with more than 25 points: ', gts[gts['num_interior_pts'] >= 25].shape[0])
 
-    # remove gt objects without lidar points inside
-    print('All GT objects: ', gts.shape[0])
-    print('GT objects with 0 points: ', gts[gts['num_interior_pts'] == 0].shape[0])
-    print('GT objects with less than 5 points and more than 0: ', gts[np.logical_and(gts['num_interior_pts'] < 5, gts['num_interior_pts'] >= 0)].shape[0])
-    print('GT objects with less than 10 points and more than 5: ', gts[np.logical_and(gts['num_interior_pts'] < 10, gts['num_interior_pts'] >= 5)].shape[0])
-    print('GT objects with less than 15 points and more than 10: ', gts[np.logical_and(gts['num_interior_pts'] < 15, gts['num_interior_pts'] >= 10)].shape[0])
-    print('GT objects with less than 20 points and more than 15: ', gts[np.logical_and(gts['num_interior_pts'] < 20, gts['num_interior_pts'] >= 15)].shape[0])
-    print('GT objects with less than 25 points and more than 20: ', gts[np.logical_and(gts['num_interior_pts'] < 25, gts['num_interior_pts'] >= 20)].shape[0])
-    print('GT objects with more than 25 points: ', gts[gts['num_interior_pts'] >= 25].shape[0])
-
-    gts = gts[gts['num_interior_pts'] > min_points]
-    if (visualize or debug) and dts.shape[0] and gts.shape[0]:
-        visualize_whole(dts, gts, name, base_dir)
+    '''if (visualize or debug) and dts.shape[0] and gts.shape[0]:
+        visualize_whole(dts, gts, name, base_dir)'''
 
     if just_eval:
         print("Loaded ground truth...")
@@ -510,14 +513,7 @@ def eval_detection(
         print("Evaluate now...")
 
     # Evaluate instances.
-    dts, gts, metrics, num_points_tps, num_points_fns = evaluate(dts, gts, cfg=competition_cfg)
-
-    print(f'Less than 5 points and more than 0: TP {num_points_tps[np.logical_and(num_points_tps < 5, num_points_tps >= 0)].shape[0]}, FN {num_points_fns[np.logical_and(num_points_fns < 5, num_points_fns >= 0)].shape[0]}')
-    print(f'Less than 10 points and more than 5: TP {num_points_tps[np.logical_and(num_points_tps < 10, num_points_tps >= 5)].shape[0]}, FN {num_points_fns[np.logical_and(num_points_fns < 10, num_points_fns >= 5)].shape[0]}')
-    print(f'Less than 15 points and more than 10: TP {num_points_tps[np.logical_and(num_points_tps < 15, num_points_tps >= 10)].shape[0]}, FN {num_points_fns[np.logical_and(num_points_fns < 15, num_points_fns >= 10)].shape[0]}')
-    print(f'Less than 20 points and more than 15: TP {num_points_tps[np.logical_and(num_points_tps < 20, num_points_tps >= 15)].shape[0]}, FN {num_points_fns[np.logical_and(num_points_fns < 20, num_points_fns >= 15)].shape[0]}')
-    print(f'Less than 25 points and more than 20: TP {num_points_tps[np.logical_and(num_points_tps < 25, num_points_tps >= 20)].shape[0]}, FN {num_points_fns[np.logical_and(num_points_fns < 25, num_points_fns >= 20)].shape[0]}')
-    print(f'More than 25 points: TP {num_points_tps[num_points_tps >= 25].shape[0]}, FN {num_points_fns[num_points_fns >= 25].shape[0]}')
+    dts, gts, metrics = evaluate(dts, gts, cfg=competition_cfg)
 
     # AP    ATE    ASE    AOE    CDS
     classes_to_eval = 'REGULAR_VEHICLE'
@@ -547,7 +543,7 @@ if __name__ == '__main__':
     gt_folder = 'data/waymo_converted'
     seq_list = os.listdir(tracker_dir)
     min_points = 0
-    max_points = 100000
+    max_points = 5
     _, detection_metric = eval_detection(
         gt_folder=gt_folder,
         trackers_folder=tracker_dir,

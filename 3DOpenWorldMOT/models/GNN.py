@@ -11,7 +11,6 @@ import random
 import matplotlib
 import os
 import logging
-import networkx as nx
 import models.losses
 import math
 import sklearn.metrics
@@ -143,7 +142,8 @@ class ClusterGNN(MessagePassing):
             my_graph=True,
             oracle_node=False,
             oracle_edge=False,
-            dataset='waymo'):
+            dataset='waymo',
+            rank=0):
         super().__init__(aggr='mean')
         self.k = k
         self.k_eval = k_eval
@@ -193,6 +193,8 @@ class ClusterGNN(MessagePassing):
         self.opts = rama_py.multicut_solver_options("PD")
         self.opts.sanitize_graph = True
         self.opts.verbose = False
+
+        self.rank = rank
 
     def initial_edge_attributes(self, x1, x2, edge_index, distance='euclidean'):
         # Given edge-level attention coefficients for source and target nodes,
@@ -277,12 +279,12 @@ class ClusterGNN(MessagePassing):
 
             # get distances between nodes
             if self.edge_attr == 'diffpos':
-                dist = torch.from_numpy(sklearn.metrics.pairwise_distances(X.cpu().numpy(), metric=metric)).cuda()
+                dist = torch.from_numpy(sklearn.metrics.pairwise_distances(X.cpu().numpy(), metric=metric)).to(self.rank)
             else:                
                 # following two lines are faster but cuda oom
                 # dist = torch.cdist(X_time, X_time)
                 # dist = dist.mean(dim=0)
-                dist = torch.zeros(X.shape[0], X.shape[0]).cuda()
+                dist = torch.zeros(X.shape[0], X.shape[0]).to(self.rank)
                 for t in range(X.shape[1]):
                     dist += torch.cdist(X[:, t, :].unsqueeze(0),X[:, t, :].unsqueeze(0)).squeeze()
                 dist = dist / X.shape[1]
@@ -292,7 +294,7 @@ class ClusterGNN(MessagePassing):
 
             # get indices up to max_num_neighbors per node --> knn neighbors
             num_neighbors = min(max_num_neighbors, dist.shape[0])
-            idxs_0 = torch.tile(torch.arange(dist.shape[0]).unsqueeze(1).cuda(), (1, num_neighbors)).flatten()
+            idxs_0 = torch.tile(torch.arange(dist.shape[0]).unsqueeze(1).to(self.rank), (1, num_neighbors)).flatten()
             idxs_1 = dist.topk(k=num_neighbors, dim=1, largest=False).indices.flatten()
 
             # if radius graph, filter nodes that are within radius 
@@ -316,7 +318,7 @@ class ClusterGNN(MessagePassing):
         '''
         clustering: 'heuristic' / 'correlation'
         '''
-        data = data.cuda()
+        data = data.to(self.rank)
         traj = data['traj']
         if traj.shape[0] == 0:
             return [None, None], list(), None, None
@@ -359,8 +361,8 @@ class ClusterGNN(MessagePassing):
                 for _ in range(max(math.ceil(missing_neg/point_instances.shape[0])*2, 1)):
                     a.append(torch.randperm(point_instances.shape[0]))
                     b.append(torch.randperm(point_instances.shape[0]))
-                a = torch.cat(a).cuda()
-                b = torch.cat(b).cuda()
+                a = torch.cat(a).to(self.rank)
+                b = torch.cat(b).to(self.rank)
                 a, b = a[~point_instances[a, b]], b[~point_instances[a, b]]
                 a, b = a[:missing_neg], b[:missing_neg]
             elif point_instances.shape[0]:
@@ -368,11 +370,11 @@ class ClusterGNN(MessagePassing):
                 for _ in range(max(math.ceil(missing_pos/point_instances.shape[0])*2, 1)):
                     a.append(torch.randperm(point_instances.shape[0]))
                     b.append(torch.randperm(point_instances.shape[0]))
-                a = torch.cat(a).cuda()
-                b = torch.cat(b).cuda()
+                a = torch.cat(a).to(self.rank)
+                b = torch.cat(b).to(self.rank)
                 a, b = a[point_instances[a, b]], b[point_instances[a, b]]
                 a, b = a[:missing_pos], b[:missing_pos]
-            add_idxs = torch.stack([a, b]).cuda()
+            add_idxs = torch.stack([a, b]).to(self.rank)
             edge_index = torch.cat([edge_index.T, add_idxs.T]).T
 
         if edge_index.shape[1] == 0:
@@ -414,13 +416,13 @@ class ClusterGNN(MessagePassing):
                     # setting edges that do not belong to object to zero
                     # --> instance 0 is no object
                     point_instances[data.point_instances == 0, :] = False
-                    point_instances = point_instances.cuda()
+                    point_instances = point_instances.to(self.rank)
                     point_instances = point_instances[
                         edge_index[0, :], edge_index[1, :]]
                                         
                     gt_edges = edge_index.T[point_instances].T
                     gt_clusters = data.point_instances != 0
-                    gt_clusters = gt_clusters.type(torch.FloatTensor).cuda().cpu().numpy().tolist()
+                    gt_clusters = gt_clusters.type(torch.FloatTensor).to(self.rank).cpu().numpy().tolist()
                     # gt_clusters = data.point_categories.cpu().numpy().tolist()
 
                     self.visualize(
@@ -471,8 +473,8 @@ class ClusterGNN(MessagePassing):
                 diff = set(list(range(pc.shape[0]))).difference(edges)
                 if len(diff):
                     _edge_index = torch.tensor([[d, 0] for d in diff]).T
-                    edge_index = torch.cat([edge_index.T, _edge_index.cuda().T]).T
-                    score = torch.cat([score, torch.tensor([0]*len(diff)).cuda().unsqueeze(1)])
+                    edge_index = torch.cat([edge_index.T, _edge_index.to(self.rank).T]).T
+                    score = torch.cat([score, torch.tensor([0]*len(diff)).to(self.rank).unsqueeze(1)])
 
                 try:
                     rama_out = rama_py.rama_cuda(
@@ -589,7 +591,7 @@ class ClusterGNN(MessagePassing):
                         if j <= i:
                             continue
                         edge_indices.append([node1, node2])
-            edge_indices = torch.tensor(edge_indices).cuda().T
+            edge_indices = torch.tensor(edge_indices).to(self.rank).T
 
         # take only x and y position
         pos = pos[:, :-1]
@@ -620,13 +622,14 @@ class ClusterGNN(MessagePassing):
 
 
 class GNNLoss(nn.Module):
-    def __init__(self, bce_loss=False, node_loss=False, focal_loss=True) -> None:
+    def __init__(self, bce_loss=False, node_loss=False, focal_loss=True, rank=0) -> None:
         super().__init__()
         
         self.bce_loss = bce_loss
         self.node_loss = node_loss
         self.focal_loss = focal_loss
         self.max_iter = 2000
+        self.rank = rank
 
     def forward(self, logits, data, edge_index, weight=False, weight_node=False):
         edge_logits, node_logits = logits
@@ -642,10 +645,10 @@ class GNNLoss(nn.Module):
             # setting edges that do not belong to object to zero
             # --> instance 0 is no object
             point_instances[data.point_instances == 0, :] = False
-            point_instances = point_instances.cuda()
-            edge_index = edge_index.cuda()
+            point_instances = point_instances.to(self.rank)
+            edge_index = edge_index.to(self.rank)
             point_instances = point_instances[
-                edge_index[0, :], edge_index[1, :]].type(torch.FloatTensor).cuda()        
+                edge_index[0, :], edge_index[1, :]].type(torch.FloatTensor).to(self.rank)        
 
             # compute loss
             if self.bce_loss:
@@ -657,9 +660,9 @@ class GNNLoss(nn.Module):
                     pos_weight = pos_weight.cpu()
                     nbatch = edge_logits.squeeze().shape[0]
                     pos_weight = torch.ones(nbatch) * pos_weight
-                    bce_loss_e = nn.BCEWithLogitsLoss(pos_weight=pos_weight).cuda()
+                    bce_loss_e = nn.BCEWithLogitsLoss(pos_weight=pos_weight).to(self.rank)
                 else:
-                    bce_loss_e = nn.BCEWithLogitsLoss().cuda()
+                    bce_loss_e = nn.BCEWithLogitsLoss().to(self.rank)
 
                 # compute loss
                 bce_loss_edge = bce_loss_e(
@@ -682,7 +685,7 @@ class GNNLoss(nn.Module):
         
         if self.node_loss:
             is_object = data.point_instances != 0
-            is_object = is_object.type(torch.FloatTensor).cuda()
+            is_object = is_object.type(torch.FloatTensor).to(self.rank)
             # weight pos and neg samples
             if weight_node:
                 num_pos = torch.sum((is_object==1).float())
@@ -690,9 +693,9 @@ class GNNLoss(nn.Module):
                 pos_weight = num_neg/num_pos
                 nbatch = node_logits.squeeze().shape[0]
                 pos_weight = torch.ones(nbatch) * pos_weight.cpu()
-                bce_loss_n = nn.BCEWithLogitsLoss(pos_weight=pos_weight).cuda()
+                bce_loss_n = nn.BCEWithLogitsLoss(pos_weight=pos_weight).to(self.rank)
             else:
-                bce_loss_n = nn.BCEWithLogitsLoss().cuda()
+                bce_loss_n = nn.BCEWithLogitsLoss().to(self.rank)
 
             # compute loss
             bce_loss_node = bce_loss_n(node_logits.squeeze(), is_object.squeeze())
@@ -738,7 +741,7 @@ class GNNLoss(nn.Module):
         
         if self.node_loss:
             is_object = data.point_instances != 0
-            is_object = is_object.type(torch.FloatTensor).cuda()
+            is_object = is_object.type(torch.FloatTensor).to(self.rank)
             # compute loss
             bce_loss_node = torch.nn.functional.binary_cross_entropy(
                 node_logits.squeeze(), is_object.squeeze())
