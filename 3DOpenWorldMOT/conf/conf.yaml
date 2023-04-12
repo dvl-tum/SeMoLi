@@ -34,3 +34,4 @@ tracker_options: # Extra options for the tracker
   overlap: 1
   matching: 'greedy'
   alpha: 0.95
+  do_associate: True

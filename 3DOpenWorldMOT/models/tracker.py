@@ -11,7 +11,7 @@ import sklearn.metrics
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import matplotlib.patches as patches
-# import pytorch3d.loss
+import pytorch3d.loss
 import torch
 from collections import defaultdict
 import copy
@@ -145,10 +145,21 @@ logger = logging.getLogger("Model.Tracker")
 
 
 class Tracker3D():
-    def __init__(self, out_path='out', a_threshold=0.8, i_threshold=0.8, split='val', every_x_frame=1, num_interior=10, overlap=5, av2_loader=None) -> None:
+    def __init__(
+            self,
+            out_path='out', 
+            a_threshold=0.8, 
+            i_threshold=0.8, 
+            split='val', 
+            every_x_frame=1, 
+            num_interior=10, 
+            overlap=5, 
+            av2_loader=None, 
+            do_associate=None) -> None:
+        
         self.active_tracks = list()
         self.inactive_tracks = list()
-        self.detections = list()
+        self.detections = dict()
         self.track_id = 0
         self.log_id = -1
         self.split = split
@@ -156,6 +167,7 @@ class Tracker3D():
         self.overlap = overlap
         self.num_interior = num_interior
         self.av2_loader = av2_loader
+        self.do_associate = do_associate
 
         self.a_threshold = a_threshold
         self.i_threshold = i_threshold
@@ -163,12 +175,12 @@ class Tracker3D():
         
         self.filtered_gt = '../../../data/argoverse2/val_0.833_per_frame_remove_non_move_remove_far_remove_non_drive_filtered_version.feather'
     
-    def new_log_id(self, log_id, only_dets=True, associate=False):
+    def new_log_id(self, log_id):
         # save tracks to feather and reset variables
         if self.log_id != -1:
             self.active_tracks = list()
             self.inactive_tracks = list()
-            found = self.to_feather(only_dets=only_dets, associate=associate)
+            found = self.to_feather()
             if not found:
                 logger.info(f'No detections found in {log_id}')
 
@@ -176,10 +188,10 @@ class Tracker3D():
         logger.info(f"New log id {log_id}...")
     
     def get_detections(self, points, traj, clusters, timestamps, log_id,
-                       gt_instance_ids, last=False, only_dets=True, associate=False):
+                       gt_instance_ids, last=False):
         # set new log id
         if self.log_id != log_id:
-            self.new_log_id(log_id, only_dets)
+            self.new_log_id(log_id)
 
         # iterate over clusters that were found and get detections with their 
         # corresponding flows, trajectories and canonical points
@@ -211,19 +223,25 @@ class Tracker3D():
                 num_interior=num_interior,
                 overlap=self.overlap,
                 gt_id=gt_id))
-        if associate:
-            self.associate(detections, timestamp=timestamps[0].item(), last=last, only_dets=only_dets)
-        else:
-            self.detections.extend(detections)
+        
+        self.detections[timestamps.cpu()[0, 0]] = detections
 
-        if last and only_dets:
-            found = self.to_feather(only_dets=only_dets, associate=associate)
+        if last:
+            found = self.to_feather()
             if not found:
                 logger.info(f'No detections found in {log_id}')
             
         return detections
 
-    def associate(self, detections, matching='greedy', timestamp=None, alpha=0.0, make_cost_mat_dist=False, last=False, only_dets=False):
+    def associate(
+            self,
+            detections,
+            matching='greedy',
+            timestamp=None,
+            alpha=0.0,
+            make_cost_mat_dist=False,
+            last=False):
+        
         # add tracks if no tracks yet, initialize tracks
         if not len(self.active_tracks):
             self.active_tracks = list()
@@ -296,10 +314,7 @@ class Tracker3D():
                 self.track_id += 1
         if last:
             self.active_tracks += self.inactive_tracks
-            if not only_dets:
-                self.to_feather()
-            else:
-                self.register(self.av2_loader)
+            self.register()
     
     def greedy(self, cost_mat, num_act, detections, inactive_tracks_to_use):
         re_activate = list()
@@ -380,7 +395,7 @@ class Tracker3D():
         return re_activate, matched_tracks, matched_dets
 
     def _calculate_traj_dist(self, detections, timestamp, alpha=0.0, \
-                             matching='greedy', visualize=False):
+                             matching='greedy'):
         # get detections and canonical points of last x frames 
         # and convert to current time for all active tracks
         trajs = [t._get_traj_and_convert_time(
@@ -414,10 +429,6 @@ class Tracker3D():
         # trajectories and canonical points of new detections
         det_trajs = [t._get_traj() for t in detections]
         det_cano_points = [t._get_canonical_points() for t in detections]
-
-        # visualize current step
-        if visualize:
-            self.visualize(trajs_from_cano, cano_points, det_trajs, det_cano_points, timestamp)
 
         # initialize position distances and trajectory distances
         num_time = trajs_from_overlap[0].shape[1]
@@ -469,18 +480,6 @@ class Tracker3D():
             len(self.active_tracks), \
                 len(trajs) - len(self.active_tracks), \
                     inactive_tracks_to_use
-    
-    def visualize(self, traj0, cano0, traj1, cano1, timestamp):
-        os.makedirs('../../../vis_cano', exist_ok=True)
-        fig = plt.figure(figsize=(100, 100))
-        for i, (t, p) in enumerate(zip(traj0, cano0)):
-            plt.scatter(p[:, 0], p[:, 1], color='red', marker='v')
-
-        for i, (t, p) in enumerate(zip(traj1, cano1)):
-            plt.scatter(p[:, 0], p[:, 1], color='blue', marker='*')
-
-        plt.savefig(f'../../../vis_cano/{timestamp}.jpg')
-        plt.close()
 
     def mat_to_quat(self, mat):
         """Convert a 3D rotation matrix to a scalar _first_ quaternion.
@@ -513,61 +512,20 @@ class Tracker3D():
         mat = Rotation.from_quat(quat_xyzw).as_matrix()
         return mat
 
-    def to_feather(self, visualize=False, only_dets=False, associate=True):
+    def to_feather(self):
         track_vals = list()
-        if not only_dets:
-            for track in self.active_tracks:
-                track.final_detections(self.av2_loader)
-                for det in track:
-                    # quaternion rotation around z axis
-                    quat = np.array([np.cos(det.rotation/2), 0, 0, np.sin(det.rotation/2)])
-                    # REGULAR_VEHICLE = only dummy class
-                    values = [
-                        int(det.timestamp.item()),
-                        track.track_id,
-                        'REGULAR_VEHICLE',
-                        det.lwh[0],
-                        det.lwh[1],
-                        det.lwh[2],
-                        quat[0],
-                        quat[1],
-                        quat[2],
-                        quat[3],
-                        det.translation[0],
-                        det.translation[1],
-                        det.translation[2],
-                        det.num_interior]
-                    track_vals.append(values)
-            
-            track_vals = np.asarray(track_vals)
-            df = pd.DataFrame(
-                data=track_vals,
-                columns=column_names)
-            df = df.astype(column_dtypes)
-        
-        elif associate:
-            for track in self.active_tracks:
-                for det in track.detections:
-                    det = det.final_detection()
-                    # quaternion rotation around z axis
-                    quat = torch.tensor([torch.cos(det.heading/2), 0, 0, torch.sin(det.heading/2)]).numpy()
-                    # REGULAR_VEHICLE = only dummy class
-                    values = [
-                        det.translation[0],
-                        det.translation[1],
-                        det.translation[2],
-                        det.lwh[0],
-                        det.lwh[1],
-                        det.lwh[2],
-                        quat[0],
-                        quat[1],
-                        quat[2],
-                        quat[3],
-                        int(det.timestamp.item()),
-                        'REGULAR_VEHICLE',
-                        det.num_interior]
-                    track_vals.append(values)
-        
+        if self.do_associate:
+            # per timestampdetections
+            for i, timestamp in enumerate(sorted(self.detections.keys())):
+                dets = self.detections[timestamp]
+                self.associate(
+                    dets,
+                    matching='greedy',
+                    timestamp=timestamp,
+                    alpha=0.0,
+                    make_cost_mat_dist=False,
+                    last=len(self.detections)==i+1)
+                                    
             track_vals = np.asarray(track_vals)
             if track_vals.shape[0] == 0:
                 return False
@@ -580,26 +538,29 @@ class Tracker3D():
             self.inactive_tracks = list()
         
         else:
-            for det in self.detections:
-                det = det.final_detection()
-                # quaternion rotation around z axis
-                quat = torch.tensor([torch.cos(det.heading/2), 0, 0, torch.sin(det.heading/2)]).numpy()
-                # REGULAR_VEHICLE = only dummy class
-                values = [
-                    det.translation[0].item(),
-                    det.translation[1].item(),
-                    det.translation[2].item(),
-                    det.lwh[0].item(),
-                    det.lwh[1].item(),
-                    det.lwh[2].item(),
-                    quat[0],
-                    quat[1],
-                    quat[2],
-                    quat[3],
-                    int(det.timestamp.item()),
-                    'REGULAR_VEHICLE',
-                    det.num_interior]
-                track_vals.append(values)
+            # per timestamp detections
+            for i, timestamp in enumerate(sorted(self.detections.keys())):
+                dets = self.detections[timestamp]
+                for det in dets:
+                    det = det.final_detection()
+                    # quaternion rotation around z axis
+                    quat = torch.tensor([torch.cos(det.heading/2), 0, 0, torch.sin(det.heading/2)]).numpy()
+                    # REGULAR_VEHICLE = only dummy class
+                    values = [
+                        det.translation[0].item(),
+                        det.translation[1].item(),
+                        det.translation[2].item(),
+                        det.lwh[0].item(),
+                        det.lwh[1].item(),
+                        det.lwh[2].item(),
+                        quat[0],
+                        quat[1],
+                        quat[2],
+                        quat[3],
+                        int(det.timestamp.item()),
+                        'REGULAR_VEHICLE',
+                        det.num_interior]
+                    track_vals.append(values)
             track_vals = np.asarray(track_vals)
             if track_vals.shape[0] == 0:
                 return False
@@ -615,187 +576,94 @@ class Tracker3D():
         logger.info(f'Stored tracks for sequence {self.log_id} at {os.getcwd()}/{write_path}')
         feather.write_feather(df, write_path)
 
-        if visualize:
-            self.visualize_whole(df, track.log_id)
-        
         return True
 
-    def register(self, av2_loader):
+    def register(self):
+        detections = list()
         init_R = torch.tensor([[[1, 0, 0], [0, 1, 0], [0, 0, 1]]]).float().cuda()
         init_s = torch.tensor([1]).float().cuda()
         
         for track in self.active_tracks:
-            '''if len(track.detections) > 1:
-                fig, ax = plt.subplots()'''
-            start_in_t0 = track._get_canonical_points(i=0)
+            # we start from timestep with most points and then go
+            # from max -> end -> start -> max
+            max_interior = torch.argmax(track.detections.num_interior)
+            start_in_t0 = track._get_canonical_points(i=max_interior)
+            max_to_end = range(max_interior, len(track)-1)
+            end_to_start = range(len(track), 0, -1)
+            start_to_max = range(0, max_interior)
+            iterators = [max_to_end, end_to_start, start_to_max]
+            increment = [+1, -1, +1]
 
-            # highest_density = np.argmax([track._get_canonical_points(i=i).shape[0] for i in range(len(track.detections))])
-            inits = list()
-            for i in range(len(track.detections) - 1):
-                '''print(len(track.detections), i)
-                ### vis
-                p = track._get_canonical_points(i=i)
-                mins, maxs = p.min(axis=0), p.max(axis=0)
-                lwh = maxs - mins
-                translation = (maxs + mins)/2
-                plt.scatter(translation[0], translation[1], color='blue', marker='*')
-                x_0 = translation[0]-0.5*lwh[0]
-                y_0 = translation[1]-0.5*lwh[1]
-                rect = patches.Rectangle(
-                    (x_0, y_0),
-                    lwh[0], 
-                    lwh[1],
-                    linewidth=1,
-                    edgecolor='blue',
-                    facecolor='none')
-                ax.add_patch(rect)
-                ###'''
+            SimilarityTransforms = [None] * len(track)
+            for iterator, increment in zip(iterators, increment):
+                for i in iterator:
+                    # convert pc from ego frame t=i to ego frame t=i+increment
+                    t0 = track.detections[i].timestamps[0].item()
+                    t1 = track.detections[i+increment].timestamps[0].item()
+                    start_in_t1 = track._convert_time(t0, t1, self.av2_loader, start_in_t0)
+                    trans0_in_t1 = (start_in_t1.min(axis=0) + start_in_t1.max(axis=0))/2
+                    
+                    # get canonical poitns at t+increment
+                    cano1_in_t1 = track._get_canonical_points(i=i+increment)
+                    trans1_in_t1 = (cano1_in_t1.min(axis=0) + cano1_in_t1.max(axis=0))/2
+                    
+                    # init translation by distance between center points, R unit, s=1
+                    init_T = (
+                        trans1_in_t1 - trans0_in_t1).float().cuda().unsqueeze(0)
+                    init = pytorch3d.ops.points_alignment.SimilarityTransform(
+                        R=init_R, T=init_T, s=init_s)
 
-                # convert pc from ego frame t=i to ego frame t=i+1
-                t0 = track.detections[i].timestamps[0].item()
-                t1 = track.detections[i+1].timestamps[0].item()
-                start_in_t1 = track._convert_time(t0, t1, av2_loader, start_in_t0)
-                trans0_in_t1 = (start_in_t1.min(axis=0) + start_in_t1.max(axis=0))/2
-                
-                # get current canonical poitns
-                cano1_in_t1 = track._get_canonical_points(i=i+1)
-                trans1_in_t1 = (cano1_in_t1.min(axis=0) + cano1_in_t1.max(axis=0))/2
-                
-                # init translation by distance between center points, R unit, s=1
-                init_T = (
-                    trans1_in_t1 - trans0_in_t1).float().cuda().unsqueeze(0)
-                init = pytorch3d.ops.points_alignment.SimilarityTransform(
-                    R=init_R, T=init_T, s=init_s)
-                inits.append(init_T)
+                    # ICP
+                    ICPSolution = pytorch3d.ops.points_alignment.iterative_closest_point(
+                        start_in_t1.float().cuda().unsqueeze(0),
+                        cano1_in_t1.float().cuda().unsqueeze(0),
+                        init_transform=init)
+                    start_registered = ICPSolution.Xt.cpu().squeeze().numpy()
+                    if SimilarityTransforms[i+increment] is not None:
+                        SimilarityTransforms.append(ICPSolution.SimilarityTransform)
+                    
+                    # concatenate cano points at t+increment and registered points as
+                    # point cloud for next timestamp / final point cloud
+                    start_in_t0 = torch.cat([start_registered, cano1_in_t1])
 
-                # ICP
-                start_registered = pytorch3d.ops.points_alignment.iterative_closest_point(
-                    start_in_t1.float().cuda().unsqueeze(0),
-                    cano1_in_t1.float().cuda().unsqueeze(0),
-                    init_transform=init).Xt.cpu().squeeze().numpy()
-                            
-                '''if len(track.detections) > 1:
-                    print(i, start_in_t0.max(axis=0) - start_in_t0.min(axis=0), \
-                          (start_in_t0.min(axis=0) + start_in_t0.max(axis=0))/2)
-                    print(i, start_in_t1.max(axis=0) - start_in_t1.min(axis=0), \
-                          (start_in_t1.min(axis=0) + start_in_t1.max(axis=0))/2)'''
-                
-                start_in_t0 = torch.cat([start_registered, cano1_in_t1])
-
-                '''if len(track.detections) > 1:
-                    print(i, start_in_t0.max(axis=0) - start_in_t0.min(axis=0), \
-                          (start_in_t0.min(axis=0) + start_in_t0.max(axis=0))/2)'''
-
-            '''if len(track.detections) > 1:
-                print(start_in_t0)'''
-
-            mins, maxs = start_in_t0.min(axis=0), start_in_t0.max(axis=0)
+            max_interior_pc = start_in_t0
+            mins, maxs = max_interior_pc.min(axis=0), max_interior_pc.max(axis=0)
             lwh = maxs - mins
             translation = (maxs + mins)/2
             
             # setting last detection
-            track.detections[-1].lwh = lwh
-            track.detections[-1].translation = translation
-            self.detections.append(track.detections[-1])
+            track.detections[max_interior].lwh = lwh
+            track.detections[max_interior].translation = translation
+            detections.append(track.detections[-1])
             
-            # Iterating over all but last detection
-            for i, d in zip(reversed(range(len(track.detections)-1)), reversed(track.detections[:-1])):
+            # Iterating from max -> end and max -> start
+            max_to_end = range(max_interior, len(track)-1)
+            max_to_start = range(max_interior, 0, -1)
+            iterators = [max_to_end, max_to_start]
+            increment = [+1, -1]
+            for iterator, increment in zip(iterators, increment):
+                start_in_t0 = max_interior_pc
+                for i in iterator:
+                    # from t0 (i+1) --> t1 (i)
+                    cano1_in_t1 = track._get_canonical_points(i=i)
+                    t0 = track.detections[i+increment].timestamps[0].item()
+                    t1 = track.detections[i].timestamps[0].item()
+                    start_in_t1 = track._convert_time(t0, t1, self.av2_loader, start_in_t0)
 
-                 # from t0 (i+1) --> t1 (i)
-                cano1_in_t1 = track._get_canonical_points(i=i)
-                t0 = track.detections[i+1].timestamps[0].item()
-                t1 = track.detections[i].timestamps[0].item()
-                start_in_t1 = track._convert_time(t0, t1, av2_loader, start_in_t0)
+                    # apply stored similarity transform
+                    start_in_t0 = pytorch3d.ops.points_alignment._apply_similarity_transform(
+                        start_in_t1,
+                        SimilarityTransforms[i+increment].R,
+                        SimilarityTransforms[i+increment].T,
+                        SimilarityTransforms[i+increment].s)
 
-                # init backward
-                init = pytorch3d.ops.points_alignment.SimilarityTransform(
-                    R=init_R, T=-1*init_T, s=init_s)
-                # aggregated point cloud registered to t1 (i)
-                start_in_t0 = pytorch3d.ops.points_alignment.iterative_closest_point(
-                    start_in_t1.float().cuda().unsqueeze(0),
-                    cano1_in_t1.float().cuda().unsqueeze(0),
-                    init_transform=init).Xt.cpu().squeeze().numpy()
+                    # get bounding box from registered
+                    mins, maxs = start_in_t0.min(axis=0), start_in_t0.max(axis=0)
+                    track.detections[i+increment].translation = (maxs + mins)/2
+                    track.detections[i+increment].lwh = maxs - mins
+                    
+                    detections.append(track.detections[i+increment])
 
-                # get bounding box from registered
-                mins, maxs = start_in_t0.min(axis=0), start_in_t0.max(axis=0)
-                d.translation = (maxs + mins)/2
-                d.lwh = maxs - mins
-                
-                self.detections.append(d)
-
-                '''### vis
-                plt.scatter(d.translation[0], d.translation[1], color='red', marker='*')
-                x_0 = d.translation[0]-0.5*lwh[0]
-                y_0 = d.translation[1]-0.5*lwh[1]
-                rect = patches.Rectangle(
-                    (x_0, y_0),
-                    lwh[0], 
-                    lwh[1],
-                    linewidth=1,
-                    edgecolor='red',
-                    facecolor='none')
-                ax.add_patch(rect)
-                ###
-                if len(track.detections) > 1:
-                    print(i, d.lwh, d.translation)'''
-    
-            '''if len(track.detections) > 1:
-                print()
-                plt.savefig(f'../../../{track.track_id}.jpg')
-                plt.close()'''
-
-    def visualize_whole(self, df, seq):
-        gt = feather.read_feather(self.filtered_gt)
-        gt = gt[gt['seq'] == self.log_id]
-
-        track_colors = {t: c for t, c in zip(df['track_uuid'].unique(), cols)}
-        
-        x_lim = (np.min(df['tx_m'].values) - 10, np.max(df['tx_m'].values) + 10)
-        y_lim = (np.min(df['ty_m'].values) - 10, np.max(df['ty_m'].values) + 10)
-
-        os.makedirs(f'../../../Visualization_Whole/{seq}', exist_ok=True)
-        for i, timestamp in enumerate(sorted(df['timestamp_ns'].unique())):
-            time_df = df[df['timestamp_ns'] == timestamp]
-            time_gt = gt[gt['timestamp_ns'] == timestamp]
-            fig, ax = plt.subplots()
-            for i, track_id in enumerate(time_df['track_uuid'].unique()):
-                track_df = time_df[time_df['track_uuid'] == track_id]
-                plt.scatter(track_df['tx_m'], track_df['ty_m'], color=track_colors[track_id], marker='o')
-                x_0 = track_df['tx_m'].values-0.5*track_df['length_m'].values
-                y_0 = track_df['ty_m'].values-0.5*track_df['width_m'].values
-                rect = patches.Rectangle(
-                    (x_0, y_0),
-                    track_df['length_m'].values, 
-                    track_df['width_m'].values,
-                    linewidth=1,
-                    edgecolor=track_colors[track_id],
-                    facecolor='none')
-                ax.add_patch(rect)
-
-            for i, track_id in enumerate(time_gt['track_uuid'].unique()):
-                track_gt = time_gt[time_gt['track_uuid'] == track_id]
-                if _class_dict[track_gt['category'].values.item()] == 'PEDESTRIAN':
-                    marker = '*'
-                else:
-                    marker = 'o'
-                plt.scatter(track_gt['tx_m'], track_gt['ty_m'], color='black', marker=marker)
-                x_0 = track_gt['tx_m'].values-0.5*track_gt['length_m'].values
-                y_0 = track_gt['ty_m'].values-0.5*track_gt['width_m'].values
-                rect = patches.Rectangle(
-                    (x_0, y_0),
-                    track_gt['length_m'].values,
-                    track_gt['width_m'].values,
-                    linewidth=1,
-                    edgecolor='black',
-                    facecolor='none')
-                ax.add_patch(rect)
-
-            plt.axis('off')
-            plt.xlim(x_lim)
-            plt.ylim(y_lim)
-            plt.savefig(f'../../../Visualization_Whole/{seq}/frame_{timestamp}.jpg')
-            plt.close()
-            
 
 class Track():
     def __init__(self, detection, track_id, every_x_frame, overlap) -> None:
@@ -939,9 +807,10 @@ class InitialDetection():
             [torch.cos(alpha), torch.sin(alpha), 0],
             [torch.sin(alpha), torch.cos(alpha), 0],
             [0, 0, 1]])
-        final = Detection(rot, alpha, translation, lwh, self.timestamps[0, 0], self.log_id, self.num_interior)
+        self.final = Detection(rot, alpha, translation, lwh, self.timestamps[0, 0], self.log_id, self.num_interior)
 
-        return final
+        return self.final
+
 
 class Detection():
     def __init__(self, rotation, heading, translation, lwh, timestamp, log_id, num_interior) -> None:

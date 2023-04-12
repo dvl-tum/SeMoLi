@@ -299,7 +299,8 @@ def train(rank, cfg, world_size):
                 every_x_frame=cfg.data.every_x_frame,
                 num_interior=cfg.tracker_options.num_interior,
                 overlap=cfg.tracker_options.overlap,
-                av2_loader=val_loader.dataset.loader)
+                av2_loader=val_loader.dataset.loader,
+                associate=cfg.tracker_options.associate)
             
             with torch.no_grad():
                 if is_neural_net:

@@ -1,4 +1,6 @@
 # FOR DETECTION EVALUATION
+import warnings
+warnings.simplefilter(action='ignore', category=FutureWarning)
 from av2.evaluation.detection.eval import evaluate
 from av2.evaluation.detection.utils import DetectionCfg
 from pathlib import Path
@@ -117,9 +119,8 @@ def get_feather_files(
             :5] + '_' + file if remove_non_move else file
         file = split + '_' + file
 
-        path_filtered = \
-            os.path.join(split_dir, file)
-
+        path_filtered = os.path.join(split_dir, file)
+        path_filtered = '../../../Waymo_Converted_filtered_val/val_1.0_per_frame_remove_non_move_remove_far_filtered_version.feather'
         # check if filtered version already exists
         if os.path.isfile(path_filtered):
             df = feather.read_feather(path_filtered)
@@ -169,7 +170,7 @@ def get_feather_files(
 
     return df
 
-def filter_seq(data):
+def filter_seq(data, width=25):
     # generate filtered version
     filtered = None
     map_dict = dict()
@@ -205,7 +206,10 @@ def filter_seq(data):
                 movers.append(track)
 
     # iterate over timesyeps to get argoverse map and labels
-    for i, t in enumerate(sorted(seq_df['timestamp_ns'].unique().tolist())):
+    timestamp_list = sorted(seq_df['timestamp_ns'].unique().tolist())
+    for i, t in enumerate(timestamp_list):
+        if i > len(timestamp_list) - width:
+            break
         track_ids = list()
         time_df = seq_df[seq_df['timestamp_ns'] == t]
 
@@ -290,8 +294,8 @@ def filter_seq(data):
                         bool_labels.append(False)
 
                 # filter labels
-                labels = [l for i, l in enumerate(
-                    labels) if bool_labels[i]]
+                # labels = [l for i, l in enumerate(
+                #     labels) if bool_labels[i]]
             else:
                 assert remove_non_move_strategy in [
                     'per_frame', 'per_seq'], 'remove strategy for static objects not defined'
@@ -304,12 +308,15 @@ def filter_seq(data):
             dists_to_center = np.sqrt(np.sum(all_centroids ** 2, 1))
             ind = np.where(dists_to_center <= 80)[0]
             labels = [labels[i] for i in ind]
+            bool_labels = [bool_labels[i] for i in ind]
         
         # get track id of remaining objects
         track_ids = [l.track_id for l in labels]
+        bool_labels = {l.track_id: b for l, b in zip(labels, bool_labels)}
 
         # filter time df by track ids
         time_df = time_df[time_df['track_uuid'].isin(track_ids)]
+        time_df['filter_moving'] = [bool_labels[t] for t in time_df['track_uuid'].values]
         
         if filtered is None and time_df.shape[0]:
             filtered = time_df
@@ -320,7 +327,7 @@ def filter_seq(data):
 
 
 def visualize_whole(df, gf, name, base_dir='../../../'):
-    split_dir = Path('/storage/user/seidensc/datasets/Waymo_Converted/val')
+    split_dir = Path('../../../Waymo_Converted_GT/val')
     loader = AV2SensorDataLoader(data_dir=split_dir, labels_dir=split_dir)
     for seq in df['log_id'].unique():
         print(f'storing to {base_dir}Visualization_Whole_DETS/{seq}')
@@ -338,7 +345,7 @@ def visualize_whole(df, gf, name, base_dir='../../../'):
         else:
             to_use = gdf
         
-        for i, timestamp in enumerate(sorted(ddf['timestamp_ns'].unique())):
+        for i, timestamp in enumerate(sorted(to_use['timestamp_ns'].unique())):
             city_SE3_ego = loader.get_city_SE3_ego(seq, int(timestamp))
             time_gdf = to_use[to_use['timestamp_ns'] == timestamp]
             gdf_city = city_SE3_ego.transform_point_cloud(
@@ -353,14 +360,12 @@ def visualize_whole(df, gf, name, base_dir='../../../'):
         lims_maxs = np.vstack(lims_maxs)
         mins = np.min(lims_mins, axis=0)
         maxs = np.max(lims_maxs, axis=0)
-        lims = np.vstack([mins, maxs])
-        x_lim = (lims[0, 0] - 10,
-                 lims[1, 0] + 10)
-        y_lim = (lims[0, 1] - 10,
-                 lims[1, 1] + 10)
-        
+        x_lim = (mins[0] - 200,
+                 maxs[0] + 200)
+        y_lim = (mins[1] - 200,
+                 maxs[1] + 200)
         # visualize for every timestamp
-        for i, timestamp in enumerate(sorted(ddf['timestamp_ns'].unique())):
+        for i, timestamp in enumerate(sorted(gdf['timestamp_ns'].unique().tolist()+ddf['timestamp_ns'].unique().tolist())):
             city_SE3_ego = loader.get_city_SE3_ego(seq, int(timestamp))
             
             # transform timestamp into city coords
@@ -373,6 +378,7 @@ def visualize_whole(df, gf, name, base_dir='../../../'):
 
             # visualize detections
             fig, ax = plt.subplots()
+            ax.axis('equal')
             j = 0
             for i, row in time_ddf.iterrows():
                 plt.scatter(ddf_city[j, 0], ddf_city[j, 1], color='black', marker='o', s=30)
@@ -418,13 +424,17 @@ def visualize_whole(df, gf, name, base_dir='../../../'):
                 ax.add_patch(rect)
                 j += 1
 
-            plt.axis('off')
+            mins = np.min(gdf_city, axis=0)
+            maxs = np.max(gdf_city, axis=0)
+            x_lim = [mins[0]- 10, maxs[0]+10]
+            y_lim = [mins[1]-10, maxs[1]+10]
+            # plt.axis('off')
             plt.xlim(x_lim)
             plt.ylim(y_lim)
             plt.savefig(
-                f'{base_dir}Visualization_Whole_DETS/{seq}/frame_{timestamp}_{name}.jpg')
+                f'{base_dir}Visualization_Whole_DETS/{seq}/frame_{timestamp}_{name}.jpg', dpi=400)
             plt.close()
-
+    
 
 def eval_detection(
         gt_folder,
@@ -443,16 +453,19 @@ def eval_detection(
         just_eval=False,
         min_points=0,
         max_points=1000000,
-        base_dir='../../../'):
+        base_dir='../../../',
+        print_detail=False):
 
     gt_folder = os.path.join(gt_folder, split)
     loader = AV2SensorDataLoader(data_dir=Path(
         gt_folder), labels_dir=Path(gt_folder))
     dataset_dir = Path(gt_folder)
-    eval_only_roi_instances = False if 'waymo' in gt_folder else True
+    eval_only_roi_instances = False if 'Waymo' in gt_folder else True
     # Defaults to competition parameters.
     competition_cfg = DetectionCfg(
-        dataset_dir=dataset_dir, eval_only_roi_instances=eval_only_roi_instances)
+        dataset_dir=dataset_dir, 
+        eval_only_roi_instances=eval_only_roi_instances, 
+        tp_threshold_m=4.0)
     if just_eval:
         print("Loading data...")
 
@@ -479,6 +492,7 @@ def eval_detection(
         loader=loader,
         gt_folder=gt_folder,
         classes_to_eval=classes_to_eval)
+
     if just_eval:
         print("Loaded detections...")
 
@@ -489,19 +503,18 @@ def eval_detection(
     dts['category'] = [_class_dict[c] for c in dts['category']]
     gts['category'] = ['REGULAR_VEHICLE'] * gts.shape[0]
 
-    # remove gt objects without lidar points inside
-    print('All GT objects: ', gts.shape[0])
-    print('GT objects with 0 points: ', gts[gts['num_interior_pts'] == 0].shape[0])
-    print('GT objects with less than 5 points and more than 0: ', gts[np.logical_and(gts['num_interior_pts'] < 5, gts['num_interior_pts'] >= 0)].shape[0])
-    print('GT objects with less than 10 points and more than 5: ', gts[np.logical_and(gts['num_interior_pts'] < 10, gts['num_interior_pts'] >= 5)].shape[0])
-    print('GT objects with less than 15 points and more than 10: ', gts[np.logical_and(gts['num_interior_pts'] < 15, gts['num_interior_pts'] >= 10)].shape[0])
-    print('GT objects with less than 20 points and more than 15: ', gts[np.logical_and(gts['num_interior_pts'] < 20, gts['num_interior_pts'] >= 15)].shape[0])
-    print('GT objects with less than 25 points and more than 20: ', gts[np.logical_and(gts['num_interior_pts'] < 25, gts['num_interior_pts'] >= 20)].shape[0])
-    print('GT objects with more than 25 points: ', gts[gts['num_interior_pts'] >= 25].shape[0])
-
-    gts = gts[gts['num_interior_pts'] > min_points]
-    if (visualize or debug) and dts.shape[0] and gts.shape[0]:
-        visualize_whole(dts, gts, name, base_dir)
+    if print_detail:
+        # remove gt objects without lidar points inside
+        print('All GT objects: ', gts.shape[0])
+        print('GT objects with 0 points: ', gts[gts['num_interior_pts'] == 0].shape[0])
+        print('GT objects with less than 5 points and more than 0: ', gts[np.logical_and(gts['num_interior_pts'] < 5, gts['num_interior_pts'] >= 0)].shape[0])
+        print('GT objects with less than 10 points and more than 5: ', gts[np.logical_and(gts['num_interior_pts'] < 10, gts['num_interior_pts'] >= 5)].shape[0])
+        print('GT objects with less than 15 points and more than 10: ', gts[np.logical_and(gts['num_interior_pts'] < 15, gts['num_interior_pts'] >= 10)].shape[0])
+        print('GT objects with less than 20 points and more than 15: ', gts[np.logical_and(gts['num_interior_pts'] < 20, gts['num_interior_pts'] >= 15)].shape[0])
+        print('GT objects with less than 25 points and more than 20: ', gts[np.logical_and(gts['num_interior_pts'] < 25, gts['num_interior_pts'] >= 20)].shape[0])
+        print('GT objects with more than 25 points: ', gts[gts['num_interior_pts'] >= 25].shape[0])
+    
+    print(f'Min points {min_points}, Max points {max_points}')
 
     if just_eval:
         print("Loaded ground truth...")
@@ -510,14 +523,20 @@ def eval_detection(
         print("Evaluate now...")
 
     # Evaluate instances.
-    dts, gts, metrics, num_points_tps, num_points_fns = evaluate(dts, gts, cfg=competition_cfg)
+    dts, gts, metrics, num_points_tps, num_points_fns = evaluate(dts, gts, cfg=competition_cfg, min_points=min_points, max_points=max_points)
+    dts = dts[dts['is_evaluated']==1]
+    gts = gts[gts['is_evaluated']==1]
 
-    print(f'Less than 5 points and more than 0: TP {num_points_tps[np.logical_and(num_points_tps < 5, num_points_tps >= 0)].shape[0]}, FN {num_points_fns[np.logical_and(num_points_fns < 5, num_points_fns >= 0)].shape[0]}')
-    print(f'Less than 10 points and more than 5: TP {num_points_tps[np.logical_and(num_points_tps < 10, num_points_tps >= 5)].shape[0]}, FN {num_points_fns[np.logical_and(num_points_fns < 10, num_points_fns >= 5)].shape[0]}')
-    print(f'Less than 15 points and more than 10: TP {num_points_tps[np.logical_and(num_points_tps < 15, num_points_tps >= 10)].shape[0]}, FN {num_points_fns[np.logical_and(num_points_fns < 15, num_points_fns >= 10)].shape[0]}')
-    print(f'Less than 20 points and more than 15: TP {num_points_tps[np.logical_and(num_points_tps < 20, num_points_tps >= 15)].shape[0]}, FN {num_points_fns[np.logical_and(num_points_fns < 20, num_points_fns >= 15)].shape[0]}')
-    print(f'Less than 25 points and more than 20: TP {num_points_tps[np.logical_and(num_points_tps < 25, num_points_tps >= 20)].shape[0]}, FN {num_points_fns[np.logical_and(num_points_fns < 25, num_points_fns >= 20)].shape[0]}')
-    print(f'More than 25 points: TP {num_points_tps[num_points_tps >= 25].shape[0]}, FN {num_points_fns[num_points_fns >= 25].shape[0]}')
+    if visualize and dts.shape[0] and gts.shape[0]:
+        visualize_whole(dts, gts[gts['num_interior_pts']>0], name, base_dir)
+
+    if print_detail:
+        print(f'Less than 5 points and more than 0: TP {num_points_tps[np.logical_and(num_points_tps < 5, num_points_tps >= 0)].shape[0]}, FN {num_points_fns[np.logical_and(num_points_fns < 5, num_points_fns >= 0)].shape[0]}')
+        print(f'Less than 10 points and more than 5: TP {num_points_tps[np.logical_and(num_points_tps < 10, num_points_tps >= 5)].shape[0]}, FN {num_points_fns[np.logical_and(num_points_fns < 10, num_points_fns >= 5)].shape[0]}')
+        print(f'Less than 15 points and more than 10: TP {num_points_tps[np.logical_and(num_points_tps < 15, num_points_tps >= 10)].shape[0]}, FN {num_points_fns[np.logical_and(num_points_fns < 15, num_points_fns >= 10)].shape[0]}')
+        print(f'Less than 20 points and more than 15: TP {num_points_tps[np.logical_and(num_points_tps < 20, num_points_tps >= 15)].shape[0]}, FN {num_points_fns[np.logical_and(num_points_fns < 20, num_points_fns >= 15)].shape[0]}')
+        print(f'Less than 25 points and more than 20: TP {num_points_tps[np.logical_and(num_points_tps < 25, num_points_tps >= 20)].shape[0]}, FN {num_points_fns[np.logical_and(num_points_fns < 25, num_points_fns >= 20)].shape[0]}')
+        print(f'More than 25 points: TP {num_points_tps[num_points_tps >= 25].shape[0]}, FN {num_points_fns[num_points_fns >= 25].shape[0]}')
 
     # AP    ATE    ASE    AOE    CDS
     classes_to_eval = 'REGULAR_VEHICLE'
@@ -525,7 +544,7 @@ def eval_detection(
         metric = metrics.loc['AVERAGE_METRICS'].values
     else:
         metric = metrics.loc[classes_to_eval].values
-
+    
     return metrics, metric
 
 
@@ -544,25 +563,37 @@ if __name__ == '__main__':
     name = 'gt_all_egocomp_margin0.6_width25_oraclenode_oracleedge_4096_16000_mean_dist_over_time_min_mean_max_diffpostrajtime_min_mean_max_vel_nodescore_correlation_mygraph'
     name = 'gt_all_egocomp_margin0.6_width25_oraclenode_oracleedge_4096_32000_mean_dist_over_time_min_mean_max_diffpostrajtime_min_mean_max_vel_nodescore_correlation_mygraph'
     tracker_dir = f'out/{name}/val'
+    tracker_dir =  '4449931/out/gt_all_egocomp_margin0.6_width25_nooracle_4096_8000_mean_dist_over_time_min_mean_max_diffpostrajtime_min_mean_max_vel_nodescore_correlation_mygraph/val'
+    tracker_dir = 'out/gt_all_egocomp_margin0.6_width25_oraclenode_oracleedge_4096_8000_mean_dist_over_time_min_mean_max_diffpostrajtime_min_mean_max_vel_nodescore_correlation_mygraph/val'
     gt_folder = 'data/waymo_converted'
+    gt_folder = '../../../Waymo_Converted_GT'
     seq_list = os.listdir(tracker_dir)
-    min_points = 0
-    max_points = 100000
-    _, detection_metric = eval_detection(
-        gt_folder=gt_folder,
-        trackers_folder=tracker_dir,
-        seq_to_eval=seq_list,
-        remove_far=False,
-        remove_non_drive=False,
-        remove_non_move=True,
-        remove_non_move_strategy='per_frame',
-        remove_non_move_thresh=1.0,
-        classes_to_eval='all',
-        debug=False,
-        visualize=False,
-        name=name,
-        min_points=min_points,
-        max_points=max_points,
-        base_dir='')
-    
-    print(detection_metric)
+    min_points = -1
+    max_points = 1000000
+    # for m in [-1]: # [-1, 0, 5, 10, 15, 20, 25]:
+    m = -1
+    for seq in os.listdir(tracker_dir):
+        seq = '13941626351027979229'
+        seq_list = [seq]
+        min_points = m
+        max_points = m+5 if m != 25 and m != -1 else 1000000
+        _, detection_metric = eval_detection(
+            gt_folder=gt_folder,
+            trackers_folder=tracker_dir,
+            seq_to_eval=seq_list,
+            remove_far=True,
+            remove_non_drive=False,
+            remove_non_move=True,
+            remove_non_move_strategy='per_frame',
+            remove_non_move_thresh=1.0,
+            classes_to_eval='all',
+            debug=False,
+            visualize=False,
+            name=name,
+            min_points=min_points,
+            max_points=max_points,
+            base_dir='',
+            print_detail=False)
+        
+        print(detection_metric, '\n')
+        quit()
