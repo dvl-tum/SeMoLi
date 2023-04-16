@@ -27,7 +27,7 @@ WAYMO_CLASSES = {'TYPE_UNKNOWN': 0, 'TYPE_VECHICLE': 1, 'TYPE_PEDESTRIAN': 2, 'T
 
 
 class TrajectoryDataset(PyGDataset):
-    def __init__(self, data_dir, split, trajectory_dir, use_all_points, num_points, remove_static, static_thresh, debug, _eval=False, every_x_frame=1, margin=0.6, split_val=False, short_train=False, _processed_dir=False, do_process=True):
+    def __init__(self, data_dir, split, trajectory_dir, use_all_points, num_points, remove_static, static_thresh, debug, _eval=False, every_x_frame=1, margin=0.6, split_val=False, _processed_dir=False, do_process=True, seq=None):
         self.split_dir = Path(os.path.join(data_dir, split))
         self.trajectory_dir = Path(os.path.join(trajectory_dir, split))
         self.data_dir = data_dir
@@ -37,7 +37,6 @@ class TrajectoryDataset(PyGDataset):
         self.split = split
         self.use_all_points = use_all_points
         self.num_points = num_points
-        self.debug = debug
         self.split_val = split_val
         if self.split == 'val' or self.split == 'test':
             self.loader = AV2SensorDataLoader(data_dir=self.split_dir, labels_dir=self.split_dir)
@@ -48,24 +47,21 @@ class TrajectoryDataset(PyGDataset):
         self.margin = margin
         self._processed_dir = _processed_dir
         self.do_process =  do_process
-
-        # use subset of seqs for training
-        if short_train:
-            with open('../../../debug_seqs.csv', newline='') as f:
-                reader = csv.reader(f)
-                train_seqs = list(reader)
-            self.short_train = train_seqs[0]
-        else:
-            self.short_train = None
         
-        if split == 'val' and 'argo' in self.data_dir:
-            self.seq = '04994d08-156c-3018-9717-ba0e29be8153'
-        elif split == 'train' and 'argo' in self.data_dir:
-            self.seq = '00a6ffc1-6ce9-3bc3-a060-6006e9893a1a'
-        elif split == 'val':
-            self.seq = '16473613811052081539'
-        else:
-            self.seq = '2400780041057579262'
+        self.seq = None
+        # for validation multi-gpu processing
+        if seq is not None:
+            self.seq = seq
+        # for debugging
+        elif debug:
+            if split == 'val' and 'argo' in self.data_dir:
+                self.seq = '04994d08-156c-3018-9717-ba0e29be8153'
+            elif split == 'train' and 'argo' in self.data_dir:
+                self.seq = '00a6ffc1-6ce9-3bc3-a060-6006e9893a1a'
+            elif split == 'val':
+                self.seq = '16473613811052081539'
+            else:
+                self.seq = '2400780041057579262'
 
         self.class_dict = ARGOVERSE_CLASSES if 'argo' in self.data_dir else WAYMO_CLASSES
         super().__init__()
@@ -79,17 +75,15 @@ class TrajectoryDataset(PyGDataset):
     
     @property
     def raw_file_names(self):
-        if self.debug:
+        if self.seq is not None:
             raw_file_names = list()
             for seq in os.listdir(self.trajectory_dir):
                 # to get results just for specific seq
-                if self.seq is not None:
-                    if seq != self.seq:
-                        continue
+                if seq != self.seq:
+                    continue
                 # don't take last file in directory cos some how only 24 not 25 long
                 for i, flow_file in enumerate(sorted(os.listdir(os.path.join(self.trajectory_dir, seq)))):
-                    if i >= len(os.listdir(os.path.join(self.processed_dir, seq)))-1 and\
-                            len(os.listdir(os.path.join(self.processed_dir, seq))) != 1:
+                    if i >= len(os.listdir(os.path.join(self.processed_dir, seq)))-1:
                         continue
                     if i % self.every_x_frame != 0:
                         continue
@@ -97,7 +91,7 @@ class TrajectoryDataset(PyGDataset):
                     
             return raw_file_names
         
-        seqs = self.short_train if self.short_train is not None else os.listdir(self.trajectory_dir)
+        seqs = os.listdir(self.trajectory_dir)
 
         raw_file_names = [flow_file for seq in seqs\
             for i, flow_file in enumerate(sorted(os.listdir(osp.join(self.trajectory_dir, seq)))) \
@@ -112,13 +106,12 @@ class TrajectoryDataset(PyGDataset):
     
     @property
     def raw_paths(self):
-        if self.debug:
+        if self.seq is not None:
             raw_paths = list()
             for seq in os.listdir(self.trajectory_dir):
                 # to get results just for specific seq
-                if self.seq is not None:
-                    if seq != self.seq:
-                        continue
+                if seq != self.seq:
+                    continue
                 # don't take last file in directory cos some how only 24 not 25 long
                 for i, flow_file in enumerate(sorted(os.listdir(os.path.join(self.trajectory_dir, seq)))):
                     if i >= len(os.listdir(os.path.join(self.trajectory_dir, seq)))-1 and\
@@ -130,7 +123,7 @@ class TrajectoryDataset(PyGDataset):
 
             return raw_paths
 
-        seqs = self.short_train if self.short_train is not None else os.listdir(self.trajectory_dir)
+        seqs = os.listdir(self.trajectory_dir)
 
         raw_paths = [os.path.join(self.trajectory_dir, seq, flow_file)\
             for seq in seqs\
@@ -146,16 +139,15 @@ class TrajectoryDataset(PyGDataset):
 
     @property
     def processed_file_names(self):
-        if self.debug:
+        if self.seq is not None:
             processed_file_names = list()
             for seq in os.listdir(self.processed_dir):
                 # ignore pre_transfor files
                 if seq[-3:] == '.pt':
                     continue
                 # to get results just for specific seq
-                if self.seq is not None:
-                    if seq != self.seq:
-                        continue
+                if seq != self.seq:
+                    continue
                 # don't take last file in directory cos some how only 24 not 25 long
                 for i, flow_file in enumerate(sorted(os.listdir(os.path.join(self.processed_dir, seq)))):
                     if i >= len(os.listdir(os.path.join(self.processed_dir, seq)))-1 and\
@@ -167,7 +159,7 @@ class TrajectoryDataset(PyGDataset):
 
             return processed_file_names
 
-        seqs = self.short_train if self.short_train is not None else os.listdir(self.trajectory_dir)
+        seqs = os.listdir(self.trajectory_dir)
 
         processed_file_names =  [flow_file[:-3] + 'pt' for seq in seqs\
             for i, flow_file in enumerate(sorted(os.listdir(osp.join(self.trajectory_dir, seq)))) \
@@ -183,29 +175,28 @@ class TrajectoryDataset(PyGDataset):
     @property
     def processed_paths(self):
         if not self.do_process:
-            if self.debug:
+            if self.seq is not None:
                 processed_paths = list()
                 for i, flow_file in enumerate(sorted(os.listdir(os.path.join(self.processed_dir, self.seq)))):
                     if i % self.every_x_frame != 0:
                         continue
                     processed_paths.append(os.path.join(self.processed_dir, self.seq, flow_file))
             else:
-                seqs = self.short_train if self.short_train is not None else os.listdir(self.processed_dir)
+                seqs = os.listdir(self.processed_dir)
                 processed_paths = [os.path.join(self.processed_dir, seq, flow_file)\
                     for seq in seqs\
                         for i, flow_file in enumerate(sorted(os.listdir(osp.join(self.processed_dir, seq))))\
                             if i % self.every_x_frame == 0]
         else:
-            if self.debug:
+            if self.seq is not None:
                 processed_paths = list()
                 for seq in os.listdir(self.trajectory_dir):
                     # ignore pre_transfor files
                     if seq[-3:] == '.pt':
                         continue
                     # to get results just for specific seq
-                    if self.seq is not None:
-                        if seq != self.seq:
-                            continue
+                    if seq != self.seq:
+                        continue
                     # don't take last file in directory cos some how only 24 not 25 long
                     for i, flow_file in enumerate(sorted(os.listdir(os.path.join(self.trajectory_dir, seq)))):
                         if i % self.every_x_frame != 0:
@@ -217,7 +208,7 @@ class TrajectoryDataset(PyGDataset):
 
                 return processed_paths
             else:
-                seqs = self.short_train if self.short_train is not None else os.listdir(self.trajectory_dir)
+                seqs = os.listdir(self.trajectory_dir)
                 processed_paths = [os.path.join(self.processed_dir, seq, flow_file[:-3] + 'pt')\
                     for seq in seqs\
                         for i, flow_file in enumerate(sorted(os.listdir(osp.join(self.trajectory_dir, seq))))\
@@ -480,11 +471,10 @@ class TrajectoryDataset(PyGDataset):
 
     def get(self, idx):
         path = self._processed_paths[idx]
-
         try:
             data = torch.load(path)
         except:
-            logger.info(f"could not load file {path} of index {idx}/{len(self._processed_paths)}")
+            print(f"Not able to load {self._processed_paths_0}")
             data = torch.load(self._processed_paths_0)
 
         # if you always want same number of points (during training), sample/re-sample
@@ -498,13 +488,15 @@ class TrajectoryDataset(PyGDataset):
             data['point_categories'] = data['point_categories'][idxs]
             data['point_instances'] = data['point_instances'][idxs]
 
-        data['batch'] = torch.ones(data['pc_list'].shape[0])*idx
         if 'empty' not in data.keys:
             if data['pc_list'].shape[0] == 0:
-                data = torch.load(path)
                 data['empty'] = True
             else:
                 data['empty'] = False
+
+        if data['empty']:
+            data = torch.load(self._processed_paths_0)
+        data['batch'] = torch.ones(data['pc_list'].shape[0])*idx
         data['timestamps'] = data['timestamps'].unsqueeze(0)
 
         return data
@@ -546,7 +538,6 @@ def get_TrajectoryDataLoader(cfg, train=True, val=True, test=False):
             cfg.data.remove_static,
             cfg.data.static_thresh,
             cfg.data.debug,
-            short_train=cfg.data.short_train,
             do_process=cfg.data.do_process,
             _processed_dir=cfg.data.processed_dir + '_train')
     else:
@@ -554,36 +545,64 @@ def get_TrajectoryDataLoader(cfg, train=True, val=True, test=False):
     if val:
         logger.info("VAL")
         val_data = TrajectoryDataset(cfg.data.data_dir,
-            'val',
-            cfg.data.trajectory_dir + '_val',
-            cfg.data.use_all_points_eval,
-            cfg.data.num_points_eval,
-            cfg.data.remove_static,
-            cfg.data.static_thresh,
-            cfg.data.debug,
-            _eval=True, 
-            every_x_frame=cfg.data.every_x_frame,
-            split_val=cfg.data.split_val,
-            do_process=cfg.data.do_process,
-            _processed_dir=cfg.data.processed_dir + '_val')
+                'val',
+                cfg.data.trajectory_dir + '_val',
+                cfg.data.use_all_points_eval,
+                cfg.data.num_points_eval,
+                cfg.data.remove_static,
+                cfg.data.static_thresh,
+                cfg.data.debug,
+                _eval=True, 
+                every_x_frame=cfg.data.every_x_frame,
+                split_val=cfg.data.split_val,
+                do_process=cfg.data.do_process,
+                _processed_dir=cfg.data.processed_dir + '_val')
+
+        '''val_data = list()
+        seq_list = os.listdir(f'{cfg.data.trajectory_dir}_val/val')[:4]
+        for i, seq in enumerate(seq_list):
+            logger.info(f"Seq {i}/{len(seq_list)}")
+            val_data.append(TrajectoryDataset(cfg.data.data_dir,
+                'val',
+                cfg.data.trajectory_dir + '_val',
+                cfg.data.use_all_points_eval,
+                cfg.data.num_points_eval,
+                cfg.data.remove_static,
+                cfg.data.static_thresh,
+                cfg.data.debug,
+                _eval=True, 
+                every_x_frame=cfg.data.every_x_frame,
+                split_val=cfg.data.split_val,
+                do_process=cfg.data.do_process,
+                _processed_dir=cfg.data.processed_dir + '_val',
+                seq=seq))'''
     else:
         val_data = None
     if test:
         logger.info("TEST")
-        test_data = TrajectoryDataset(cfg.data.data_dir,
-            'test',
-            cfg.data.trajectory_dir,
-            cfg.data.use_all_points_eval,
-            cfg.data.num_points_eval,
-            cfg.data.remove_static,
-            cfg.data.static_thresh,
-            cfg.data.debug,
-            _eval=True, 
-            every_x_frame=cfg.data.every_x_frame,
-            split_val=cfg.data.split_val,
-            do_process=cfg.data.do_process,
-            _processed_dir=cfg.data.processed_dir)
+        test_data = list()
+        seq_list = os.listdir(f'{cfg.data.trajectory_dir}_test/test')
+        for i, seq in enumerate(seq_list):
+            logger.info(f"Seq {i}/{len(seq_list)}")
+            test_data.append(TrajectoryDataset(cfg.data.data_dir,
+                'test',
+                cfg.data.trajectory_dir + '_test',
+                cfg.data.use_all_points_eval,
+                cfg.data.num_points_eval,
+                cfg.data.remove_static,
+                cfg.data.static_thresh,
+                cfg.data.debug,
+                _eval=True, 
+                every_x_frame=cfg.data.every_x_frame,
+                split_val=cfg.data.split_val,
+                do_process=cfg.data.do_process,
+                _processed_dir=cfg.data.processed_dir + '_test',
+                seq=seq))
     else:
         test_data = None
-
+    
     return train_data, val_data, test_data
+
+
+
+

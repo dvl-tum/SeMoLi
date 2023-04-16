@@ -71,30 +71,29 @@ def get_feather_files(
         classes_to_eval='all'):
 
     df = None
-    try:
-        for i, path in enumerate(os.listdir(paths)):
-            if seq_list is not None:
-                if path not in seq_list and not is_gt:
-                    continue
-            data = feather.read_feather(
-                os.path.join(paths, path, 'annotations.feather'))
-            if 'argo' in paths or not is_gt:
-                def convert2int(x): return class_dict[x]
-                data['category'] = data['category'].apply(convert2int)
-            else:
-                def str2ing(x): return int(x)
-                data['category'] = data['category'].apply(str2ing)
 
-            if classes_to_eval != 'all':
-                data = data[data['category'] == class_dict[classes_to_eval]]
-            data['log_id'] = [path] * data.shape[0]
+    for i, path in enumerate(os.listdir(paths)):
+        if seq_list is not None:
+            if path not in seq_list and not is_gt:
+                continue
+        data = feather.read_feather(
+            os.path.join(paths, path, 'annotations.feather'))
 
-            if df is None:
-                df = data
-            else:
-                df = df.append(data)
-    except:
-        return None
+        if 'argo' in paths or not is_gt:
+            def convert2int(x): return class_dict[x]
+            data['category'] = data['category'].apply(convert2int)
+        else:
+            def str2ing(x): return int(x)
+            data['category'] = data['category'].apply(str2ing)
+
+        if classes_to_eval != 'all':
+            data = data[data['category'] == class_dict[classes_to_eval]]
+        data['log_id'] = [path] * data.shape[0]
+
+        if df is None:
+            df = data
+        else:
+            df = df.append(data)
 
     df = df.astype({'num_interior_pts': 'int64'})
 
@@ -108,7 +107,7 @@ def get_feather_files(
         # get file name
         split_dir = paths
         split = os.path.basename(paths)
-        split_dir = os.path.dirname(paths) + '_filtered'
+        split_dir = os.path.dirname(os.path.dirname(paths)) + '_filtered'
 
         file = 'filtered_version.feather'
         file = 'remove_non_drive_' + file if remove_non_drive else file
@@ -120,11 +119,10 @@ def get_feather_files(
         file = split + '_' + file
 
         path_filtered = os.path.join(split_dir, file)
-        path_filtered = '../../../Waymo_Converted_filtered_val/val_1.0_per_frame_remove_non_move_remove_far_filtered_version.feather'
+        path_filtered = '/dvlresearch/jenny/Waymo_Converted_filtered_val/val_1.0_per_frame_remove_non_move_remove_far_filtered_version.feather'
         # check if filtered version already exists
         if os.path.isfile(path_filtered):
             df = feather.read_feather(path_filtered)
-
             if 'seq' in df.columns:
                 df.rename(columns={'seq': 'log_id'}, inplace=True)
 
@@ -141,7 +139,7 @@ def get_feather_files(
         num_seqs = df['log_id'].unique().shape[0]
         data_loader = [
             [log_id, num_seqs, remove_non_move, remove_non_move_strategy, loader, remove_non_move_thresh, remove_non_drive, path, remove_far, df] for log_id in df['log_id'].unique()]
-        print(len(data_loader))
+
         data_loader = enumerate(data_loader)
 
         all_filtered = list()
@@ -161,7 +159,7 @@ def get_feather_files(
         
         # store filtered df
         df = filtered
-        print(df)
+
         with open(path_filtered, 'wb') as f:
             feather.write_feather(df, f)
     
@@ -424,15 +422,15 @@ def visualize_whole(df, gf, name, base_dir='../../../'):
                 ax.add_patch(rect)
                 j += 1
 
-            mins = np.min(gdf_city, axis=0)
+            '''mins = np.min(gdf_city, axis=0)
             maxs = np.max(gdf_city, axis=0)
             x_lim = [mins[0]- 10, maxs[0]+10]
-            y_lim = [mins[1]-10, maxs[1]+10]
+            y_lim = [mins[1]-10, maxs[1]+10]'''
             # plt.axis('off')
             plt.xlim(x_lim)
             plt.ylim(y_lim)
             plt.savefig(
-                f'{base_dir}Visualization_Whole_DETS/{seq}/frame_{timestamp}_{name}.jpg', dpi=400)
+                f'{base_dir}Visualization_Whole_DETS/{seq}/frame_{timestamp}_{name}.jpg', dpi=1000)
             plt.close()
     
 
@@ -456,11 +454,14 @@ def eval_detection(
         base_dir='../../../',
         print_detail=False):
 
+    if not len(seq_to_eval):
+        return None, np.array([0, 2, 1, 3.142, 0])
+
     gt_folder = os.path.join(gt_folder, split)
     loader = AV2SensorDataLoader(data_dir=Path(
         gt_folder), labels_dir=Path(gt_folder))
     dataset_dir = Path(gt_folder)
-    eval_only_roi_instances = False if 'Waymo' in gt_folder else True
+    eval_only_roi_instances = False if 'waymo' in gt_folder or 'Waymo' in gt_folder else True
     # Defaults to competition parameters.
     competition_cfg = DetectionCfg(
         dataset_dir=dataset_dir, 
@@ -495,7 +496,7 @@ def eval_detection(
 
     if just_eval:
         print("Loaded detections...")
-
+        
     if dts is None:
         return None, np.array([0, 2, 1, 3.142, 0])
 
@@ -523,7 +524,8 @@ def eval_detection(
         print("Evaluate now...")
 
     # Evaluate instances.
-    dts, gts, metrics, num_points_tps, num_points_fns = evaluate(dts, gts, cfg=competition_cfg, min_points=min_points, max_points=max_points)
+    dts, gts, metrics, num_points_tps, num_points_fns = evaluate(
+        dts, gts, cfg=competition_cfg, min_points=min_points, max_points=max_points)
     dts = dts[dts['is_evaluated']==1]
     gts = gts[gts['is_evaluated']==1]
 
@@ -565,6 +567,7 @@ if __name__ == '__main__':
     tracker_dir = f'out/{name}/val'
     tracker_dir =  '4449931/out/gt_all_egocomp_margin0.6_width25_nooracle_4096_8000_mean_dist_over_time_min_mean_max_diffpostrajtime_min_mean_max_vel_nodescore_correlation_mygraph/val'
     tracker_dir = 'out/gt_all_egocomp_margin0.6_width25_oraclenode_oracleedge_4096_8000_mean_dist_over_time_min_mean_max_diffpostrajtime_min_mean_max_vel_nodescore_correlation_mygraph/val'
+    tracker_dir = '4495651/out/gt_all_egocomp_margin0.6_width25_oraclenode_oracleedge_4096_8000_mean_dist_over_time_min_mean_max_diffpostrajtime_min_mean_max_vel_nodescore_correlation_mygraph/val'
     gt_folder = 'data/waymo_converted'
     gt_folder = '../../../Waymo_Converted_GT'
     seq_list = os.listdir(tracker_dir)
@@ -573,8 +576,8 @@ if __name__ == '__main__':
     # for m in [-1]: # [-1, 0, 5, 10, 15, 20, 25]:
     m = -1
     for seq in os.listdir(tracker_dir):
-        seq = '13941626351027979229'
-        seq_list = [seq]
+        # seq = '14244512075981557183'
+        # seq_list = [seq]
         min_points = m
         max_points = m+5 if m != 25 and m != -1 else 1000000
         _, detection_metric = eval_detection(
@@ -588,7 +591,7 @@ if __name__ == '__main__':
             remove_non_move_thresh=1.0,
             classes_to_eval='all',
             debug=False,
-            visualize=False,
+            visualize=True,
             name=name,
             min_points=min_points,
             max_points=max_points,

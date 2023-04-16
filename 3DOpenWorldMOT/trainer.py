@@ -14,13 +14,16 @@ import torch.distributed as dist
 
 from models import _model_factory, _loss_factory, Tracker3D
 from data_utils.TrajectoryDataset import get_TrajectoryDataLoader
+from data_utils.DistributedTestSampler import DistributedTestSampler
 from TrackEvalOpenWorld.scripts.run_av2_ow import evaluate_av2_ow_MOT
 import wandb
 
 # FOR DETECTION EVALUATION
 from evaluation import eval_detection
 from evaluation import calc_nmi
-
+from collections import defaultdict
+from pyarrow import feather
+import shutil
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = BASE_DIR
@@ -38,14 +41,14 @@ def initialize(cfg):
     #os.environ["CUDA_VISIBLE_DEVICES"] = cfg.training.gpu
 
     '''CREATE DIR'''
+    out_path = os.path.join(cfg.out_path, 'out/')
+    os.makedirs(out_path, exist_ok=True)
     experiment_dir = cfg.job_name
     experiment_dir = "_".join([cfg.models.model_name, cfg.data.dataset_name])
-    experiment_dir = os.path.join(cfg.out_path, experiment_dir)
+    experiment_dir = os.path.join(out_path, experiment_dir)
     os.makedirs(experiment_dir, exist_ok=True)
-    checkpoints_dir = '../../../checkpoints/'
+    checkpoints_dir = os.path.join(cfg.out_path, 'checkpoints/')
     os.makedirs(checkpoints_dir, exist_ok=True)
-    out_path = '../../../out/'
-    os.makedirs(out_path, exist_ok=True)
 
     '''LOG'''
     logger = logging.getLogger("Model")
@@ -60,15 +63,15 @@ def initialize(cfg):
     return logger, experiment_dir, checkpoints_dir, out_path
 
 
-def load_model(cfg, checkpoints_dir, logger):
+def load_model(cfg, checkpoints_dir, logger, rank=0):
     '''MODEL LOADING'''
-    model = _model_factory[cfg.models.model_name](**cfg.models.hyperparams)
+    model = _model_factory[cfg.models.model_name](rank=rank, **cfg.models.hyperparams)
     criterion = _loss_factory[cfg.models.model_name]
     start_epoch = 0
     optimizer = None
     if 'DBSCAN' not in cfg.models.model_name and cfg.models.model_name != 'SpectralClustering':
-        model = model.cuda()
-        criterion = criterion(**cfg.models.loss_hyperparams).cuda()
+        model = model.to(rank)
+        criterion = criterion(**cfg.models.loss_hyperparams, rank=rank).to(rank)
 
         if cfg.models.model_name != 'SimpleGraph':
             node = '_nodescore' if cfg.models.hyperparams.use_node_score else ''
@@ -88,6 +91,7 @@ def load_model(cfg, checkpoints_dir, logger):
             os.makedirs(checkpoints_dir + name, exist_ok=True)
 
             if cfg.wandb:
+                wandb.login(key='3b716e6ab76d92ef92724aa37089b074ef19e29c')
                 wandb.init(config=cfg, project=cfg.job_name, name=name)
             try:
                 checkpoint = torch.load(cfg.models.weight_path)
@@ -131,7 +135,10 @@ def bn_momentum_adjust(m, momentum):
 def main(cfg):
     OmegaConf.set_struct(cfg, False)  # This allows getattr and hasattr methods to function correctly
     logger, experiment_dir, checkpoints_dir, out_path = initialize(cfg)
-
+    
+    if os.path.isdir(os.path.join(out_path, 'val', 'feathers')):
+        shutil.rmtree(os.path.join(out_path, 'val', 'feathers'))
+    
     logger.info("start loading training data ...")
     world_size = torch.cuda.device_count()
     in_args = (cfg, world_size)
@@ -139,16 +146,17 @@ def main(cfg):
 
 
 def train(rank, cfg, world_size):
-    os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '12355'
-    torch.cuda.set_device(rank)
-    dist.init_process_group('nccl', rank=rank, world_size=world_size)
+    if cfg.multi_gpu:
+        os.environ['MASTER_ADDR'] = 'localhost'
+        os.environ['MASTER_PORT'] = '12355'
+        torch.cuda.set_device(rank)
+        dist.init_process_group('nccl', rank=rank, world_size=world_size)
     logger, experiment_dir, checkpoints_dir, out_path = initialize(cfg)
 
     train_data, val_data, test_data = get_TrajectoryDataLoader(cfg)
 
     # get dataloaders 
-    if len(train_data):
+    if train_data is not None:
         if not cfg.multi_gpu:
             train_loader = PyGDataLoader(
                 train_data,
@@ -167,16 +175,41 @@ def train(rank, cfg, world_size):
     else:
         train_loader = None
 
-    if len(val_data):
-        val_loader = PyGDataLoader(val_data, batch_size=cfg.training.batch_size_val)
+    if val_data is not None:
+        if not cfg.multi_gpu:
+            val_loader = PyGDataLoader(
+                val_data,
+                batch_size=cfg.training.batch_size_val)
+        else:
+            val_sampler = DistributedTestSampler(
+                    val_data,
+                    num_replicas=torch.cuda.device_count(),
+                    rank=rank,
+                    shuffle=False)
+
+            val_loader = PyGDataLoader(
+                val_data,
+                batch_size=cfg.training.batch_size_val,
+                sampler=val_sampler)
     else:
         val_loader = None
 
     if test_data is not None:
-        test_loader = PyGDataLoader(test_data, batch_size=cfg.training.batch_size_val)
+        if not cfg.multi_gpu:
+            test_loader = PyGDataLoader(
+                test_data,
+                batch_size=cfg.training.batch_size_val)
+        else:
+            test_sampler = DistributedTestSampler(
+                    test_data,
+                    num_replicas=torch.cuda.device_count(),
+                    rank=rank)
+            test_loader = PyGDataLoader(
+                test_data,
+                batch_size=cfg.training.batch_size_val,
+                sampler=test_sampler)
     else:
         test_loader = None
-
 
     if train_loader is not None:
         logger.info("The number of training data is: %d" % len(train_loader.dataset))
@@ -184,7 +217,7 @@ def train(rank, cfg, world_size):
         logger.info("The number of test data is: %d" % len(val_loader.dataset))
 
     model, start_epoch, name, optimizer, criterion = \
-        load_model(cfg, checkpoints_dir, logger)
+        load_model(cfg, checkpoints_dir, logger, rank)
 
     if cfg.multi_gpu:
         model = nn.parallel.DistributedDataParallel(model)
@@ -230,28 +263,25 @@ def train(rank, cfg, world_size):
                 edge_loss = torch.zeros(2).to(rank)
                 edge_acc = torch.zeros(2).to(rank)
                 for i, data in tqdm(enumerate(train_loader), total=len(train_loader), smoothing=0.9):
-                    data = data.cuda()
+                    data = data.to(rank)
                     optimizer.zero_grad()
                     logits, edge_index, batch_edge = model(data)
                     loss, log_dict = criterion(logits, data, edge_index)
                     loss.backward()
                     optimizer.step()
 
-                    if cfg.wandb:
-                        for k, v in log_dict.items():
-                            wandb.log({k: v, "epoch": epoch, "batch": i})
                     if 'train bce loss edge' in log_dict.keys():
                         edge_loss[0] += float(log_dict['train bce loss edge'])
-                        edge_loss[1] += len(data.log_id)
+                        edge_loss[1] += 1
                     if 'train bce loss node' in log_dict.keys():
                         node_loss[0] += float(log_dict['train bce loss node'])
-                        node_loss[1] += len(data.log_id)
+                        node_loss[1] += 1
                     if 'train accuracy edge' in log_dict.keys():
                         edge_acc[0] += float(log_dict['train accuracy edge'])
-                        edge_acc[1] += len(data.log_id)
+                        edge_acc[1] += 1
                     if 'train accuracy node' in log_dict.keys():
                         node_acc[0] += float(log_dict['train accuracy node'])
-                        node_acc[1] += len(data.log_id)
+                        node_acc[1] += 1
 
                 dist.all_reduce(node_loss, op=dist.ReduceOp.SUM)
                 node_loss = float(node_loss[0] / node_loss[1])
@@ -271,18 +301,24 @@ def train(rank, cfg, world_size):
                     logger.info(f'train accuracy edge: {edge_acc}')
                     logger.info(f'train accuracy node: {node_acc}')
 
-                savepath = str(checkpoints_dir) + name + '/latest_model.pth'
-                logger.info(f'Saving at {savepath}...')
+                    if cfg.wandb:
+                        wandb.log({'train bce loss edge': edge_loss, "epoch": epoch})
+                        wandb.log({'train bce loss node': node_loss, "epoch": epoch})
+                        wandb.log({'train accuracy edge': edge_acc, "epoch": epoch})
+                        wandb.log({'train accuracy node': node_acc, "epoch": epoch})
 
-                state = {
-                    'epoch': epoch,
-                    'model_state_dict': model.state_dict(),
-                    'optimizer_state_dict': optimizer.state_dict(),
-                }
-                torch.save(state, savepath)
+                    savepath = str(checkpoints_dir) + name + '/latest_model.pth'
+                    logger.info(f'Saving at {savepath}...')
+
+                    state = {
+                        'epoch': epoch,
+                        'model_state_dict': model.state_dict(),
+                        'optimizer_state_dict': optimizer.state_dict(),
+                    }
+                    torch.save(state, savepath)
 
         # evaluate
-        if epoch % cfg.training.eval_per_seq == 0 and rank==0: # and (epoch != 0 or cfg.just_eval):
+        if epoch % cfg.training.eval_per_seq == 0: # and (epoch != 0 or cfg.just_eval):
             num_batches = len(val_loader)
             node_loss = torch.zeros(2).to(rank)
             node_acc = torch.zeros(2).to(rank)
@@ -299,29 +335,30 @@ def train(rank, cfg, world_size):
                 every_x_frame=cfg.data.every_x_frame,
                 num_interior=cfg.tracker_options.num_interior,
                 overlap=cfg.tracker_options.overlap,
-                av2_loader=val_loader.dataset.loader,
-                associate=cfg.tracker_options.associate)
-            
+                av2_loader=val_data.loader,
+                rank=rank,
+                do_associate=cfg.tracker_options.do_associate)
+
             with torch.no_grad():
                 if is_neural_net:
                     model = model.eval()
                 logger.info('---- EPOCH %03d EVALUATION ----' % (global_epoch + 1))
                 # Iterate over validation set
                 for i, (data) in tqdm(enumerate(val_loader), total=len(val_loader), smoothing=0.9):
-                    # print(data)
+                    # continue if not moving points
                     if data['empty']:
                         continue
+
+                    # compute clusters
                     logits, clusters, edge_index, _ = model(data, eval=True, name=name)
 
+                    # continue if we didnt find clusters
                     if not len(clusters):
                         continue
 
-                    # clusters = data['point_instances']
-
+                    # compute nmi
                     nmi = calc_nmi.calc_normalized_mutual_information(
                         data['point_instances'].cpu(), clusters)
-                    nmis[0] += float(torch.tensor(nmi).to(rank))
-                    nmis[1] += len(data.log_id)
 
                     # generate detections
                     detections = tracker.get_detections(
@@ -332,25 +369,31 @@ def train(rank, cfg, world_size):
                         data.log_id[0],
                         data['point_instances'],
                         last=i+1 == len(val_loader))
-                    
+
                     if is_neural_net and logits[0] is not None:
                         loss, log_dict = criterion.eval(logits, data, edge_index, rank)
-                        if cfg.wandb:
-                            for k, v in log_dict.items():
-                                wandb.log({k: v, "epoch": epoch, "batch": i})
+
+                    nmis[0] += float(torch.tensor(nmi).to(rank))
+                    nmis[1] += 1
+
+                    if is_neural_net and logits[0] is not None:
                         if 'train bce loss edge' in log_dict.keys():
-                            edge_loss[0] += float(log_dict['train bce loss node'])
-                            edge_loss[1] += len(data.log_id)
+                            edge_loss[0] += float(
+                                log_dict['train bce loss edge']).to(rank)
+                            edge_loss[1] += 1
                         if 'train bce loss node' in log_dict.keys():
-                            node_loss[0] += float(log_dict['train bce loss node'])
-                            node_loss[1] += len(data.log_id)
+                            node_loss[0] += float(
+                                log_dict['train bce loss node']).to(rank)
+                            node_loss[1] += 1
                         if 'train accuracy edge' in log_dict.keys():
-                            edge_acc[0] += float(log_dict['train bce loss node'])
-                            edge_acc[1] += len(data.log_id)
+                            edge_acc[0] += float(
+                                log_dict['train accuracy edge']).to(rank)
+                            edge_acc[1] += 1
                         if 'train accuracy node' in log_dict.keys():
-                            node_acc[0] += float(log_dict['train bce loss node'])
-                            node_acc[1] += len(data.log_id)
-                    
+                            node_acc[0] += float(
+                                log_dict['train accuracy node']).to(rank)
+                            node_acc[1] += 1
+
                 if is_neural_net:
                     dist.all_reduce(nmis, op=dist.ReduceOp.SUM)
                     nmis = float(nmis[0] / nmis[1])
@@ -374,64 +417,88 @@ def train(rank, cfg, world_size):
                         logger.info(f'eval accuracy edge: {edge_acc}')
                         logger.info(f'eval accuracy node: {node_acc}')
 
-                # get sequence list for evaluation
-                tracker_dir = os.path.join(tracker.out_path, tracker.split)
+                        if cfg.wandb:
+                            wandb.log({'eval bce loss edge': edge_loss, "epoch": epoch})
+                            wandb.log({'eval bce loss node': node_loss, "epoch": epoch})
+                            wandb.log({'eval accuracy edge': edge_acc, "epoch": epoch})
+                            wandb.log({'eval accuracy node': node_acc, "epoch": epoch})
 
-                try:
-                    seq_list = os.listdir(tracker_dir)
-                except:
-                    seq_list = list()
-                
-                # average NMI
-                cluster_metric = [sum(nmis) / len(nmis)]
-                logger.info(f'NMI: {cluster_metric[0]}')
-                
-                # evaluate detection
-                _, detection_metric = eval_detection.eval_detection(
-                    gt_folder=os.path.join(os.getcwd(), cfg.data.data_dir),
-                    trackers_folder=tracker_dir,
-                    seq_to_eval=seq_list,
-                    remove_far='80' in cfg.data.trajectory_dir,
-                    remove_non_drive='non_drive' in cfg.data.trajectory_dir,
-                    remove_non_move=cfg.data.remove_static,
-                    remove_non_move_strategy=cfg.data.remove_static_strategy,
-                    remove_non_move_thresh=cfg.data.remove_static_thresh,
-                    classes_to_eval='all',
-                    debug=cfg.data.debug,
-                    name=name)
-                
-                # log metrics
-                if is_neural_net:
-                    logger.info('eval mean loss: %f' % (eval_loss / float(num_batches)))
-                
-                for_logs = {met: m for met, m in zip(['AP', 'ATE', 'ASE', 'AOE' ,'CDS'], detection_metric)}
-                
-                if cfg.wandb:
-                    for met, m in for_logs.items():
-                        wandb.log({met: m, "epoch": epoch})
-                    wandb.log({'NMI': cluster_metric[0], "epoch": epoch})
+                if rank == 0:
+                    # get sequence list for evaluation
+                    tracker_dir = os.path.join(tracker.out_path, tracker.split)
+                    if os.path.isdir(os.path.join(tracker_dir, 'feathers')):
+                        for i, rank_file in enumerate(os.listdir(os.path.join(tracker_dir, 'feathers'))):
+                            # with open(os.path.join(tracker_dir, 'feathers', rank_file), 'rb') as f:
+                            df = feather.read_feather(os.path.join(tracker_dir, 'feathers', rank_file))
+                            if i == 0:
+                                df_all = df
+                            else:
+                                df_all = df_all.append(df)
+                        
+                        for log_id in os.listdir(tracker_dir):
+                            if 'feather' in log_id:
+                                continue
+                            df_seq = df_all[df_all['log_id']==log_id]
+                            df_seq = df_seq.drop(columns=['log_id'])
+                            write_path = os.path.join(tracker_dir, log_id, 'annotations.feather')
+                            with open(write_path, 'wb') as f:
+                                feather.write_feather(df_seq, f)
+                        
+                        if os.path.isdir(os.path.join(tracker_dir, 'feathers')):
+                            shutil.rmtree(os.path.join(tracker_dir, 'feathers'))
+                    
+                    try:
+                        seq_list = os.listdir(tracker_dir)
+                    except:
+                        seq_list = list()
 
-                if cfg.metric == 'cluster':
-                    metric = cluster_metric
-                else:
-                    metric = detection_metric
-
-                # store weights if neural net                
-                if metric[0] >= best_metric:
-                    best_metric = metric
-                    if is_neural_net and not cfg.just_eval:
-                        savepath = str(checkpoints_dir) + name + '/best_model.pth'
-                        logger.info('Saving at %s...' % savepath)
-                        state = {
-                            'epoch': epoch,
-                            'NMI': cluster_metric[0],
-                            'class_avg_iou': detection_metric[0],
-                            'model_state_dict': model.state_dict(),
-                            'optimizer_state_dict': optimizer.state_dict(),
-                        }
-                        torch.save(state, savepath)
+                    # average NMI
+                    cluster_metric = [nmis]
+                    logger.info(f'NMI: {cluster_metric[0]}')
+                    
+                    # evaluate detection
+                    _, detection_metric = eval_detection.eval_detection(
+                        gt_folder=os.path.join(os.getcwd(), cfg.data.data_dir),
+                        trackers_folder=tracker_dir,
+                        seq_to_eval=seq_list,
+                        remove_far='80' in cfg.data.trajectory_dir,
+                        remove_non_drive='non_drive' in cfg.data.trajectory_dir,
+                        remove_non_move=cfg.data.remove_static,
+                        remove_non_move_strategy=cfg.data.remove_static_strategy,
+                        remove_non_move_thresh=cfg.data.remove_static_thresh,
+                        classes_to_eval='all',
+                        debug=cfg.data.debug,
+                        name=name)
+                    
+                    # log metrics
+                    for_logs = {met: m for met, m in zip(['AP', 'ATE', 'ASE', 'AOE' ,'CDS'], detection_metric)}
                 
-                logger.info(f'Best {cfg.metric} metric: {best_metric}, cluster metric: {cluster_metric}, detection metric: {for_logs}')
+                    if cfg.wandb:
+                        for met, m in for_logs.items():
+                            wandb.log({met: m, "epoch": epoch})
+                        wandb.log({'NMI': cluster_metric[0], "epoch": epoch})
+
+                    if cfg.metric == 'cluster':
+                        metric = cluster_metric
+                    else:
+                        metric = detection_metric
+
+                    # store weights if neural net                
+                    if metric[0] >= best_metric:
+                        best_metric = metric[0]
+                        if is_neural_net and not cfg.just_eval:
+                            savepath = str(checkpoints_dir) + name + '/best_model.pth'
+                            logger.info('Saving at %s...' % savepath)
+                            state = {
+                                'epoch': epoch,
+                                'NMI': cluster_metric[0],
+                                'class_avg_iou': detection_metric[0],
+                                'model_state_dict': model.state_dict(),
+                                'optimizer_state_dict': optimizer.state_dict(),
+                            }
+                            torch.save(state, savepath)
+                    
+                    logger.info(f'Best {cfg.metric} metric: {best_metric}, cluster metric: {cluster_metric}, detection metric: {for_logs}')
                 
         if not is_neural_net or cfg.just_eval:
             break
@@ -441,13 +508,4 @@ def train(rank, cfg, world_size):
 
 if __name__ == '__main__':
     main()
- 
-
-
- 
-
-    main()
- 
-
-
- 
+  
