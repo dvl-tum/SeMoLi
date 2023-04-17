@@ -10,9 +10,12 @@ use_all_points: False
 use_all_points_eval: True
 num_points: 4096
 num_points_eval: 4096
+# remove input data
 remove_static: 1
+static_thresh: 1.0
+# remove gt data
+remove_static_gt: 1
 remove_static_strategy: 'per_frame' #'per_frame' #'per_seq' #'per_frame' #'per_seq'
-static_thresh: 1.0 #1.1
 remove_static_thresh: 1.0
 debug: 1
 short_train: False

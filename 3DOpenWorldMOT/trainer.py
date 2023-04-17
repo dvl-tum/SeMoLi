@@ -467,7 +467,7 @@ def train(rank, cfg, world_size):
                         seq_to_eval=seq_list,
                         remove_far=True,#'80' in cfg.data.trajectory_dir,
                         remove_non_drive='non_drive' in cfg.data.trajectory_dir,
-                        remove_non_move=cfg.data.remove_static,
+                        remove_non_move=cfg.data.remove_static_gt,
                         remove_non_move_strategy=cfg.data.remove_static_strategy,
                         remove_non_move_thresh=cfg.data.remove_static_thresh,
                         classes_to_eval='all',
