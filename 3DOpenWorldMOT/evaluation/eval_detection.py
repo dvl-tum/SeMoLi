@@ -324,7 +324,7 @@ def filter_seq(data, width=25):
 
 
 def visualize_whole(df, gf, name, base_dir='../../../'):
-    split_dir = Path('/storage/user/seidensc/datasets/Waymo_Converted/val')
+    split_dir = Path('../../../Waymo_Converted_GT/val')
     loader = AV2SensorDataLoader(data_dir=split_dir, labels_dir=split_dir)
     for seq in df['log_id'].unique():
         print(f'storing to {base_dir}Visualization_Whole_DETS/{seq}')

@@ -29,7 +29,10 @@ WAYMO_CLASSES = {'TYPE_UNKNOWN': 0, 'TYPE_VECHICLE': 1, 'TYPE_PEDESTRIAN': 2, 'T
 class TrajectoryDataset(PyGDataset):
     def __init__(self, data_dir, split, trajectory_dir, use_all_points, num_points, remove_static, static_thresh, debug, _eval=False, every_x_frame=1, margin=0.6, split_val=False, _processed_dir=False, do_process=True, seq=None):
         self.split_dir = Path(os.path.join(data_dir, split))
-        self.trajectory_dir = Path(os.path.join(trajectory_dir, split))
+        if 'gt' in _processed_dir:
+            self.trajectory_dir = Path(os.path.join(trajectory_dir, split))
+        else:
+            self.trajectory_dir = Path(os.path.join(trajectory_dir))
         self.data_dir = data_dir
         self.remove_static = remove_static
         self.static_thresh = static_thresh
@@ -231,7 +234,9 @@ class TrajectoryDataset(PyGDataset):
     def processed_dir(self) -> str:
         
         if self._processed_dir:
-            return Path(os.path.join(self._processed_dir, self.split))
+            if 'gt' in self._processed_dir:
+                return Path(os.path.join(self._processed_dir, self.split))
+            return Path(os.path.join(self._processed_dir))
 
         data = '_waymo' if 'waymo' in str(self.trajectory_dir) else ''
         if 'rubbish' in str(self.trajectory_dir):
