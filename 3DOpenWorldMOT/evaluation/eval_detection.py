@@ -567,6 +567,7 @@ if __name__ == '__main__':
     tracker_dir =  '4449931/out/gt_all_egocomp_margin0.6_width25_nooracle_4096_8000_mean_dist_over_time_min_mean_max_diffpostrajtime_min_mean_max_vel_nodescore_correlation_mygraph/val'
     tracker_dir = 'out/gt_all_egocomp_margin0.6_width25_oraclenode_oracleedge_4096_8000_mean_dist_over_time_min_mean_max_diffpostrajtime_min_mean_max_vel_nodescore_correlation_mygraph/val'
     tracker_dir = '4495651/out/gt_all_egocomp_margin0.6_width25_oraclenode_oracleedge_4096_8000_mean_dist_over_time_min_mean_max_diffpostrajtime_min_mean_max_vel_nodescore_correlation_mygraph/val'
+    tracker_dir ='../../3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/out/all_egocomp_margin0.6_width25_oraclenode_oracleedge_4096_8000_mean_dist_over_time_min_mean_max_diffpostrajtime_min_mean_max_vel_nodescore_correlation_mygraph/val/'
     gt_folder = 'data/waymo_converted'
     gt_folder = '../../../Waymo_Converted_GT'
     seq_list = os.listdir(tracker_dir)
@@ -591,35 +592,6 @@ if __name__ == '__main__':
             classes_to_eval='all',
             debug=False,
             visualize=True,
-            name=name,
-            min_points=min_points,
-            max_points=max_points,
-            base_dir='',
-            print_detail=False)
-        
-        print(detection_metric, '\n')
-        quit()
-r seq in os.listdir(tracker_dir):
-        # seq = '14244512075981557183'
-        # seq_list = [seq]
-        min_points = m
-        max_points = m+5 if m != 25 and m != -1 else 1000000
-        _, detection_metric = eval_detection(
-            gt_folder=gt_folder,
-            trackers_folder=tracker_dir,
-            seq_to_eval=seq_list,
-            remove_far=True,
-            remove_non_drive=False,
-            remove_non_move=True,
-            remove_non_move_strategy='per_frame',
-            remove_non_move_thresh=1.0,
-            classes_to_eval='all',
-            debug=False,
-<<<<<<< HEAD
-            visualize=False,
-=======
-            visualize=True,
->>>>>>> b732c1308797946e4574281200fdf42b053702a9
             name=name,
             min_points=min_points,
             max_points=max_points,
