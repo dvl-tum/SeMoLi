@@ -465,7 +465,7 @@ def train(rank, cfg, world_size):
                         gt_folder=os.path.join(os.getcwd(), cfg.data.data_dir),
                         trackers_folder=tracker_dir,
                         seq_to_eval=seq_list,
-                        remove_far='80' in cfg.data.trajectory_dir,
+                        remove_far=True,#'80' in cfg.data.trajectory_dir,
                         remove_non_drive='non_drive' in cfg.data.trajectory_dir,
                         remove_non_move=cfg.data.remove_static,
                         remove_non_move_strategy=cfg.data.remove_static_strategy,
