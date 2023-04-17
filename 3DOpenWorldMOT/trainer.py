@@ -139,10 +139,17 @@ def main(cfg):
     if os.path.isdir(os.path.join(out_path, 'val', 'feathers')):
         shutil.rmtree(os.path.join(out_path, 'val', 'feathers'))
     
+    # needed for preprocessing
     logger.info("start loading training data ...")
-    world_size = torch.cuda.device_count()
-    in_args = (cfg, world_size)
-    mp.spawn(train, args=in_args, nprocs=world_size, join=True)
+    train_data, val_data, test_data = get_TrajectoryDataLoader(cfg)
+
+    
+    if cfg.multi_gpu:
+        world_size = torch.cuda.device_count()
+        in_args = (cfg, world_size)
+        mp.spawn(train, args=in_args, nprocs=world_size, join=True)
+    else:
+        train(0, cfg, world_size=1)
 
 
 def train(rank, cfg, world_size):
@@ -283,16 +290,15 @@ def train(rank, cfg, world_size):
                         node_acc[0] += float(log_dict['train accuracy node'])
                         node_acc[1] += 1
 
-                dist.all_reduce(node_loss, op=dist.ReduceOp.SUM)
+                if cfg.multi_gpu:
+                    dist.all_reduce(node_loss, op=dist.ReduceOp.SUM)
+                    dist.all_reduce(edge_loss, op=dist.ReduceOp.SUM)
+                    dist.all_reduce(edge_acc, op=dist.ReduceOp.SUM)
+                    dist.all_reduce(node_acc, op=dist.ReduceOp.SUM)
+
                 node_loss = float(node_loss[0] / node_loss[1])
-
-                dist.all_reduce(edge_loss, op=dist.ReduceOp.SUM)
                 edge_loss = float(edge_loss[0] / edge_loss[1])
-
-                dist.all_reduce(edge_acc, op=dist.ReduceOp.SUM)
                 edge_acc = float(edge_acc[0] / edge_acc[1])
-
-                dist.all_reduce(node_acc, op=dist.ReduceOp.SUM)
                 node_acc = float(node_acc[0] / node_acc[1])
 
                 if rank == 0:
@@ -373,41 +379,39 @@ def train(rank, cfg, world_size):
                     if is_neural_net and logits[0] is not None:
                         loss, log_dict = criterion.eval(logits, data, edge_index, rank)
 
-                    nmis[0] += float(torch.tensor(nmi).to(rank))
+                    nmis[0] += float(nmi)
                     nmis[1] += 1
 
                     if is_neural_net and logits[0] is not None:
-                        if 'train bce loss edge' in log_dict.keys():
+                        if 'eval bce loss edge' in log_dict.keys():
                             edge_loss[0] += float(
-                                log_dict['train bce loss edge']).to(rank)
+                                log_dict['eval bce loss edge'])
                             edge_loss[1] += 1
-                        if 'train bce loss node' in log_dict.keys():
+                        if 'eval bce loss node' in log_dict.keys():
                             node_loss[0] += float(
-                                log_dict['train bce loss node']).to(rank)
+                                log_dict['eval bce loss node'])
                             node_loss[1] += 1
-                        if 'train accuracy edge' in log_dict.keys():
+                        if 'eval accuracy edge' in log_dict.keys():
                             edge_acc[0] += float(
-                                log_dict['train accuracy edge']).to(rank)
+                                log_dict['eval accuracy edge'])
                             edge_acc[1] += 1
-                        if 'train accuracy node' in log_dict.keys():
+                        if 'eval accuracy node' in log_dict.keys():
                             node_acc[0] += float(
-                                log_dict['train accuracy node']).to(rank)
+                                log_dict['eval accuracy node'])
                             node_acc[1] += 1
 
                 if is_neural_net:
-                    dist.all_reduce(nmis, op=dist.ReduceOp.SUM)
+                    if cfg.multi_gpu:
+                        dist.all_reduce(nmis, op=dist.ReduceOp.SUM)
+                        dist.all_reduce(node_loss, op=dist.ReduceOp.SUM)
+                        dist.all_reduce(edge_loss, op=dist.ReduceOp.SUM)
+                        dist.all_reduce(edge_acc, op=dist.ReduceOp.SUM)
+                        dist.all_reduce(node_acc, op=dist.ReduceOp.SUM)
+    
                     nmis = float(nmis[0] / nmis[1])
-
-                    dist.all_reduce(node_loss, op=dist.ReduceOp.SUM)
                     node_loss = float(node_loss[0] / node_loss[1])
-
-                    dist.all_reduce(edge_loss, op=dist.ReduceOp.SUM)
                     edge_loss = float(edge_loss[0] / edge_loss[1])
-
-                    dist.all_reduce(edge_acc, op=dist.ReduceOp.SUM)
                     edge_acc = float(edge_acc[0] / edge_acc[1])
-
-                    dist.all_reduce(node_acc, op=dist.ReduceOp.SUM)
                     node_acc = float(node_acc[0] / node_acc[1])
 
                     if rank == 0:
