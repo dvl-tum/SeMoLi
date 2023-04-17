@@ -676,7 +676,7 @@ class GNNLoss(nn.Module):
                 logits_rounded[logits_rounded<=0.5] = 0
                 correct = torch.sum(logits_rounded == point_instances.squeeze())
                 edge_accuracy = correct/logits_rounded.shape[0]
-                log_dict['train edge accuracy'] = edge_accuracy.item()
+                log_dict['train accuracy edge'] = edge_accuracy.item()
 
             if self.focal_loss:
                 focal_loss = models.losses.FocalLoss()
@@ -708,7 +708,7 @@ class GNNLoss(nn.Module):
             logits_rounded[logits_rounded<=0.5] = 0
             correct = torch.sum(logits_rounded == is_object.squeeze())
             node_accuracy = correct/logits_rounded.shape[0]
-            log_dict['train node accuracy'] = node_accuracy.item()
+            log_dict['train accuracy node'] = node_accuracy.item()
 
         return loss, log_dict
     
@@ -737,7 +737,7 @@ class GNNLoss(nn.Module):
             correct = torch.sum(logits_rounded == point_instances.squeeze())
             # if logits_rounded.shape
             edge_accuracy = correct/logits_rounded.shape[0]
-            log_dict['eval edge accuracy'] = edge_accuracy.item()
+            log_dict['eval accuracy edge'] = edge_accuracy.item()
         
         if self.node_loss:
             is_object = data.point_instances != 0
@@ -753,6 +753,6 @@ class GNNLoss(nn.Module):
             logits_rounded[logits_rounded<=0.5] = 0
             correct = torch.sum(logits_rounded == is_object.squeeze())
             node_accuracy = correct/logits_rounded.shape[0]
-            log_dict['eval node accuracy'] = node_accuracy.item()
+            log_dict['eval accuracy node'] = node_accuracy.item()
 
         return loss, log_dict
