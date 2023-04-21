@@ -17,6 +17,9 @@ import glob
 import re
 from multiprocessing.pool import Pool
 from functools import partial
+import pytorch3d.ops.points_normals as points_normals
+from pyarrow import feather
+import av2.utils.io as io_utils
 
 
 logger = logging.getLogger("Model.Dataset")
@@ -41,7 +44,7 @@ class TrajectoryDataset(PyGDataset):
         self.use_all_points = use_all_points
         self.num_points = num_points
         self.split_val = split_val
-        if self.split == 'val' or self.split == 'test':
+        if self.split == 'train' or self.split == 'val' or self.split == 'test':
             self.loader = AV2SensorDataLoader(data_dir=self.split_dir, labels_dir=self.split_dir)
         else:
             self.loader = None
@@ -232,28 +235,10 @@ class TrajectoryDataset(PyGDataset):
 
     @property
     def processed_dir(self) -> str:
-        
-        if self._processed_dir:
-            if 'gt' in self._processed_dir:
-                return Path(os.path.join(self._processed_dir, self.split))
-            return Path(os.path.join(self._processed_dir))
+        if 'gt' in self._processed_dir:
+            return Path(os.path.join(self._processed_dir, self.split))
+        return Path(os.path.join(self._processed_dir))
 
-        data = '_waymo' if 'waymo' in str(self.trajectory_dir) else ''
-        if 'rubbish' in str(self.trajectory_dir):
-            add_on = 'rubbish'
-        elif 'local' in str(self.trajectory_dir):
-            add_on = 'local'
-        else:
-            add_on = 'normal'
-
-        processed_dir = os.path.join('/storage/user/seidensc/datasets/trajectories' + data,\
-            'processed', add_on , os.path.basename(os.path.dirname(self.trajectory_dir)), self.split)
-
-        if self.remove_static:
-            processed_dir = re.sub('processed', 'processed_remove_static', processed_dir)
-
-        return Path(processed_dir)
-        
     def add_margin(self, label):
         # Add a margin to the cuboids. Some cuboids are very tight 
         # and might lose some points.
@@ -295,6 +280,62 @@ class TrajectoryDataset(PyGDataset):
         else:
             for data in data_loader:
                 self.process_sweep(len(missing_paths), data)
+
+    def load_initial_pc(
+            self, 
+            lidar_fpath: Path,
+            index=[0, 1],
+            laser_id=[0, 1, 2, 3, 4],
+            remove_height=True,
+            remove_far=True,
+            remove_static=True,
+            remove_ground_pts_rc=True,
+            remove_non_dirvable=False,
+            num_cd_dist_frames=4):
+        """Get the lidar sweep from the given sweep_directory.
+    ​
+        Args:
+            sweep_directory: path to middle lidar sweep.
+            sweep_index: index of the middle lidar sweep.
+            width: +/- lidar scans to grab.
+        Returns:
+            List of plys with their associated pose if all the sweeps exist.
+        """
+
+        # get sweep information
+        sweep_df = io_utils.read_feather(lidar_fpath)
+
+        # get pc
+        lidar_points_ego = sweep_df[
+                list(['x', 'y', 'z'])].to_numpy().astype(np.float64)
+
+        # get mask to filter point cloud
+        mask = np.ones(lidar_points_ego.shape[0], dtype=bool)
+
+        if 'argo' not in self._processed_dir:            
+            mask = np.logical_and(mask, sweep_df['laser_id'].isin(laser_id))
+            mask = np.logical_and(mask, sweep_df['index'].isin(index))
+
+        if remove_ground_pts_rc:
+            mask = np.logical_and(mask, sweep_df['non_ground_pts_rc'])
+
+        # remove non drivable area points (non RoI points)
+        if remove_non_dirvable and 'argo' in self._processed_dir:
+            mask = np.logical_and(mask, sweep_df['driveable_area_pts'])
+        
+        # Remove points above certain height.
+        if remove_height:
+            mask = np.logical_and(mask, sweep_df['low_pts'] < 4)
+
+        # Remove points beyond certain distance.
+        if remove_far:
+            mask = np.logical_and(mask, sweep_df['close_pts'] < 80)
+        
+        if remove_static:
+            for i in range(1, num_cd_dist_frames+1):
+                mask = np.logical_and(mask, sweep_df[f'cd_dist_{i}'] > 0.2)
+
+        return lidar_points_ego, mask
                 
     def process_sweep(self, num_data, data):
         j, traj_file = data
@@ -306,27 +347,26 @@ class TrajectoryDataset(PyGDataset):
             os.path.basename(os.path.dirname(traj_file)),
             os.path.basename(traj_file)[:-3] + 'pt')
 
-        if self.remove_static:
-            processed_path2 = processed_path
-            processed_path = re.sub('processed_remove_static', 'processed', processed_path)
-
-        # If processed file exists and not static gt removal
-        if os.path.isfile(processed_path) and not self.remove_static:
-            j += 1
-            return
-        
-        # If processed file exists and static gt removal and static removed exists
-        elif self.remove_static and os.path.isfile(processed_path) and os.path.isfile(processed_path2):
-            j += 1
-            return
+        orig_path = os.path.join(
+            self.data_dir,
+            self.split,
+            os.path.basename(os.path.dirname(traj_file)),
+            'sensors',
+            'lidar',
+            os.path.basename(traj_file)[:-3] + 'feather')
         
         # If processed does not exist
-        
         seq = os.path.basename(os.path.dirname(traj_file))
         if 'non_drive' in self._trajectory_dir and not 'waymo' in self._trajectory_dir:
             if seq not in map_dict.keys():
                 log_map_dirpath = self.split_dir / seq / "map"
                 map_dict[seq] = ArgoverseStaticMap.from_map_dir(log_map_dirpath, build_raster=True)
+            
+        # load original pc
+        lidar_points_ego, mask = self.load_initial_pc(orig_path)
+        normals = points_normals.estimate_pointcloud_normals(
+            torch.from_numpy(lidar_points_ego).cuda().unsqueeze(0)).squeeze()
+        pc_normals = normals[mask]
 
         # load point clouds
         pred = np.load(traj_file)
@@ -413,66 +453,56 @@ class TrajectoryDataset(PyGDataset):
                 timestamps=torch.from_numpy(timestamps),
                 point_categories=torch.atleast_2d(torch.from_numpy(np.asarray(all_categories)).squeeze()),
                 point_instances=torch.atleast_2d(torch.from_numpy(np.asarray(all_instances)).squeeze()),
-                log_id=seq)
+                log_id=seq,
+                pc_normals=pc_normals)
         else:
             data = PyGData(
                 pc_list=torch.from_numpy(pc_list),
                 traj=torch.from_numpy(traj),
                 timestamps=torch.from_numpy(timestamps),
-                log_id=seq)
+                log_id=seq,
+                pc_normals=pc_normals)
 
         os.makedirs(os.path.dirname(processed_path), exist_ok=True)
         torch.save(data, osp.join(processed_path))
         # print(f"Save {osp.join(processed_path)}...")
+    
+    def _remove_static(self, data):
+        # remove static points
+        mean_traj = data['traj'][:, :, :-1]
+        timestamps = data['timestamps']
+        # get mean velocity [m/s] along trajectory and check if > thresh
+        diff_dist = torch.linalg.norm(
+            mean_traj[:, 1, :] - mean_traj[:, 0, :] , axis=1)
 
-        ### If remove static file does not exist
-        if not os.path.isfile(processed_path2):
-            try:
-                if len(data['pc_list'].shape) > 2:
-                    data['pc_list'] = data['pc_list'][0]
-            except:
-                logger.info(f"len oc list thing {data['pc_list'].shape}")
-                return
-            if len(data['point_instances'].shape) > 1:
-                data['point_instances'] = data['point_instances'][0]
-            if len(data['point_categories']) > 1:
-                data['point_categories'] = data['point_categories'][0]
+        diff_time = timestamps[1] - timestamps[0]
+        # bring from nano / mili seconds to seconds
+        if 'argo' in self.data_dir:
+            diff_time = diff_time / torch.pow(torch.tensor(10), 9.0) 
+        else:
+            diff_time = diff_time / torch.pow(torch.tensor(10), 6.0)
 
-            # remove static points
-            if self.remove_static:
-                mean_traj = data['traj'][:, :, :-1]
-                timestamps = data['timestamps']
-                # get mean velocity [m/s] along trajectory and check if > thresh
-                diff_dist = torch.linalg.norm(
-                    mean_traj[:, 1, :] - mean_traj[:, 0, :] , axis=1)
+        mean_traj = diff_dist/diff_time
+        mean_traj = mean_traj > self.static_thresh
 
-                diff_time = timestamps[1] - timestamps[0]
-                # bring from nano / mili seconds to seconds
-                if 'argo' in self.data_dir:
-                    diff_time = diff_time / torch.pow(torch.tensor(10), 9.0) 
-                else:
-                    diff_time = diff_time / torch.pow(torch.tensor(10), 6.0)
+        empty = False
+        # if no moving point and not evaluation, sample few random
+        if torch.all(~mean_traj):
+            idxs = torch.randint(0, mean_traj.shape[0], size=(200, ))
+            mean_traj[idxs] = True
+            empty = True                    
+        
+        # apply mask
+        data['pc_list'] = data['pc_list'][mean_traj, :]
+        data['traj'] = data['traj'][mean_traj]
+        if 'pc_normals' in data.keys:
+            data['pc_normals'] = data['pc_normals'][mean_traj]
+        
+        data['point_instances'] = data['point_instances'].squeeze()[mean_traj]
+        data['point_categories'] = data['point_categories'].squeeze()[mean_traj]
+        data['empty'] = empty
 
-                mean_traj = diff_dist/diff_time
-                mean_traj = mean_traj > self.static_thresh
-
-                empty = False
-                # if no moving point and not evaluation, sample few random
-                if torch.all(~mean_traj):
-                    idxs = torch.randint(0, mean_traj.shape[0], size=(200, ))
-                    mean_traj[idxs] = True
-                    empty = True                    
-                
-                # apply mask
-                data['pc_list'] = data['pc_list'][mean_traj, :]
-                data['traj'] = data['traj'][mean_traj]
-                
-                data['point_instances'] = data['point_instances'].squeeze()[mean_traj]
-                data['point_categories'] = data['point_categories'].squeeze()[mean_traj]
-                data['empty'] = empty
-
-                os.makedirs(os.path.dirname(processed_path2), exist_ok=True)
-                torch.save(data, processed_path2)
+        return data
 
     def get(self, idx):
         path = self._processed_paths[idx]
@@ -481,6 +511,9 @@ class TrajectoryDataset(PyGDataset):
         except:
             print(f"Not able to load {self._processed_paths_0}")
             data = torch.load(self._processed_paths_0)
+        
+        if self.remove_static and self.static_thresh > 0:
+            data = self._remove_static(data)
 
         # if you always want same number of points (during training), sample/re-sample
         if not self.use_all_points and data['traj'].shape[0] > self.num_points:
@@ -556,7 +589,7 @@ def get_TrajectoryDataLoader(cfg, train=True, val=True, test=False):
                 cfg.data.num_points_eval,
                 cfg.data.remove_static,
                 cfg.data.static_thresh,
-                cfg.data.debug,
+                True, # cfg.data.debug,
                 _eval=True, 
                 every_x_frame=cfg.data.every_x_frame,
                 split_val=cfg.data.split_val,

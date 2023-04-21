@@ -24,6 +24,9 @@ from evaluation import calc_nmi
 from collections import defaultdict
 from pyarrow import feather
 import shutil
+import numpy as np
+import random
+
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = BASE_DIR
@@ -39,6 +42,11 @@ def initialize(cfg):
     '''HYPER PARAMETER'''
     #print(cfg.training.gpu)
     #os.environ["CUDA_VISIBLE_DEVICES"] = cfg.training.gpu
+    torch.manual_seed(0)
+    # torch.use_deterministic_algorithms(True)
+    torch.backends.cudnn.deterministic = True
+    np.random.seed(0)
+    random.seed(0)
 
     '''CREATE DIR'''
     out_path = os.path.join(cfg.out_path, 'out/')
@@ -111,6 +119,14 @@ def load_model(cfg, checkpoints_dir, logger, rank=0):
                     eps=1e-08,
                     weight_decay=cfg.training.optim.weight_decay
                 )
+            elif cfg.training.optim.optimizer.o_class == 'RAdam':
+                optimizer = torch.optim.RAdam(
+                    model.parameters(),
+                    lr=cfg.training.optim.optimizer.params.lr,
+                    betas=(0.9, 0.999),
+                    eps=1e-08,
+                    weight_decay=cfg.training.optim.weight_decay
+                )
             else:
                 optimizer = torch.optim.SGD(
                     model.parameters(),
@@ -168,13 +184,15 @@ def train(rank, cfg, world_size):
             train_loader = PyGDataLoader(
                 train_data,
                 batch_size=cfg.training.batch_size,
-                drop_last=True,
+                drop_last=False,
                 shuffle=True)
         else:
             train_sampler = DistributedSampler(
                     train_data,
                     num_replicas=torch.cuda.device_count(),
-                    rank=rank)
+                    drop_last=False,
+                    rank=rank, 
+                    shuffle=True)
             train_loader = PyGDataLoader(
                 train_data,
                 batch_size=cfg.training.batch_size,
@@ -377,7 +395,7 @@ def train(rank, cfg, world_size):
                         last=i+1 == len(val_loader))
 
                     if is_neural_net and logits[0] is not None:
-                        loss, log_dict = criterion.eval(logits, data, edge_index, rank)
+                        loss, log_dict = criterion(logits, data, edge_index, rank, mode='eval')
 
                     nmis[0] += float(nmi)
                     nmis[1] += 1

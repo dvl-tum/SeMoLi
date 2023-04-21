@@ -23,4 +23,7 @@ hyperparams:
 loss_hyperparams:
     bce_loss: True
     node_loss: False
-    focal_loss: False
+    focal_loss_node: False
+    focal_loss_edge: False
+    node_weight: 1
+    edge_weight: 2

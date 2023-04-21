@@ -180,6 +180,9 @@ class Tracker3D():
         self.filtered_gt = '../../../data/argoverse2/val_0.833_per_frame_remove_non_move_remove_far_remove_non_drive_filtered_version.feather'
         self.rank = rank
         self.pdist = torch.nn.PairwiseDistance(p=2)
+        self.tps = 0
+        self.fns = 0
+        self.fps = 0
 
     def new_log_id(self, log_id):
         # save tracks to feather and reset variables
@@ -219,7 +222,7 @@ class Tracker3D():
 
         for c in torch.unique(clusters):
             num_interior = torch.sum(clusters==c).item()
-            gt_id = None #(np.bincount(gt_instance_ids[clusters==c]).argmax())
+            gt_id = (torch.bincount(gt_instance_ids[clusters==c]).argmax()).item()
 
             # filter if cluster too small
             if num_interior < self.num_interior:
@@ -240,7 +243,7 @@ class Tracker3D():
                 num_interior=num_interior,
                 overlap=self.overlap,
                 gt_id=gt_id))
-        
+
         self.detections[timestamps.cpu()[0, 0]] = detections
 
         if last:
@@ -338,15 +341,25 @@ class Tracker3D():
 
             # increase inactive count
             for idx in range(len(self.inactive_tracks)):
-                self.inactive_tracks[idx].inactive_count += 1
+                t0 = torch.where(
+                    self.ordered_timestamps==self.inactive_tracks[
+                        idx].detections[-1].timestamps[0, 0])[0][0].item()
+                t1 = torch.where(
+                    self.ordered_timestamps==timestamp)[0][0].item()
+                self.inactive_tracks[idx].inactive_count += t1-t0
             
             # reset active tracks
             self.active_tracks = list()
             return
-
+        
         # calculate matching costs between detections and tracks
         cost_mat, num_act, num_inact, inactive_tracks_to_use = \
             self._calculate_traj_dist(detections, timestamp, matching=matching, alpha=alpha)
+
+        gt_id_detections = [d.gt_id for d in detections]
+        gt_id_tracks = [t.detections[-1].gt_id for t in self.active_tracks] + \
+            [t.detections[-1].gt_id for t in self.inactive_tracks] 
+        gt_matches = sum([1 for gt_id_d in gt_id_detections if gt_id_d in gt_id_tracks])
 
         if make_cost_mat_dist:
             if matching != 'majority':
@@ -360,13 +373,33 @@ class Tracker3D():
         
         # match detections and tracks
         if matching == 'greedy':
-            re_activate, matched_tracks, matched_dets = \
-                self.greedy(cost_mat, num_act, detections, inactive_tracks_to_use, active_first=True, timestamp=timestamp)
+            re_activate, matched_tracks, matched_dets, tps, fps = self.greedy(
+                cost_mat,
+                num_act,
+                detections,
+                inactive_tracks_to_use,
+                active_first=True,
+                timestamp=timestamp,
+                gt_id_tracks=gt_id_tracks,
+                gt_id_detections=gt_id_detections)
+            
+            fns = gt_matches - tps
+            self.tps += tps
+            self.fps += fps
+            self.fns += fns
 
         elif matching == 'majority':
             re_activate, matched_tracks, matched_dets = \
                 self.majority_vote(cost_mat, num_act, detections, inactive_tracks_to_use)
+        
+        # reactivated tracks
+        reactivated_tracks = list()
+        for r, t in enumerate(self.inactive_tracks):
+            if r in re_activate:
+                t.inactive_count = 0
+                reactivated_tracks.append(t)
 
+        # still inactive
         self.inactive_tracks = [t for r, t in enumerate(self.inactive_tracks)\
             if r not in re_activate]
 
@@ -377,8 +410,12 @@ class Tracker3D():
                 deactivate.append(idx)
                 self.inactive_tracks.append(self.active_tracks[idx])
         
+        # still active
         self.active_tracks = [t for r, t in enumerate(self.active_tracks)\
             if r not in deactivate]
+
+        # add reactivated
+        self.active_tracks = self.active_tracks + reactivated_tracks
 
         # increase inactive count
         for idx in range(len(self.inactive_tracks)):
@@ -399,15 +436,34 @@ class Tracker3D():
                     overlap=self.overlap,
                     every_x_frame=self.every_x_frame))
                 self.track_id += 1
+
         if last:
+            print('len tracks', sum([len(track) for track in self.active_tracks]))
+            print('len tracks', sum([len(track) for track in self.inactive_tracks]))
             self.active_tracks += self.inactive_tracks
+            print('len tracks', sum([len(track) for track in self.active_tracks]))
+            logger.info(f'TPA: {self.tps}, FNA: {self.fns}, FPS: {self.fps}')
+            self.tps = 0
+            self.fns = 0
+            self.fps = 0
             return self.register()
         return None
     
-    def greedy(self, cost_mat, num_act, detections, inactive_tracks_to_use, active_first=False, timestamp=None):
+    def greedy(
+            self,
+            cost_mat,
+            num_act,
+            detections,
+            inactive_tracks_to_use,
+            active_first=False,
+            timestamp=None,
+            gt_id_tracks=None,
+            gt_id_detections=None):
         re_activate = list()
         matched_tracks = list()
         matched_dets = list()
+        fps = 0
+        tps = 0
 
         # greedy matching: first match the one with lowest cost
         if active_first:
@@ -433,13 +489,13 @@ class Tracker3D():
                 else:
                     inactive_idx = inactive_tracks_to_use[idx-num_act]
                     self.inactive_tracks[inactive_idx].add_detection(detections[det_traj])
-                    self.inactive_tracks[inactive_idx].inactive_count = 0
-                    self.active_tracks.append(self.inactive_tracks[inactive_idx])
                     re_activate.append(inactive_idx)
+                tps = tps + 1 if gt_id_tracks[idx] == gt_id_detections[det_traj] else tps
+                fps = fps + 1 if gt_id_tracks[idx] != gt_id_detections[det_traj] else fps
                 # set costs of all other tracks to det to 1000 to not get matches again
                 cost_mat[:, det_traj] = 10000
 
-        return re_activate, matched_tracks, matched_dets
+        return re_activate, matched_tracks, matched_dets, tps, fps
 
     def majority_vote(self, cost_mat, num_act, detections, inactive_tracks_to_use):
         re_activate = list()
@@ -631,6 +687,7 @@ class Tracker3D():
     def to_feather(self):
         track_vals = list()
         if self.do_associate:
+            print('all', sum([len(d) for d in self.detections.values()]))
             # per timestampdetections
             for i, timestamp in enumerate(sorted(self.detections.keys())):
                 dets = self.detections[timestamp]
@@ -641,7 +698,9 @@ class Tracker3D():
                     alpha=0.0,
                     make_cost_mat_dist=False,
                     last=len(self.detections)==i+1)
-            
+
+            print(len(detections))
+
             for det in detections:
                 det = det.final_detection()
                 # quaternion rotation around z axis
@@ -689,6 +748,7 @@ class Tracker3D():
                         det.num_interior,
                         det.log_id]
                     track_vals.append(values)
+        print(len(track_vals))
                     
         track_vals = np.asarray(track_vals)
 
@@ -699,7 +759,7 @@ class Tracker3D():
             data=track_vals,
             columns=column_names_dets)
         df = df.astype(column_dtypes_dets)
-        self.detections = list()
+        self.detections = dict()
 
         os.makedirs(os.path.join(self.out_path, self.split, self.log_id), exist_ok=True)
         os.makedirs(os.path.join(self.out_path, self.split, 'feathers'), exist_ok=True)
@@ -715,7 +775,7 @@ class Tracker3D():
 
         # with open(write_path, 'wb') as f:
         feather.write_feather(df_all, write_path)
-
+        logger.info(f'wrote {write_path}')
         return True
 
     def register(self):
@@ -723,12 +783,13 @@ class Tracker3D():
         init_R = torch.tensor([[[1, 0, 0], [0, 1, 0], [0, 0, 1]]]).float().cuda()
         init_s = torch.tensor([1]).float().cuda()
         for i, track in enumerate(self.active_tracks):
+            track_dets = list()
             # we start from timestep with most points and then go
             # from max -> end -> start -> max
             max_interior = torch.argmax(torch.tensor([d.num_interior for d in track.detections])).item()
             start_in_t0 = torch.atleast_2d(track._get_canonical_points(i=max_interior))
             print(f"Track: {i}/{len(self.active_tracks)}, Max Interior: {max_interior}, Len: {len(track)}")
-            if len(track) > 1:
+            if len(track) > 1 and max_interior > 5:
                 max_to_end = range(max_interior, len(track)-1)
                 end_to_start = range(len(track)-1, 0, -1)
                 start_to_max = range(0, max_interior)
@@ -738,6 +799,9 @@ class Tracker3D():
                 SimilarityTransforms = [None] * len(track)
                 for iterator, increment in zip(iterators, increment):
                     for i in iterator:
+                        # number of interior points at next time stamp
+                        num_interior = track.detections[i+increment].num_interior
+
                         # convert pc from ego frame t=i to ego frame t=i+increment
                         t0 = track.detections[i].timestamps[0, 0].item()
                         t1 = track.detections[i+increment].timestamps[0, 0].item()
@@ -754,30 +818,41 @@ class Tracker3D():
                         init = pytorch3d.ops.points_alignment.SimilarityTransform(
                             R=init_R, T=init_T, s=init_s)
 
-                        # ICP
-                        ICPSolution = pytorch3d.ops.points_alignment.iterative_closest_point(
-                            start_in_t1.float().cuda().unsqueeze(0),
-                            cano1_in_t1.float().cuda().unsqueeze(0),
-                            init_transform=init)
-                        start_registered = torch.atleast_2d(ICPSolution.Xt.cpu().squeeze())
-                        if SimilarityTransforms[i+increment] is None:
-                            SimilarityTransforms[i+increment] = ICPSolution.RTs
+                        if num_interior > 5:
+                            # ICP
+                            ICPSolution = pytorch3d.ops.points_alignment.iterative_closest_point(
+                                start_in_t1.float().cuda().unsqueeze(0),
+                                cano1_in_t1.float().cuda().unsqueeze(0),
+                                init_transform=init)
+                            start_registered = torch.atleast_2d(ICPSolution.Xt.cpu().squeeze())
+                            if SimilarityTransforms[i+increment] is None:
+                                SimilarityTransforms[i+increment] = ICPSolution.RTs
+                        else:
+                            # if point cloud small just use distance as transform and assume no rotation
+                            start_registered = pytorch3d.ops.points_alignment._apply_similarity_transform(
+                                    start_in_t1.cuda().float().unsqueeze(0),
+                                    init.R,
+                                    init.T,
+                                    init.s).squeeze()
+                            start_registered = torch.atleast_2d(start_in_t0.cpu().squeeze())
+                            if SimilarityTransforms[i+increment] is None:
+                                SimilarityTransforms[i+increment] = init
                         
                         # concatenate cano points at t+increment and registered points as
                         # point cloud for next timestamp / final point cloud
                         start_in_t0 = torch.cat([start_registered, cano1_in_t1])
 
-            max_interior_pc = start_in_t0
-            mins, maxs = max_interior_pc.min(axis=0).values, max_interior_pc.max(axis=0).values
-            lwh = maxs - mins
-            translation = (maxs + mins)/2
-            
-            # setting last detection
-            track.detections[max_interior].lwh = lwh
-            track.detections[max_interior].translation = translation
-            detections.append(track.detections[max_interior])
+                max_interior_pc = start_in_t0
+                mins, maxs = max_interior_pc.min(axis=0).values, max_interior_pc.max(axis=0).values
+                lwh = maxs - mins
+                translation = (maxs + mins)/2
+                
+                # setting last detection
+                track.detections[max_interior].lwh = lwh
+                track.detections[max_interior].translation = translation
+                track.detections[max_interior].num_interior = max_interior
+                track_dets.append(track.detections[max_interior])
 
-            if len(track) > 1:
                 # Iterating from max -> end and max -> start
                 max_to_end = range(max_interior, len(track)-1)
                 max_to_start = range(max_interior, 0, -1)
@@ -788,7 +863,6 @@ class Tracker3D():
                     for i in iterator:
                         # no registering from pc 
                         # from t0 (i+1) --> t1 (i)
-                        cano1_in_t1 = track._get_canonical_points(i=i)
                         t0 = track.detections[i+increment].timestamps[0, 0].item()
                         t1 = track.detections[i].timestamps[0, 0].item()
                         start_in_t1 = track._convert_time(t0, t1, self.av2_loader, start_in_t0.cpu())
@@ -805,8 +879,23 @@ class Tracker3D():
                         mins, maxs = start_in_t0.min(axis=0).values, start_in_t0.max(axis=0).values
                         track.detections[i+increment].translation = (maxs + mins)/2
                         track.detections[i+increment].lwh = maxs - mins
-                        
-                        detections.append(track.detections[i+increment])
+                        track.detections[i+increment].num_interior = max_interior
+                        track_dets.append(track.detections[i+increment])
+            else:
+                for i in range(len(track.detections)):
+                    points = track._get_canonical_points(i=i)
+                    mins, maxs = points.min(axis=0).values, points.max(axis=0).values
+                    lwh = maxs - mins
+                    translation = (maxs + mins)/2
+                    
+                    # setting last detection
+                    track.detections[i].lwh = lwh
+                    track.detections[i].translation = translation
+                    track_dets.append(track.detections[i])
+
+            print('inter', len(track_dets))
+            detections.extend(track_dets)
+        print(len(detections))
         return detections
 
 
