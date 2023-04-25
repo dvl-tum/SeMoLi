@@ -419,6 +419,7 @@ def train(rank, cfg, world_size):
                             node_acc[1] += 1
 
                 if is_neural_net:
+                    model = model.train()
                     if cfg.multi_gpu:
                         dist.all_reduce(nmis, op=dist.ReduceOp.SUM)
                         dist.all_reduce(node_loss, op=dist.ReduceOp.SUM)
