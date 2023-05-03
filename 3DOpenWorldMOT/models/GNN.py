@@ -48,6 +48,8 @@ class ClusterLayer(MessagePassing):
             in_channels_edge = int(traj_channels/3)
         elif self.edge_attr == 'min_mean_max_diffpostrajtime':
             in_channels_edge = 3
+        elif self.edge_attr == 'min_mean_max_diffpostrajtime_normaldiff':
+            in_channels_edge = 4
 
         # get node dim
         self.node_attr = node_attr
@@ -59,6 +61,8 @@ class ClusterLayer(MessagePassing):
             in_channels_node = traj_channels + pos_channels
         elif self.node_attr == 'min_mean_max_vel':
             in_channels_node = 3
+        elif self.node_attr == 'min_mean_max_vel_normal':
+            in_channels_node = 6
 
         # get edge mlp
         self.edge_mlp = torch.nn.Linear(in_channels_node * 2 + in_channels_edge, in_channels_edge)
@@ -68,7 +72,7 @@ class ClusterLayer(MessagePassing):
         self.edge_batchnorm = nn.BatchNorm1d(in_channels_edge) \
             if use_batchnorm else use_batchnorm
         self.edge_drop = nn.Dropout(p=drop_p) if use_drop else use_drop
-
+        
         #get node mlp
         self.mlp = torch.nn.Linear(in_channels_node + in_channels_edge, in_channels_node)
 
@@ -168,6 +172,8 @@ class ClusterGNN(MessagePassing):
             edge_dim = int(traj_channels/3)
         elif self.edge_attr == 'min_mean_max_diffpostrajtime':
             edge_dim = 3
+        elif self.edge_attr == 'min_mean_max_diffpostrajtime_normaldiff':
+            edge_dim = 4
         
         # get node mlp
         self.node_attr = node_attr
@@ -179,6 +185,8 @@ class ClusterGNN(MessagePassing):
             node_dim = traj_channels + pos_channels
         elif self.node_attr == 'min_mean_max_vel':
             node_dim = 3
+        elif self.node_attr == 'min_mean_max_vel_normal':
+            node_dim = 6
 
         self.layer1 = ClusterLayer(traj_channels=traj_channels, pos_channels=pos_channels, edge_attr=edge_attr, node_attr=node_attr)
         self.layer2 = ClusterLayer(traj_channels=traj_channels, pos_channels=pos_channels, edge_attr=edge_attr, node_attr=node_attr)
@@ -200,7 +208,7 @@ class ClusterGNN(MessagePassing):
 
         self.rank = rank
 
-    def initial_edge_attributes(self, x1, x2, edge_index, distance='euclidean'):
+    def initial_edge_attributes(self, x1, x2, edge_index, point_normals=None, distance='euclidean'):
         # Given edge-level attention coefficients for source and target nodes,
         # we simply need to sum them up to "emulate" concatenation:
         if self.edge_attr == 'diffpos':
@@ -219,7 +227,8 @@ class ClusterGNN(MessagePassing):
             a = x2[edge_index[0]].repeat((1, int(x1.shape[1]/x2.shape[1]))) + x1[edge_index[0]]
             b = x2[edge_index[1]].repeat((1, int(x1.shape[1]/x2.shape[1]))) + x1[edge_index[1]]
             d = simplediff
-        elif self.edge_attr == 'pertime_diffpostraj' or 'min_mean_max_diffpostrajtime':
+        elif self.edge_attr == 'pertime_diffpostraj' or self.edge_attr == 'min_mean_max_diffpostrajtime' or \
+                self.edge_attr == 'min_mean_max_diffpostrajtime_normaldiff':
             a = x1.view(x1.shape[0], -1, 3)[edge_index[0]]+x2[edge_index[0]].unsqueeze(1)
             a = a.view(edge_index.shape[1], -1)
 
@@ -230,6 +239,10 @@ class ClusterGNN(MessagePassing):
             a = a.view(-1, 3)
             b = b.view(-1, 3)
             d = torch.nn.PairwiseDistance(p=2)
+
+            if self.edge_attr == 'min_mean_max_diffpostrajtime_normaldiff':
+                cos = nn.CosineSimilarity(dim=1, eps=1e-6)
+                cos_normals = 1 - cos(point_normals[edge_index[0]], point_normals[edge_index[1]])
         
         edge_attr = d(a, b)
         if self.edge_attr == 'pertime_diffpostraj':
@@ -240,10 +253,17 @@ class ClusterGNN(MessagePassing):
                 edge_attr.min(dim=-1).values,
                 edge_attr.max(dim=-1).values,
                 edge_attr.mean(dim=-1)]).T
+        elif self.edge_attr == 'min_mean_max_diffpostrajtime_normaldiff':
+            edge_attr = edge_attr.view(a_shape[0], -1)
+            edge_attr = torch.vstack([
+                edge_attr.min(dim=-1).values,
+                edge_attr.max(dim=-1).values,
+                edge_attr.mean(dim=-1),
+                cos_normals]).T
 
         return edge_attr
     
-    def initial_node_attributes(self, x1, x2, _type, timestamps=None, batch=None):
+    def initial_node_attributes(self, x1, x2, _type, point_normals=None, timestamps=None, batch=None):
         # Given edge-level attention coefficients for source and target nodes,
         # we simply need to sum them up to "emulate" concatenation:
         if _type == 'pos':
@@ -256,7 +276,7 @@ class ClusterGNN(MessagePassing):
             node_attr = x1.view(x1.shape[0], -1, 3)+x2.unsqueeze(1)
             if _type == 'postraj':
                 node_attr = node_attr.view(node_attr.shape[0], -1)
-        elif _type == 'min_mean_max_vel':
+        elif _type == 'min_mean_max_vel' or 'min_mean_max_vel_normal':
             time = timestamps[batch, :]
             node_attr = x1.view(x1.shape[0], -1, 3)
             diff_time = timestamps[batch, 1:] - timestamps[batch, :-1]
@@ -266,11 +286,14 @@ class ClusterGNN(MessagePassing):
                 diff_time = diff_time / torch.pow(torch.tensor(10), 6.0)
             node_attr = node_attr[:, 1:, :] - node_attr[:, :-1, :]
             node_attr = torch.linalg.norm(node_attr, dim=-1)
-            node_attr = node_attr / diff_time
+            node_attr = node_attr / diff_time                
             node_attr = torch.vstack([
                 node_attr.min(dim=-1).values,
                 node_attr.max(dim=-1).values,
                 node_attr.mean(dim=-1)]).T
+            if _type == 'min_mean_max_vel_normal':
+                print(node_attr.shape, point_normals.shape)
+                node_attr = torch.hstack([node_attr, point_normals])
 
         return node_attr
     
@@ -331,8 +354,12 @@ class ClusterGNN(MessagePassing):
         
         traj = traj.view(traj.shape[0], -1)
         pc = data['pc_list']
+        if 'pc_normals' in [k for k in data.keys]:
+            point_normals = data['pc_normals']
+        else:
+            point_normals = None
 
-        node_attr = self.initial_node_attributes(traj, pc, self.node_attr, data['timestamps'], data['batch'])
+        node_attr = self.initial_node_attributes(traj, pc, self.node_attr, point_normals, data['timestamps'], data['batch'])
         graph_attr = self.initial_node_attributes(traj, pc, self.graph_construction)
 
         # get edges using knn graph (for computational feasibility)
@@ -386,7 +413,7 @@ class ClusterGNN(MessagePassing):
         if edge_index.shape[1] == 0:
             return [None, None], torch.tensor(list(range(pc.shape[0]))), None, None
         
-        edge_attr = self.initial_edge_attributes(traj, pc, edge_index)
+        edge_attr = self.initial_edge_attributes(traj, pc, edge_index, point_normals)
 
         edge_attr = edge_attr.float()
         node_attr = node_attr.float()
@@ -523,6 +550,8 @@ class ClusterGNN(MessagePassing):
                     _edge_index = torch.tensor([[d, 0] for d in diff]).T
                     _edge_index = torch.cat([edge_index.T, _edge_index.to(self.rank).T]).T
                     _score = torch.cat([_score, torch.tensor([0]*len(diff)).to(self.rank).unsqueeze(1)])
+                else:
+                    _edge_index = edge_index
 
                 try:
                     rama_out = rama_py.rama_cuda(
@@ -702,7 +731,7 @@ class GNNLoss(nn.Module):
                     reduction="mean",)
 
             # log loss
-            loss += bce_loss_edge
+            loss += self.edge_weight * bce_loss_edge
             log_dict[f'{mode} bce loss edge'] = bce_loss_edge.item()
             
             # get accuracy
@@ -737,7 +766,7 @@ class GNNLoss(nn.Module):
             
             # log loss
             log_dict[f'{mode} bce loss node'] = bce_loss_node.item()
-            loss += bce_loss_node
+            loss += self.node_weight * bce_loss_node
 
             # get accuracy
             logits_rounded = self.sigmoid(node_logits.clone().detach()).squeeze()

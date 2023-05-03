@@ -511,9 +511,12 @@ class TrajectoryDataset(PyGDataset):
         except:
             print(f"Not able to load {self._processed_paths_0}")
             data = torch.load(self._processed_paths_0)
-        
+
         if self.remove_static and self.static_thresh > 0:
             data = self._remove_static(data)
+        else:
+            data['point_categories'] = data['point_categories'].squeeze()
+            data['point_instances'] = data['point_instances'].squeeze()
 
         # if you always want same number of points (during training), sample/re-sample
         if not self.use_all_points and data['traj'].shape[0] > self.num_points:
@@ -589,7 +592,7 @@ def get_TrajectoryDataLoader(cfg, train=True, val=True, test=False):
                 cfg.data.num_points_eval,
                 cfg.data.remove_static,
                 cfg.data.static_thresh,
-                True, # cfg.data.debug,
+                cfg.data.debug,
                 _eval=True, 
                 every_x_frame=cfg.data.every_x_frame,
                 split_val=cfg.data.split_val,

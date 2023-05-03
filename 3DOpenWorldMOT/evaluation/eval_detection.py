@@ -16,6 +16,7 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import matplotlib.patches as patches
 from torch import multiprocessing as mp
+import pandas as pd
 
 
 _class_dict = {

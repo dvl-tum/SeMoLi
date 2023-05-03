@@ -28,10 +28,10 @@ tracker_options: # Extra options for the tracker
   full_res: False                                                                                                          
   make_submission: False                                                                                             
   track_boxes: False   
-  a_threshold: -0.1
-  i_threshold: -0.1
+  a_threshold: 0.5
+  i_threshold: 0.5
   num_interior: 0
-  overlap: 1
+  overlap: 5
   matching: 'greedy'
   alpha: 0.95
-  do_associate: True
+  do_associate: False

@@ -84,7 +84,7 @@ def load_model(cfg, checkpoints_dir, logger, rank=0):
         if cfg.models.model_name != 'SimpleGraph':
             node = '_nodescore' if cfg.models.hyperparams.use_node_score else ''
             cluster = '_' + cfg.models.hyperparams.clustering
-            my_graph = "_mygraph" if cfg.models.hyperparams.my_graph else '_torchgraph'
+            my_graph = f"_mygraph_{cfg.models.hyperparams.k}_{cfg.models.hyperparams.r}" if cfg.models.hyperparams.my_graph else f'_torchgraph_{cfg.models.hyperparams.k}_{cfg.models.hyperparams.r}'
 
             name = cfg.models.hyperparams.graph_construction + '_' + cfg.models.hyperparams.edge_attr + "_" + cfg.models.hyperparams.node_attr + node + cluster + my_graph
             name = f'{cfg.data.num_points_eval}' + "_" + name if not cfg.data.use_all_points_eval else name
@@ -103,7 +103,6 @@ def load_model(cfg, checkpoints_dir, logger, rank=0):
                 wandb.init(config=cfg, project=cfg.job_name, name=name)
             try:
                 checkpoint = torch.load(cfg.models.weight_path)
-                print(cfg.models.weight_path, checkpoint)
                 start_epoch = checkpoint['epoch'] if not cfg.just_eval else start_epoch
                 model.load_state_dict(checkpoint['model_state_dict'])
                 met = checkpoint['class_avg_iou']
@@ -175,7 +174,8 @@ def train(rank, cfg, world_size):
         torch.cuda.set_device(rank)
         dist.init_process_group('nccl', rank=rank, world_size=world_size)
     logger, experiment_dir, checkpoints_dir, out_path = initialize(cfg)
-
+    
+    cfg.data.do_process = False
     train_data, val_data, test_data = get_TrajectoryDataLoader(cfg)
 
     # get dataloaders 
@@ -206,7 +206,7 @@ def train(rank, cfg, world_size):
                 val_data,
                 batch_size=cfg.training.batch_size_val)
         else:
-            val_sampler = DistributedTestSampler(
+            '''val_sampler = DistributedTestSampler(
                     val_data,
                     num_replicas=torch.cuda.device_count(),
                     rank=rank,
@@ -215,7 +215,11 @@ def train(rank, cfg, world_size):
             val_loader = PyGDataLoader(
                 val_data,
                 batch_size=cfg.training.batch_size_val,
-                sampler=val_sampler)
+                sampler=val_sampler)'''
+
+            val_loader = PyGDataLoader(
+                val_data,
+                batch_size=cfg.training.batch_size_val)
     else:
         val_loader = None
 
@@ -319,7 +323,7 @@ def train(rank, cfg, world_size):
                 edge_acc = float(edge_acc[0] / edge_acc[1])
                 node_acc = float(node_acc[0] / node_acc[1])
 
-                if rank == 0:
+                if rank == 0 or not cfg.multi_gpu:
                     logger.info(f'train bce loss edge: {edge_loss}')
                     logger.info(f'train bce loss node: {node_loss}')
                     logger.info(f'train accuracy edge: {edge_acc}')
@@ -433,7 +437,7 @@ def train(rank, cfg, world_size):
                     edge_acc = float(edge_acc[0] / edge_acc[1])
                     node_acc = float(node_acc[0] / node_acc[1])
 
-                    if rank == 0:
+                    if rank == 0 or not cfg.multi_gpu:
                         logger.info(f'nmi: {nmis}')
                         logger.info(f'eval bce loss edge: {edge_loss}')
                         logger.info(f'eval bce loss node: {node_loss}')
@@ -446,7 +450,7 @@ def train(rank, cfg, world_size):
                             wandb.log({'eval accuracy edge': edge_acc, "epoch": epoch})
                             wandb.log({'eval accuracy node': node_acc, "epoch": epoch})
 
-                if rank == 0:
+                if rank == 0 or not cfg.multi_gpu:
                     # get sequence list for evaluation
                     tracker_dir = os.path.join(tracker.out_path, tracker.split)
                     if os.path.isdir(os.path.join(tracker_dir, 'feathers')):
