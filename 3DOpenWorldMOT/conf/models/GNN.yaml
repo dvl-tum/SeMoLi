@@ -26,4 +26,4 @@ loss_hyperparams:
     focal_loss_node: False
     focal_loss_edge: False
     node_weight: 1
-    edge_weight: 2
+    edge_weight: 1
