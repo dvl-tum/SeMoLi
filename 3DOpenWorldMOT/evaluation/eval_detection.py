@@ -523,8 +523,8 @@ def eval_detection(
         print("Evaluate now...")
 
     # Evaluate instances.
-    dts, gts, metrics, num_points_tps, num_points_fns = evaluate(
-        dts, gts, cfg=competition_cfg, min_points=min_points, max_points=max_points)
+    dts, gts, metrics = evaluate(
+        dts, gts, cfg=competition_cfg)
     dts = dts[dts['is_evaluated']==1]
     gts = gts[gts['is_evaluated']==1]
 
