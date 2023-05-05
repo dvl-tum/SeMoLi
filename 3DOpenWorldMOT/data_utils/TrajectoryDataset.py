@@ -572,15 +572,15 @@ def get_TrajectoryDataLoader(cfg, train=True, val=True, test=False):
         logger.info('TRAIN')
         train_data = TrajectoryDataset(
             cfg.data.data_dir,
-            'train',
-            cfg.data.trajectory_dir + '_train',
+            'val',
+            cfg.data.trajectory_dir + '_val',
             cfg.data.use_all_points,
             cfg.data.num_points,
             cfg.data.remove_static,
             cfg.data.static_thresh,
             cfg.data.debug,
             do_process=cfg.data.do_process,
-            _processed_dir=cfg.data.processed_dir + '_train')
+            _processed_dir=cfg.data.processed_dir + '_val')
     else:
         train_data = None
     if val:
