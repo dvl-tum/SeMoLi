@@ -33,52 +33,37 @@ rgb_colors[0] = 'blue'
 
 logger = logging.getLogger("Model.GNN")
 
+
+def _addindent(s_, numSpaces):
+    s = s_.split('\n')
+    # don't do anything for single-line stuff
+    if len(s) == 1:
+        return s_
+    first = s.pop(0)
+    s = [(numSpaces * ' ') + line for line in s]
+    s = '\n'.join(s)
+    s = first + '\n' + s
+    return s
+
+
 class ClusterLayer(MessagePassing):
-    def __init__(self, traj_channels, pos_channels, edge_attr, node_attr, use_batchnorm=False, use_drop=False, drop_p=0.4):
+    def __init__(self, in_channel_node, in_channel_edge, out_channel_node, out_channel_edge, use_batchnorm=False, use_drop=False, drop_p=0.4):
         super().__init__(aggr='mean')
-        # get edge dim
-        self.edge_attr = edge_attr
-        if self.edge_attr == 'diffpos':
-            in_channels_edge = pos_channels
-        elif self.edge_attr == 'difftraj' or self.edge_attr == 'diffpostraj':
-            in_channels_edge = traj_channels
-        elif self.edge_attr == 'difftraj_diffpos':
-            in_channels_edge = traj_channels + pos_channels
-        elif self.edge_attr == 'pertime_diffpostraj':
-            in_channels_edge = int(traj_channels/3)
-        elif self.edge_attr == 'min_mean_max_diffpostrajtime':
-            in_channels_edge = 3
-        elif self.edge_attr == 'min_mean_max_diffpostrajtime_normaldiff':
-            in_channels_edge = 4
-
-        # get node dim
-        self.node_attr = node_attr
-        if self.node_attr == 'pos':
-            in_channels_node = pos_channels
-        elif self.node_attr == 'traj' or self.node_attr == 'postraj':
-            in_channels_node = traj_channels
-        elif self.node_attr == 'traj_pos':
-            in_channels_node = traj_channels + pos_channels
-        elif self.node_attr == 'min_mean_max_vel':
-            in_channels_node = 3
-        elif self.node_attr == 'min_mean_max_vel_normal':
-            in_channels_node = 6
-
         # get edge mlp
-        self.edge_mlp = torch.nn.Linear(in_channels_node * 2 + in_channels_edge, in_channels_edge)
+        self.edge_mlp = torch.nn.Linear(in_channel_node * 2 + in_channel_edge, out_channel_edge)
 
         # get edge relu, bn, drop
         self.edge_relu = nn.ReLU(inplace=True)
-        self.edge_batchnorm = nn.BatchNorm1d(in_channels_edge) \
+        self.edge_batchnorm = nn.BatchNorm1d(in_channel_edge) \
             if use_batchnorm else use_batchnorm
         self.edge_drop = nn.Dropout(p=drop_p) if use_drop else use_drop
         
         #get node mlp
-        self.mlp = torch.nn.Linear(in_channels_node + in_channels_edge, in_channels_node)
+        self.mlp = torch.nn.Linear(in_channel_node + out_channel_edge, out_channel_node)
 
         # get node relu, bn, drop
         self.node_relu = nn.ReLU(inplace=True)
-        self.node_batchnorm = nn.BatchNorm1d(in_channels_node) \
+        self.node_batchnorm = nn.BatchNorm1d(in_channel_node) \
             if use_batchnorm else use_batchnorm
         self.node_drop = nn.Dropout(p=drop_p) if use_drop else use_drop
 
@@ -103,7 +88,7 @@ class ClusterLayer(MessagePassing):
 
         # propagate_type: (x: OptPairTensor, alpha: Tensor)
         node_attr = self.propagate(edge_index, node_attr=node_attr, edge_attr=edge_attr)
-        return node_attr, edge_attr
+        return node_attr, edge_index, edge_attr
     
     def propagate(self, edge_index, node_attr, edge_attr):
         dim_size = node_attr.shape[0]
@@ -125,9 +110,44 @@ class ClusterLayer(MessagePassing):
             x = self.node_drop(x)
         return x
 
+    def __repr__(self):
+        # We treat the extra repr like the sub-module, one item per line
+        extra_lines = []
+        extra_repr = self.extra_repr()
+        # empty string will be split into list ['']
+        if extra_repr:
+            extra_lines = extra_repr.split('\n')
+        child_lines = []
+        for key, module in self._modules.items():
+            mod_str = repr(module)
+            mod_str = _addindent(mod_str, 2)
+            child_lines.append('(' + key + '): ' + mod_str)
+        lines = extra_lines + child_lines
+
+        main_str = self._get_name() + '('
+        if lines:
+            # simple one-liner info, which most builtin Modules will use
+            if len(extra_lines) == 1 and not child_lines:
+                main_str += extra_lines[0]
+            else:
+                main_str += '\n  ' + '\n  '.join(lines) + '\n'
+
+        main_str += ')'
+        return main_str
+
 
 def simplediff(a, b):
     return b-a
+
+
+class SevInpSequential(nn.Sequential):
+    def forward(self, *inputs):
+        for module in self._modules.values():
+            if type(inputs) == tuple:
+                inputs = module(*inputs)
+            else:
+                inputs = module(inputs)
+        return inputs
 
 
 class ClusterGNN(MessagePassing):
@@ -151,6 +171,8 @@ class ClusterGNN(MessagePassing):
             oracle_node=False,
             oracle_edge=False,
             dataset='waymo',
+            layer_sizes_edge=None,
+            layer_sizes_node=None,
             rank=0):
         super().__init__(aggr='mean')
         self.k = k
@@ -188,8 +210,28 @@ class ClusterGNN(MessagePassing):
         elif self.node_attr == 'min_mean_max_vel_normal':
             node_dim = 6
 
-        self.layer1 = ClusterLayer(traj_channels=traj_channels, pos_channels=pos_channels, edge_attr=edge_attr, node_attr=node_attr)
-        self.layer2 = ClusterLayer(traj_channels=traj_channels, pos_channels=pos_channels, edge_attr=edge_attr, node_attr=node_attr)
+        layers = list()
+
+        _node_dim = node_dim
+        _edge_dim = edge_dim
+        if layer_sizes_node is None:
+            layer_sizes_node = {'l_1': node_dim}
+            layer_sizes_edge = {'l_1': edge_dim}
+        for node_dim_hid, edge_dim_hid in zip(layer_sizes_node.values(), layer_sizes_edge.values()):
+            layers.append(ClusterLayer(
+                in_channel_node=_node_dim,
+                in_channel_edge=_edge_dim,
+                out_channel_node=node_dim_hid,
+                out_channel_edge=edge_dim_hid))
+            _node_dim = node_dim_hid
+            _edge_dim = edge_dim_hid
+        layers.append(ClusterLayer(
+            in_channel_node=_node_dim,
+            in_channel_edge=_edge_dim,
+            out_channel_node=node_dim,
+            out_channel_edge=edge_dim))
+        self.layers = SevInpSequential(*layers)
+
         self.final = nn.Linear(edge_dim, 1)
         self.final_node = nn.Linear(node_dim, 1)
         self.sigmoid = torch.nn.Sigmoid()
@@ -418,8 +460,7 @@ class ClusterGNN(MessagePassing):
         edge_attr = edge_attr.float()
         node_attr = node_attr.float()
 
-        node_attr, edge_attr = self.layer1(node_attr, edge_index, edge_attr)
-        node_attr, edge_attr = self.layer2(node_attr, edge_index, edge_attr)
+        node_attr, edge_index, edge_attr = self.layers(node_attr, edge_index, edge_attr)
 
         src, dst = edge_index
         # computes per edge index by computing dot product between node features

@@ -20,6 +20,18 @@ hyperparams:
     oracle_node: False
     oracle_edge: False
     dataset: ${data.dataset_name}
+    layer_sizes_edge: 
+        l_1: 32
+        l_2: 64
+        l_3: 128
+        l_4: 64
+        l_5: 32
+    layer_sizes_node:
+        l_1: 32
+        l_2: 64
+        l_3: 128
+        l_4: 64
+        l_5: 32
 loss_hyperparams:
     bce_loss: True
     node_loss: False
