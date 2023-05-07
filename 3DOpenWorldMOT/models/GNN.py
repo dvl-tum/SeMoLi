@@ -745,6 +745,10 @@ class GNNLoss(nn.Module):
             node_loss=False,
             focal_loss_node=True,
             focal_loss_edge=True,
+            alpha_node=0.25,
+            alpha_edge=0.25,
+            gamma_node=2,
+            gamma_edge=2,
             rank=0,
             edge_weight=1,
             node_weight=1) -> None:
@@ -756,6 +760,10 @@ class GNNLoss(nn.Module):
         self.focal_loss_edge = focal_loss_edge
         self.edge_weight = edge_weight
         self.node_weight = node_weight
+        self.alpha_edge = alpha_edge
+        self.alpha_node = alpha_node
+        self.gamma_node = gamma_node
+        self.gamma_edge = gamma_edge
         self.max_iter = 2000
         self.rank = rank
         self.sigmoid = torch.nn.Sigmoid()
@@ -808,8 +816,8 @@ class GNNLoss(nn.Module):
                 bce_loss_edge = self._edge_loss(
                     edge_logits.squeeze(),
                     point_instances.squeeze(),
-                    alpha=-1,
-                    gamma=2,
+                    alpha=self.alpha_edge,
+                    gamma=self.gamma_edge,
                     reduction="mean",)
 
             # log loss
@@ -842,8 +850,8 @@ class GNNLoss(nn.Module):
                 bce_loss_node = self._node_loss(
                     node_logits.squeeze(),
                     is_object.squeeze(),
-                    alpha=-1,
-                    gamma=2,
+                    alpha=self.alpha_node,
+                    gamma=self.gamma_node,
                     reduction="mean",)
             
             # log loss
