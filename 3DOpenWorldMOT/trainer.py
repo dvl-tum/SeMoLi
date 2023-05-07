@@ -74,6 +74,7 @@ def initialize(cfg):
 def load_model(cfg, checkpoints_dir, logger, rank=0):
     '''MODEL LOADING'''
     model = _model_factory[cfg.models.model_name](rank=rank, **cfg.models.hyperparams)
+    print(model)
     criterion = _loss_factory[cfg.models.model_name]
     start_epoch = 0
     optimizer = None
@@ -146,17 +147,50 @@ def bn_momentum_adjust(m, momentum):
         m.momentum = momentum
 
 
+def sample_params():
+    params_list = list()
+    for _  in range(30):
+        params = {
+            'lr': 10 ** random.uniform(-3, -1),
+            'weight_decay': 10 ** random.uniform(-10, -5),
+            'focal_loss_node': random.choice([True, False]),
+            'focal_loss_edge': random.choice([True, False]),
+            'alpha_node': random.uniform(0, 1),
+            'alpha_edge': random.uniform(0, 1),
+            'gamma_node': random.choice([2, 0.5, 1, 1.5, 3.5, 3, 3.5, 0]),
+            'gamma_edge': random.choice([2, 0.5, 1, 1.5, 3.5, 3, 3.5, 0]),
+        }
+        params_list.append(params)
+    return params_list
+
 @hydra.main(config_path="conf", config_name="conf")   
 def main(cfg):
-    OmegaConf.set_struct(cfg, False)  # This allows getattr and hasattr methods to function correctly
-    logger, experiment_dir, checkpoints_dir, out_path = initialize(cfg)
-    
-    if os.path.isdir(os.path.join(out_path, 'val', 'feathers')):
-        shutil.rmtree(os.path.join(out_path, 'val', 'feathers'))
-    
-    # needed for preprocessing
-    logger.info("start loading training data ...")
-    train_data, val_data, test_data = get_TrajectoryDataLoader(cfg)
+    if cfg.training.hypersearch:
+        params_list = sample_params()
+
+    for iter in range(cfg.training.iters):
+        if cfg.training.hypersearch:
+            cfg.training.optim.base_lr = params_list[iter]['lr']
+            cfg.training.optim.weight_decay = params_list[iter]['weight_decay']
+            cfg.models.loss_hyperparams.focal_loss_node = params_list[iter]['focal_loss_node']
+            cfg.models.loss_hyperparams.focal_loss_edge = params_list[iter]['focal_loss_edge']
+            cfg.models.loss_hyperparams.gamma_node = params_list[iter]['gamma_node']
+            cfg.models.loss_hyperparams.gamma_edge = params_list[iter]['gamma_edge']
+            cfg.models.loss_hyperparams.alpha_node = params_list[iter]['alpha_node']
+            cfg.models.loss_hyperparams.alpha_edge = params_list[iter]['alpha_edge']
+            cfg.training.epochs = 30
+        
+            logger.info(f"current params: {params_list[iter]}")
+
+        OmegaConf.set_struct(cfg, False)  # This allows getattr and hasattr methods to function correctly
+        logger, experiment_dir, checkpoints_dir, out_path = initialize(cfg)
+        
+        if os.path.isdir(os.path.join(out_path, 'val', 'feathers')):
+            shutil.rmtree(os.path.join(out_path, 'val', 'feathers'))
+        
+        # needed for preprocessing
+        logger.info("start loading training data ...")
+        train_data, val_data, test_data = get_TrajectoryDataLoader(cfg)
 
     
     if cfg.multi_gpu:
@@ -256,13 +290,12 @@ def train(rank, cfg, world_size):
                     and cfg.models.model_name != 'SimpleGraph'\
                     and cfg.models.model_name != 'DBSCAN_Intersection'
     
-    global_epoch = 0
     best_metric = 0
     for epoch in range(start_epoch, cfg.training.epochs):
         if not cfg.just_eval:
             '''Train on chopped scenes'''
-            logger.info('**** Epoch %d (%d/%s) ****' % (
-                global_epoch + 1, epoch + 1, cfg.training.epochs))
+            logger.info('**** Epoch (%d/%s) ****' % (
+                 epoch + 1, cfg.training.epochs))
 
             if is_neural_net:
                 # Adapt learning rate
@@ -286,7 +319,7 @@ def train(rank, cfg, world_size):
                 # iterate over dataset
                 num_batches = len(train_loader)
                 model = model.train()
-                logger.info('---- EPOCH %03d TRAINING ----' % (global_epoch + 1))
+                logger.info('---- EPOCH %03d TRAINING ----' % (epoch + 1))
                 node_loss = torch.zeros(2).to(rank)
                 node_acc = torch.zeros(2).to(rank)
                 edge_loss = torch.zeros(2).to(rank)
@@ -344,7 +377,6 @@ def train(rank, cfg, world_size):
                         'optimizer_state_dict': optimizer.state_dict(),
                     }
                     torch.save(state, savepath)
-
         # evaluate
         if epoch % cfg.training.eval_per_seq == 0: # and (epoch != 0 or cfg.just_eval):
             num_batches = len(val_loader)
@@ -370,37 +402,46 @@ def train(rank, cfg, world_size):
             with torch.no_grad():
                 if is_neural_net:
                     model = model.eval()
-                logger.info('---- EPOCH %03d EVALUATION ----' % (global_epoch + 1))
+                logger.info('---- EPOCH %03d EVALUATION ----' % (epoch + 1))
                 # Iterate over validation set
                 for i, (data) in tqdm(enumerate(val_loader), total=len(val_loader), smoothing=0.9):
-                    # continue if not moving points
+                    '''# continue if not moving points
                     if data['empty']:
-                        continue
+                        continue'''
 
                     # compute clusters
-                    logits, clusters, edge_index, _ = model(data, eval=True, name=name)
+                    logits, all_clusters, edge_index, _ = model(data, eval=True, name=name)
 
-                    # continue if we didnt find clusters
-                    if not len(clusters):
-                        continue
+                    _nmis = list()
+                    batch_idx = data._slice_dict['pc_list']
+                    for g, clusters in enumerate(all_clusters):
+                        # continue if we didnt find clusters
+                        if not len(clusters):
+                            if i+1 == len(val_loader) and g+1 == len(all_clusters):
+                                found = tracker.to_feather()
+                                if not found:
+                                    logger.info(f'No detections found in {data.log_id[g]}')
+                            continue
 
-                    # compute nmi
-                    nmi = calc_nmi.calc_normalized_mutual_information(
-                        data['point_instances'].cpu(), clusters)
+                        # compute nmi
+                        nmi = calc_nmi.calc_normalized_mutual_information(
+                            data['point_instances'].cpu()[batch_idx[g]:batch_idx[g+1]], clusters)
+                        _nmis.append(nmi)
 
-                    # generate detections
-                    detections = tracker.get_detections(
-                        data.pc_list,
-                        data.traj,
-                        clusters,
-                        data.timestamps,
-                        data.log_id[0],
-                        data['point_instances'],
-                        last=i+1 == len(val_loader))
+                        # generate detections
+                        detections = tracker.get_detections(
+                            data.pc_list[batch_idx[g]:batch_idx[g+1]],
+                            data.traj[batch_idx[g]:batch_idx[g+1]],
+                            clusters,
+                            data.timestamps[g].unsqueeze(0),
+                            data.log_id[g],
+                            data['point_instances'][batch_idx[g]:batch_idx[g+1]],
+                            last= i+1 == len(val_loader) and g+1 == len(all_clusters))
 
                     if is_neural_net and logits[0] is not None:
                         loss, log_dict = criterion(logits, data, edge_index, rank, mode='eval')
 
+                    nmi = sum(_nmis) / len(_nmis)
                     nmis[0] += float(nmi)
                     nmis[1] += 1
 
@@ -529,8 +570,6 @@ def train(rank, cfg, world_size):
                 
         if not is_neural_net or cfg.just_eval:
             break
-                    
-        global_epoch += 1
 
 
 if __name__ == '__main__':
