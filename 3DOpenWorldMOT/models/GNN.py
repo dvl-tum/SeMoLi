@@ -232,8 +232,8 @@ class ClusterGNN(MessagePassing):
             out_channel_edge=edge_dim))'''
         self.layers = SevInpSequential(*layers)
 
-        self.final = nn.Linear(edge_dim, 1)
-        self.final_node = nn.Linear(node_dim, 1)
+        self.final = nn.Linear(_edge_dim, 1)
+        self.final_node = nn.Linear(_node_dim, 1)
         self.sigmoid = torch.nn.Sigmoid()
         # self.sigmoid = torch.nn.Tanh()
         self.cut_edges = cut_edges

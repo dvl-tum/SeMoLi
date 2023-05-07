@@ -168,7 +168,7 @@ def main(cfg):
     if cfg.training.hypersearch:
         params_list = sample_params()
 
-    for iter in range(cfg.training.iters):
+    for iter in range(30):
         if cfg.training.hypersearch:
             cfg.training.optim.base_lr = params_list[iter]['lr']
             cfg.training.optim.weight_decay = params_list[iter]['weight_decay']
@@ -180,7 +180,7 @@ def main(cfg):
             cfg.models.loss_hyperparams.alpha_edge = params_list[iter]['alpha_edge']
             cfg.training.epochs = 30
         
-            logger.info(f"current params: {params_list[iter]}")
+            print(f"Current params: {params_list[iter]}")
 
         OmegaConf.set_struct(cfg, False)  # This allows getattr and hasattr methods to function correctly
         logger, experiment_dir, checkpoints_dir, out_path = initialize(cfg)
@@ -193,12 +193,12 @@ def main(cfg):
         train_data, val_data, test_data = get_TrajectoryDataLoader(cfg)
 
     
-    if cfg.multi_gpu:
-        world_size = torch.cuda.device_count()
-        in_args = (cfg, world_size)
-        mp.spawn(train, args=in_args, nprocs=world_size, join=True)
-    else:
-        train(0, cfg, world_size=1)
+        if cfg.multi_gpu:
+            world_size = torch.cuda.device_count()
+            in_args = (cfg, world_size)
+            mp.spawn(train, args=in_args, nprocs=world_size, join=True)
+        else:
+            train(0, cfg, world_size=1)
 
 
 def train(rank, cfg, world_size):
