@@ -83,13 +83,26 @@ def load_model(cfg, checkpoints_dir, logger, rank=0):
         criterion = criterion(**cfg.models.loss_hyperparams, rank=rank).to(rank)
 
         if cfg.models.model_name != 'SimpleGraph':
-            node = '_nodescore' if cfg.models.hyperparams.use_node_score else ''
-            cluster = '_' + cfg.models.hyperparams.clustering
-            my_graph = f"_mygraph_{cfg.models.hyperparams.k}_{cfg.models.hyperparams.r}" if cfg.models.hyperparams.my_graph else f'_torchgraph_{cfg.models.hyperparams.k}_{cfg.models.hyperparams.r}'
+            # node = '_NS' if cfg.models.hyperparams.use_node_score else ''
+            # cluster = '_' + cfg.models.hyperparams.clustering
+            # my_graph = f"_MG_{cfg.models.hyperparams.k}_{cfg.models.hyperparams.r}" if cfg.models.hyperparams.my_graph else f'_TG_{cfg.models.hyperparams.k}_{cfg.models.hyperparams.r}'
 
-            name = cfg.models.hyperparams.graph_construction + '_' + cfg.models.hyperparams.edge_attr + "_" + cfg.models.hyperparams.node_attr + node + cluster + my_graph
+            # name = cfg.models.hyperparams.graph_construction + '_' + cfg.models.hyperparams.edge_attr + "_" + cfg.models.hyperparams.node_attr + node + my_graph # + cluster
+            name = ''
             name = f'{cfg.data.num_points_eval}' + "_" + name if not cfg.data.use_all_points_eval else name
             name = f'{cfg.data.num_points}' + "_" + name if not cfg.data.use_all_points else name
+            name = f'{cfg.training.optim.base_lr}' + "_" + name
+            name = f'{cfg.training.optim.weight_decay}' + "_" + name
+            if cfg.models.loss_hyperparams.focal_loss_node:
+                name = f'{cfg.models.loss_hyperparams.gamma_node}' + "_" + name
+                name = f'{cfg.models.loss_hyperparams.alpha_node}' + "_" + name
+            if cfg.models.loss_hyperparams.focal_loss_edge:
+                name = f'{cfg.models.loss_hyperparams.gamma_edge}' + "_" + name
+                name = f'{cfg.models.loss_hyperparams.alpha_edge}' + "_" + name
+            edge_size = '_'.join([str(v) for v in cfg.models.hyperparams.layer_sizes_edge.values()])
+            name = f'{edge_size}' + "_" + name
+            node_size = '_'.join([str(v) for v in cfg.models.hyperparams.layer_sizes_node.values()])
+            name = f'{node_size}' + "_" + name
             
             name = 'nooracle' + "_" + name if not cfg.models.hyperparams.oracle_node and not cfg.models.hyperparams.oracle_edge else name
             name = 'oracleedge' + "_" + name if cfg.models.hyperparams.oracle_edge else name
@@ -199,6 +212,9 @@ def main(cfg):
             mp.spawn(train, args=in_args, nprocs=world_size, join=True)
         else:
             train(0, cfg, world_size=1)
+        
+        wandb.finish()
+        logging.shutdown()
 
 
 def train(rank, cfg, world_size):
@@ -574,4 +590,3 @@ def train(rank, cfg, world_size):
 
 if __name__ == '__main__':
     main()
-  
