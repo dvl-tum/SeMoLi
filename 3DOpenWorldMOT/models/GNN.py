@@ -600,7 +600,7 @@ class ClusterGNN(MessagePassing):
                     diff = set(list(range(end.item()-start.item()))).difference(edges)
 
                     if len(diff):
-                        _edge_index = torch.tensor([[d, 0] for d in diff]).T
+                        _edge_index = torch.tensor([[d, d] for d in diff]).T
                         _edge_index = torch.cat([graph_edge_index.T, _edge_index.to(self.rank).T]).T
                         graph_edge_score = torch.cat([graph_edge_score, torch.tensor([0]*len(diff)).to(self.rank).unsqueeze(1)])
                     else:

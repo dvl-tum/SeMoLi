@@ -178,10 +178,12 @@ def sample_params():
 
 @hydra.main(config_path="conf", config_name="conf")   
 def main(cfg):
+    iters = 1
     if cfg.training.hypersearch:
         params_list = sample_params()
+        iters = 30
 
-    for iter in range(1):
+    for iter in range(iters):
         if cfg.training.hypersearch:
             cfg.training.optim.base_lr = params_list[iter]['lr']
             cfg.training.optim.weight_decay = params_list[iter]['weight_decay']
