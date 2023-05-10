@@ -21,17 +21,18 @@ eval_frequency: 1
 wandb: False
 out_path: 'out'
 just_eval: False     
-metric: cluster
+metric: detection
 multi_gpu: False                                                                               
 
 tracker_options: # Extra options for the tracker                                                                        
   full_res: False                                                                                                          
   make_submission: False                                                                                             
   track_boxes: False   
-  a_threshold: 0.5
-  i_threshold: 0.5
+  a_threshold: 2.0
+  i_threshold: 2.0
   num_interior: 0
   overlap: 5
   matching: 'greedy'
   alpha: 0.95
   do_associate: False
+  precomp_tracks: False

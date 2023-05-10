@@ -186,6 +186,8 @@ class TrajectoryDataset(PyGDataset):
                 for i, flow_file in enumerate(sorted(os.listdir(os.path.join(self.processed_dir, self.seq)))):
                     if i % self.every_x_frame != 0:
                         continue
+                    '''if 'gt' in str(self.processed_dir) and i > 20:
+                        break'''
                     processed_paths.append(os.path.join(self.processed_dir, self.seq, flow_file))
             else:
                 seqs = os.listdir(self.processed_dir)
@@ -258,11 +260,10 @@ class TrajectoryDataset(PyGDataset):
             self._processed_paths = self.processed_paths
             logger.info('Not Processing this time :) ')
 
-    def process(self, multiprocessing=True):
+    def process(self, multiprocessing=False):
         self._processed_paths = self.processed_paths
-        print(len(self._processed_paths))
-        already_processed = glob.glob(str(self.processed_dir)+'/*/*')
-        # already_processed = list()
+        # already_processed = glob.glob(str(self.processed_dir)+'/*/*')
+        already_processed = list()
         missing_paths = set(self._processed_paths).difference(already_processed)
 
         missing_paths = [os.path.join(
@@ -386,6 +387,11 @@ class TrajectoryDataset(PyGDataset):
         if self.split != 'test':
             labels = self.loader.get_labels_at_lidar_timestamp(
                 log_id=seq, lidar_timestamp_ns=int(timestamps[0]))
+            filtered_file_path = '/dvlresearch/jenny/Waymo_Converted_filtered_val/val_1.0_per_frame_remove_non_move_remove_far_filtered_version.feather'
+            labels_mov = self.loader.get_labels_at_lidar_timestamp_all(
+                filtered_file_path, log_id=seq, lidar_timestamp_ns=int(timestamps[0]), get_moving=True)
+            labels_stat = self.loader.get_labels_at_lidar_timestamp_all(
+                filtered_file_path, log_id=seq, lidar_timestamp_ns=int(timestamps[0]), get_moving=False)
             
             if self.margin and 'argo' in self.data_dir:
                 for label in labels:
@@ -416,7 +422,7 @@ class TrajectoryDataset(PyGDataset):
 
             # get per point and object masks and bounding boxs and their labels 
             masks = list()
-            for label in labels:
+            for label in labels_mov:
                 interior = point_cloud_handling.compute_interior_points_mask(
                         pc_list, label.vertices_m)
                 int_label = self.class_dict[label.category] if 'argo' in self.data_dir else int(label.category)
@@ -443,16 +449,66 @@ class TrajectoryDataset(PyGDataset):
             point_instances = np.asarray(point_instances, dtype=np.int64)
             point_categories = np.asarray(point_categories, dtype=np.int64)
 
-            all_categories.append(point_categories)
-            all_instances.append(point_instances)
+            point_categories_mov=torch.atleast_2d(torch.from_numpy(point_categories).squeeze())
+            point_instances_mov=torch.atleast_2d(torch.from_numpy(point_instances).squeeze())
+
+            # STATIC
+            # get per point and object masks and bounding boxs and their labels 
+            masks = list()
+            for label in labels_stat:
+                interior = point_cloud_handling.compute_interior_points_mask(
+                        pc_list, label.vertices_m)
+                int_label = self.class_dict[label.category] if 'argo' in self.data_dir else int(label.category)
+                interior = interior.astype(int) * int_label
+                masks.append(interior)
+
+            if len(labels) == 0:
+                masks.append(np.zeros(pc_list.shape[0]))
+            
+            masks = np.asarray(masks).T
+        
+            # assign unique label and instance to each point
+            # label 0 and instance 0 is background
+            point_categories = list()
+            point_instances = list()
+            for j in range(masks.shape[0]):
+                if np.where(masks[j]>0)[0].shape[0] != 0:
+                    point_categories.append(masks[j, np.where(masks[j]>0)[0][0]])
+                    point_instances.append(np.where(masks[j]>0)[0][0]+1)
+                else:
+                    point_categories.append(0)
+                    point_instances.append(0)
+
+            point_instances = np.asarray(point_instances, dtype=np.int64)
+            point_categories = np.asarray(point_categories, dtype=np.int64)
+
+            point_categories_stat=torch.atleast_2d(torch.from_numpy(point_categories).squeeze())
+            point_instances_stat=torch.atleast_2d(torch.from_numpy(point_instances).squeeze())
+
+            '''
+            if self.split != 'train':
+                # Fitler rubbish
+                import sklearn.cluster
+                dbscan = sklearn.cluster.DBSCAN(min_samples=10, eps=1)
+                clustering = dbscan.fit(pc_list)
+                labels = clustering.labels_
+                labels = labels != -1
+                pc_list = pc_list[labels]
+                traj = traj[labels]
+                point_categories = point_categories[:, labels]
+                point_instances = point_instances[:, labels]
+                # pc_normals = pc_normals[labels]
+            '''
 
             # putting it all together
             data = PyGData(
                 pc_list=torch.from_numpy(pc_list),
                 traj=torch.from_numpy(traj),
                 timestamps=torch.from_numpy(timestamps),
-                point_categories=torch.atleast_2d(torch.from_numpy(np.asarray(all_categories)).squeeze()),
-                point_instances=torch.atleast_2d(torch.from_numpy(np.asarray(all_instances)).squeeze()),
+                point_categories=point_categories_mov,
+                point_instances=point_instances_mov,
+                point_categories_stat=point_categories_stat,
+                point_instances_stat=point_instances_stat,
                 log_id=seq,
                 pc_normals=pc_normals)
         else:
@@ -500,6 +556,8 @@ class TrajectoryDataset(PyGDataset):
         
         data['point_instances'] = data['point_instances'].squeeze()[mean_traj]
         data['point_categories'] = data['point_categories'].squeeze()[mean_traj]
+        data['point_instances'] = data['point_instances_stat'].squeeze()[mean_traj]
+        data['point_categories'] = data['point_categories_stat'].squeeze()[mean_traj]
         data['empty'] = empty
 
         return data
@@ -517,6 +575,8 @@ class TrajectoryDataset(PyGDataset):
         else:
             data['point_categories'] = data['point_categories'].squeeze()
             data['point_instances'] = data['point_instances'].squeeze()
+            data['point_categories_stat'] = data['point_categories_stat'].squeeze()
+            data['point_instances_stat'] = data['point_instances_stat'].squeeze()
 
         # if you always want same number of points (during training), sample/re-sample
         if not self.use_all_points and data['traj'].shape[0] > self.num_points:
@@ -528,6 +588,8 @@ class TrajectoryDataset(PyGDataset):
             data['traj'] = data['traj'][idxs]
             data['point_categories'] = data['point_categories'][idxs]
             data['point_instances'] = data['point_instances'][idxs]
+            data['point_categories_stat'] = data['point_categories_stat'][idxs]
+            data['point_instances_stat'] = data['point_instances_stat'][idxs]
 
         if 'empty' not in data.keys:
             if data['pc_list'].shape[0] == 0:

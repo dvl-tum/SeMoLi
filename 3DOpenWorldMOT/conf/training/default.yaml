@@ -1,7 +1,7 @@
 # @package training
 # Those arguments defines the training hyper-parameters
 epochs: 100
-hypersearch: True
+hypersearch: False
 eval_per_seq: 10
 num_workers: 4
 batch_size: 8
@@ -9,7 +9,7 @@ batch_size_val: 1
 shuffle: True
 gpu: 0 # -1 -> no cuda otherwise takes the specified index
 optim:
-  base_lr: 0.001
+  base_lr: 0.01
   weight_decay: 1e-4
   # accumulated_gradient: -1 # Accumulate gradient accumulated_gradient * batch_size
   grad_clip: -1

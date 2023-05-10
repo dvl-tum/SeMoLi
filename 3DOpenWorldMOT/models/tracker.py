@@ -159,7 +159,8 @@ class Tracker3D():
             overlap=5, 
             av2_loader=None, 
             rank=0,
-            do_associate=None) -> None:
+            do_associate=None,
+            precomp_tracks=False) -> None:
         
         self.active_tracks = list()
         self.inactive_tracks = list()
@@ -172,6 +173,7 @@ class Tracker3D():
         self.num_interior = num_interior
         self.av2_loader = av2_loader
         self.do_associate = do_associate
+        self.precomp_tracks = precomp_tracks
 
         self.a_threshold = a_threshold
         self.i_threshold = i_threshold
@@ -213,10 +215,14 @@ class Tracker3D():
         if self.log_id != log_id:
             self.new_log_id(log_id)
 
+        if self.precomp_tracks and self.do_associate:
+            found = self.to_feather()
+            if not found:
+                logger.info(f'No detections found in {log_id}')
+
         # iterate over clusters that were found and get detections with their 
         # corresponding flows, trajectories and canonical points
         detections = list()
-
         if type(clusters) == np.ndarray:
             clusters = torch.from_numpy(clusters).to(self.rank)
 
@@ -438,14 +444,21 @@ class Tracker3D():
                 self.track_id += 1
 
         if last:
-            print('len tracks', sum([len(track) for track in self.active_tracks]))
-            print('len tracks', sum([len(track) for track in self.inactive_tracks]))
             self.active_tracks += self.inactive_tracks
-            print('len tracks', sum([len(track) for track in self.active_tracks]))
+            check = defaultdict(list)
+            for track in self.active_tracks:
+                for d in track.detections:
+                    check[d.timestamps[0, 0].item()].append(d)
+            lens = list()
+            for k in sorted(check.keys()):
+                lens.append(len(check[k]))
             logger.info(f'TPA: {self.tps}, FNA: {self.fns}, FPS: {self.fps}')
             self.tps = 0
             self.fns = 0
             self.fps = 0
+            store_initial_detections(self.active_tracks, tracks=True)
+            self.active_tracks = load_initial_detections(tracks=True, every_x_frame=self.every_x_frame, overlap=self.overlap)
+
             return self.register()
         return None
     
@@ -480,6 +493,7 @@ class Tracker3D():
             det_traj = torch.argmin(cost_mat[idx])
             # print(thresh, idx, det_traj, cost_mat[idx, det_traj])
             # match only of cost smaller than threshold
+
             if cost_mat[idx, det_traj] < thresh:
                 matched_dets.append(det_traj.item())
                 # if matched to inactive track, reactivate
@@ -687,19 +701,34 @@ class Tracker3D():
     def to_feather(self):
         track_vals = list()
         if self.do_associate:
-            print('all', sum([len(d) for d in self.detections.values()]))
-            # per timestampdetections
-            for i, timestamp in enumerate(sorted(self.detections.keys())):
-                dets = self.detections[timestamp]
-                detections = self.associate(
-                    dets,
-                    matching='greedy',
-                    timestamp=timestamp.item(),
-                    alpha=0.0,
-                    make_cost_mat_dist=False,
-                    last=len(self.detections)==i+1)
+            if not self.precomp_tracks:
+                store_initial_detections(self.detections)
+                self.detections = load_initial_detections()
+                # per timestampdetections
+                for i, timestamp in enumerate(sorted(self.detections.keys())):
+                    dets = self.detections[timestamp]
+                    try:
+                        time = timestamp.item()
+                    except:
+                        time = timestamp
+                    detections = self.associate(
+                        dets,
+                        matching='greedy',
+                        timestamp=time,
+                        alpha=0.0,
+                        make_cost_mat_dist=False,
+                        last=len(self.detections)==i+1)
+            else:
+                self.active_tracks = load_initial_detections(
+                    tracks=True, every_x_frame=self.every_x_frame, overlap=self.overlap)
+                detections = self.register()
 
-            print(len(detections))
+            check = defaultdict(list)
+            for d in detections:
+                check[d.timestamps[0, 0].item()].append(d)
+            lens = list()
+            for k in sorted(check.keys()):
+                lens.append(len(check[k]))
 
             for det in detections:
                 det = det.final_detection()
@@ -748,7 +777,6 @@ class Tracker3D():
                         det.num_interior,
                         det.log_id]
                     track_vals.append(values)
-        print(len(track_vals))
                     
         track_vals = np.asarray(track_vals)
 
@@ -778,21 +806,21 @@ class Tracker3D():
         logger.info(f'wrote {write_path}')
         return True
 
-    def register(self):
+    def register(self, max_interior_thresh=50):
         detections = list()
         init_R = torch.tensor([[[1, 0, 0], [0, 1, 0], [0, 0, 1]]]).float().cuda()
         init_s = torch.tensor([1]).float().cuda()
-        for i, track in enumerate(self.active_tracks):
+        for j, track in enumerate(self.active_tracks):
             track_dets = list()
             # we start from timestep with most points and then go
             # from max -> end -> start -> max
-            max_interior = torch.argmax(torch.tensor([d.num_interior for d in track.detections])).item()
-            start_in_t0 = torch.atleast_2d(track._get_canonical_points(i=max_interior))
-            print(f"Track: {i}/{len(self.active_tracks)}, Max Interior: {max_interior}, Len: {len(track)}")
-            if len(track) > 1 and max_interior > 5:
-                max_to_end = range(max_interior, len(track)-1)
+            max_interior_idx = torch.argmax(torch.tensor([d.num_interior for d in track.detections])).item()
+            max_interior = torch.max(torch.tensor([d.num_interior for d in track.detections])).item()
+            start_in_t0 = torch.atleast_2d(track._get_canonical_points(i=max_interior_idx))
+            if len(track) > 1 and max_interior > max_interior_thresh:
+                max_to_end = range(max_interior_idx, len(track)-1)
                 end_to_start = range(len(track)-1, 0, -1)
-                start_to_max = range(0, max_interior)
+                start_to_max = range(0, max_interior_idx)
                 iterators = [max_to_end, end_to_start, start_to_max]
                 increment = [+1, -1, +1]
 
@@ -806,8 +834,14 @@ class Tracker3D():
                         t0 = track.detections[i].timestamps[0, 0].item()
                         t1 = track.detections[i+increment].timestamps[0, 0].item()
                         start_in_t1 = track._convert_time(t0, t1, self.av2_loader, start_in_t0)
+                        # start_in_t1 = start_in_t0
                         trans0_in_t1 = (start_in_t1.min(axis=0).values + start_in_t1.max(axis=0).values)/2
                         
+                        # get canconcial points at t
+                        cano0_in_t0 = torch.atleast_2d(track._get_canonical_points(i=i))
+                        cano0_in_t1 = track._convert_time(t0, t1, self.av2_loader, cano0_in_t0)
+                        # trans0_in_t1 = (cano0_in_t1.min(axis=0).values + cano0_in_t1.max(axis=0).values)/2
+
                         # get canonical poitns at t+increment
                         cano1_in_t1 = torch.atleast_2d(track._get_canonical_points(i=i+increment))
                         trans1_in_t1 = (cano1_in_t1.min(axis=0).values + cano1_in_t1.max(axis=0).values)/2
@@ -818,17 +852,33 @@ class Tracker3D():
                         init = pytorch3d.ops.points_alignment.SimilarityTransform(
                             R=init_R, T=init_T, s=init_s)
 
-                        if num_interior > 5:
+                        if num_interior > max_interior_thresh*0.5 and num_interior > 40:
                             # ICP
                             ICPSolution = pytorch3d.ops.points_alignment.iterative_closest_point(
                                 start_in_t1.float().cuda().unsqueeze(0),
                                 cano1_in_t1.float().cuda().unsqueeze(0),
                                 init_transform=init)
+
+                            ### force rotation around z-axis
+                            # ICPSolution.RTs.R[:, 0, 2] = 0
+                            # ICPSolution.RTs.R[:, 1, 2] = 0
+                            # ICPSolution.RTs.R[:, 2, 2] = 1
+                            # ICPSolution.RTs.R[:, 2, 0] = 0
+                            # ICPSolution.RTs.R[:, 2, 1] = 0
+                            # start_registered = pytorch3d.ops.points_alignment._apply_similarity_transform(
+                            #     start_in_t1.cuda().float().unsqueeze(0),
+                            #     ICPSolution.RTs.R,
+                            #     ICPSolution.RTs.T,
+                            #     ICPSolution.RTs.s).squeeze().cpu()
+
+                            ### use registered solution, could be some rotation around z-axis
                             start_registered = torch.atleast_2d(ICPSolution.Xt.cpu().squeeze())
+
+                            # store for later
                             if SimilarityTransforms[i+increment] is None:
                                 SimilarityTransforms[i+increment] = ICPSolution.RTs
                         else:
-                            # if point cloud small just use distance as transform and assume no rotation
+                            '''# if point cloud small just use distance as transform and assume no rotation
                             start_registered = pytorch3d.ops.points_alignment._apply_similarity_transform(
                                     start_in_t1.cuda().float().unsqueeze(0),
                                     init.R,
@@ -836,51 +886,75 @@ class Tracker3D():
                                     init.s).squeeze()
                             start_registered = torch.atleast_2d(start_in_t0.cpu().squeeze())
                             if SimilarityTransforms[i+increment] is None:
-                                SimilarityTransforms[i+increment] = init
+                                SimilarityTransforms[i+increment] = init'''
+                            pass
                         
                         # concatenate cano points at t+increment and registered points as
                         # point cloud for next timestamp / final point cloud
-                        start_in_t0 = torch.cat([start_registered, cano1_in_t1])
+                        start_in_t0 = start_registered # torch.cat([start_registered, cano1_in_t1])
 
                 max_interior_pc = start_in_t0
                 mins, maxs = max_interior_pc.min(axis=0).values, max_interior_pc.max(axis=0).values
                 lwh = maxs - mins
                 translation = (maxs + mins)/2
+                num_interior = max_interior_pc.shape[0]
                 
                 # setting last detection
-                track.detections[max_interior].lwh = lwh
-                track.detections[max_interior].translation = translation
-                track.detections[max_interior].num_interior = max_interior
-                track_dets.append(track.detections[max_interior])
+                track.detections[max_interior_idx].lwh = lwh
+                track.detections[max_interior_idx].translation = translation
+                track.detections[max_interior_idx].num_interior = num_interior
+                track_dets.append(track.detections[max_interior_idx])
 
                 # Iterating from max -> end and max -> start
-                max_to_end = range(max_interior, len(track)-1)
-                max_to_start = range(max_interior, 0, -1)
+                max_to_end = range(max_interior_idx, len(track)-1)
+                max_to_start = range(max_interior_idx, 0, -1)
                 iterators = [max_to_end, max_to_start]
                 increment = [+1, -1]
                 for iterator, increment in zip(iterators, increment):
                     start_in_t0 = max_interior_pc
                     for i in iterator:
+                        cano1_in_t1 = torch.atleast_2d(track._get_canonical_points(i=i+increment))
+                        
                         # no registering from pc 
                         # from t0 (i+1) --> t1 (i)
-                        t0 = track.detections[i+increment].timestamps[0, 0].item()
-                        t1 = track.detections[i].timestamps[0, 0].item()
+                        t0 = track.detections[i].timestamps[0, 0].item()
+                        t1 = track.detections[i+increment].timestamps[0, 0].item()
                         start_in_t1 = track._convert_time(t0, t1, self.av2_loader, start_in_t0.cpu())
 
-                        # apply stored similarity transform
-                        start_in_t0 = pytorch3d.ops.points_alignment._apply_similarity_transform(
-                            start_in_t1.cuda().float().unsqueeze(0),
-                            SimilarityTransforms[i+increment].R,
-                            SimilarityTransforms[i+increment].T,
-                            SimilarityTransforms[i+increment].s).squeeze()
-                        start_in_t0 = torch.atleast_2d(start_in_t0)
+                        if SimilarityTransforms[i+increment] is not None:
+                            # apply stored similarity transform
+                            start_in_t1_trans = pytorch3d.ops.points_alignment._apply_similarity_transform(
+                                start_in_t1.cuda().float().unsqueeze(0),
+                                SimilarityTransforms[i+increment].R,
+                                SimilarityTransforms[i+increment].T,
+                                SimilarityTransforms[i+increment].s).squeeze()
+                            start_in_t1_trans = torch.atleast_2d(start_in_t1_trans)
+                            # plt.plot(start_in_t1[:, 0].cpu(), start_in_t1[:, 1].cpu(), c='green')
+                            # plt.plot(start_in_t1_trans[:, 0].cpu(), start_in_t1_trans[:, 1].cpu(), c='blue')
+                            # plt.plot(cano1_in_t1[:, 0], cano1_in_t1[:, 1], c='red')
+                            # plt.savefig(f'{j}_{max_interior_idx}_{i+increment}.jpg')
+                            # plt.close()
+                            os.makedirs("../../../registration", exist_ok=True)
+                            np.savez(
+                                os.path.join(f"../../../registration/{j}_{max_interior_idx}_{i+increment}.npz"),
+                                cano1_in_t1=cano1_in_t1.cpu().numpy(),
+                                start_in_t1_trans=start_in_t1_trans.cpu().numpy(),
+                                start_in_t1=start_in_t1.cpu().numpy(), #[p.cpu().numpy() for p in pc_orig],
+                            )
+                        else:
+                            start_in_t1_trans = torch.atleast_2d(track._get_canonical_points(i=i+increment))
 
                         # get bounding box from registered
-                        mins, maxs = start_in_t0.min(axis=0).values, start_in_t0.max(axis=0).values
+                        mins_prev, maxs_prev = cano1_in_t1.min(axis=0).values, cano1_in_t1.max(axis=0).values
+                        mins, maxs = start_in_t1_trans.min(axis=0).values, start_in_t1_trans.max(axis=0).values
+                        mins[2] = mins_prev[2]
+                        maxs[2] = maxs_prev[2]
+
                         track.detections[i+increment].translation = (maxs + mins)/2
                         track.detections[i+increment].lwh = maxs - mins
-                        track.detections[i+increment].num_interior = max_interior
+                        track.detections[i+increment].num_interior = num_interior
                         track_dets.append(track.detections[i+increment])
+                        start_in_t0 = start_in_t1_trans
             else:
                 for i in range(len(track.detections)):
                     points = track._get_canonical_points(i=i)
@@ -893,9 +967,7 @@ class Tracker3D():
                     track.detections[i].translation = translation
                     track_dets.append(track.detections[i])
 
-            print('inter', len(track_dets))
             detections.extend(track_dets)
-        print(len(detections))
         return detections
 
 
@@ -1038,6 +1110,8 @@ class InitialDetection():
         self.track_id = 0
         self.lwh = None
         self.translation = None
+        self.lwh, self.translation = get_center_and_lwh(
+            self.canonical_points, self.lwh, self.translation)
     
     def _get_traj(self):
         traj = self.trajectory[:, 1:self.overlap+1]
@@ -1066,7 +1140,7 @@ class InitialDetection():
         mean_flow = (self.trajectory[:, 1, :] - self.trajectory[:, 0, :]).mean(dim=0)
         alpha = torch.arctan(mean_flow[1]/mean_flow[0])
         rot = torch.tensor([
-            [torch.cos(alpha), torch.sin(alpha), 0],
+            [torch.cos(alpha), -torch.sin(alpha), 0],
             [torch.sin(alpha), torch.cos(alpha), 0],
             [0, 0, 1]])
         self.final = Detection(rot, alpha, translation, lwh, self.timestamps[0, 0], self.log_id, self.num_interior)
@@ -1099,3 +1173,71 @@ class Detection():
 
 
 
+def store_initial_detections(detections, tracks=False):
+    if not tracks:
+        p = '/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/initial_dets'
+    else:
+        p = '/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/initial_tracks'
+    
+    os.makedirs(p, exist_ok=True)
+    
+    if tracks:
+        extracted_detections = dict()
+        for t in detections:
+            extracted_detections[t.track_id] = t.detections
+        detections =  extracted_detections
+    else:
+        detections = {k.item(): v for k, v in detections.items()}
+        
+    for _, t in enumerate(detections):
+        for j, d in enumerate(detections[t]):
+            np.savez(
+                os.path.join(p, str(t) + '_' + str(j) + '.npz'),
+                trajectory=d.trajectory.numpy(),
+                canonical_points=d.canonical_points.numpy(),
+                timestamps=d.timestamps.numpy(),
+                log_id=d.log_id,
+                num_interior=d.num_interior,
+                overlap=d.overlap,
+                gt_id=d.gt_id,
+                length=d.length,
+                track_id=d.track_id,
+            )
+    print(f'Stored {tracks}.....')
+
+def load_initial_detections(tracks=False, every_x_frame=1, overlap=1):
+    if not tracks:
+        p = '/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/initial_dets'
+    else:
+        p = '/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/initial_tracks'
+    
+    detections = defaultdict(list)
+    for d in os.listdir(p):
+        dict_key = int(d.split('_')[0])
+        d = np.load(os.path.join(p, d))
+        d = InitialDetection(
+            torch.from_numpy(d['trajectory']), 
+            torch.from_numpy(d['canonical_points']), 
+            torch.from_numpy(d['timestamps']),
+            d['log_id'].item(),
+            d['num_interior'].item(),
+            d['overlap'].item(),
+            d['gt_id'].item()
+        )
+        if not tracks:
+            detections[d.timestamps[0, 0].item()].append(d)
+        else:
+            detections[dict_key].append(d)
+    
+    if tracks:
+        tracks = list()
+        for track_id, dets in detections.items():
+            for i, d in enumerate(dets):
+                if i == 0:
+                    t = Track(d, track_id, every_x_frame, overlap)
+                else:
+                    t.add_detection(d)
+            tracks.append(t)
+        detections = tracks
+
+    return detections

@@ -83,12 +83,12 @@ def load_model(cfg, checkpoints_dir, logger, rank=0):
         criterion = criterion(**cfg.models.loss_hyperparams, rank=rank).to(rank)
 
         if cfg.models.model_name != 'SimpleGraph':
-            # node = '_NS' if cfg.models.hyperparams.use_node_score else ''
+            node = '_NS' if cfg.models.hyperparams.use_node_score else ''
             # cluster = '_' + cfg.models.hyperparams.clustering
-            # my_graph = f"_MG_{cfg.models.hyperparams.k}_{cfg.models.hyperparams.r}" if cfg.models.hyperparams.my_graph else f'_TG_{cfg.models.hyperparams.k}_{cfg.models.hyperparams.r}'
+            my_graph = f"_MG_{cfg.models.hyperparams.k}_{cfg.models.hyperparams.r}" if cfg.models.hyperparams.my_graph else f'_TG_{cfg.models.hyperparams.k}_{cfg.models.hyperparams.r}'
 
             # name = cfg.models.hyperparams.graph_construction + '_' + cfg.models.hyperparams.edge_attr + "_" + cfg.models.hyperparams.node_attr + node + my_graph # + cluster
-            name = ''
+            name = node + my_graph # + cluster
             name = f'{cfg.data.num_points_eval}' + "_" + name if not cfg.data.use_all_points_eval else name
             name = f'{cfg.data.num_points}' + "_" + name if not cfg.data.use_all_points else name
             name = f'{cfg.training.optim.base_lr}' + "_" + name
@@ -181,7 +181,7 @@ def main(cfg):
     if cfg.training.hypersearch:
         params_list = sample_params()
 
-    for iter in range(30):
+    for iter in range(1):
         if cfg.training.hypersearch:
             cfg.training.optim.base_lr = params_list[iter]['lr']
             cfg.training.optim.weight_decay = params_list[iter]['weight_decay']
@@ -413,7 +413,8 @@ def train(rank, cfg, world_size):
                 overlap=cfg.tracker_options.overlap,
                 av2_loader=val_data.loader,
                 rank=rank,
-                do_associate=cfg.tracker_options.do_associate)
+                do_associate=cfg.tracker_options.do_associate,
+                precomp_tracks=cfg.tracker_options.precomp_tracks)
 
             with torch.no_grad():
                 if is_neural_net:
@@ -453,6 +454,12 @@ def train(rank, cfg, world_size):
                             data.log_id[g],
                             data['point_instances'][batch_idx[g]:batch_idx[g+1]],
                             last= i+1 == len(val_loader) and g+1 == len(all_clusters))
+
+                        if cfg.tracker_options.precomp_tracks:
+                            break
+
+                    if cfg.tracker_options.precomp_tracks:
+                            break
 
                     if is_neural_net and logits[0] is not None:
                         loss, log_dict = criterion(logits, data, edge_index, rank, mode='eval')

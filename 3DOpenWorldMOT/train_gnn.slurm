@@ -18,6 +18,7 @@ HYDRA_FULL_ERROR=1 python3 trainer.py \
 	models.hyperparams.graph_construction=pos\
 	models.hyperparams.k=32 \
 	models.hyperparams.k_eval=32 \
+	models.weight_path='../../../4449931-1/checkpoints/gt_all_egocomp_margin0.6_width25_nooracle_4096_8000_mean_dist_over_time_min_mean_max_diffpostrajtime_min_mean_max_vel_nodescore_correlation_mygraph/best_model.pth'\
 	wandb=False \
 	models.loss_hyperparams.node_loss=True \
 	models.hyperparams.use_node_score=True \
@@ -29,7 +30,7 @@ HYDRA_FULL_ERROR=1 python3 trainer.py \
 	data.num_points_eval=8000\
 	training.batch_size=8 \
 	data.debug=False \
-	just_eval=False \
+	just_eval=True \
 	models.hyperparams.oracle_node=False \
 	models.hyperparams.oracle_edge=False
 
