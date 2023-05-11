@@ -491,7 +491,7 @@ class ClusterGNN(MessagePassing):
                         torch.logical_and(edge_index[0] >= start, edge_index[1] < end),
                         torch.logical_and(edge_index[1] >= start, edge_index[0] < end))
                     graph_edge_index = edge_index[:, edge_mask]
-                    # graph_edge_index = graph_edge_index - start
+                    graph_edge_index = graph_edge_index - start
                     graph_node_score = _node_score[start:end]
                     graph_edge_score = _score[edge_mask]
 
@@ -597,8 +597,8 @@ class ClusterGNN(MessagePassing):
                     edges = set(
                         graph_edge_index.cpu().numpy()[0, :].tolist() +
                         graph_edge_index.cpu().numpy()[1, :].tolist())
-                    # diff = set(list(range(end.item()-start.item()))).difference(edges)
-                    diff = set(list(range(start.item(), end.item()))).difference(edges)
+                    diff = set(list(range(end.item()-start.item()))).difference(edges)
+                    # diff = set(list(range(start.item(), end.item()))).difference(edges)
 
                     if len(diff):
                         _edge_index = torch.tensor([[d, 0] for d in diff]).T
@@ -607,7 +607,7 @@ class ClusterGNN(MessagePassing):
                     else:
                         _edge_index = graph_edge_index
 
-                    _edge_index = _edge_index - start.item()
+                    # _edge_index = _edge_index - start.item()
                     try:
                         rama_out = rama_py.rama_cuda(
                             [e[0] for e in _edge_index.T.cpu().numpy()],
@@ -755,9 +755,7 @@ class GNNLoss(nn.Module):
             edge_weight=1,
             node_weight=1,
             ignore_stat_edges=0,
-            ignore_stat_nodes=0,
-            use_stat_and_mov_edges=1,
-            use_stat_and_mov_nodes=1) -> None:
+            ignore_stat_nodes=0) -> None:
         super().__init__()
         
         self.bce_loss = bce_loss
@@ -774,8 +772,6 @@ class GNNLoss(nn.Module):
         self.rank = rank
         self.ignore_stat_edges = ignore_stat_edges
         self.ignore_stat_nodes = ignore_stat_nodes
-        self.use_stat_and_mov_edges = use_stat_and_mov_edges
-        self.use_stat_and_mov_nodes = use_stat_and_mov_nodes
         self.sigmoid = torch.nn.Sigmoid()
 
         if not self.focal_loss_node:
@@ -797,14 +793,11 @@ class GNNLoss(nn.Module):
         same_graph = data['batch'].unsqueeze(0) == data['batch'].unsqueeze(0).T
         
         if self.bce_loss:
-            # if using moving and static edges add static edges
-            if self.use_stat_and_mov_edges:
-                data.point_instances_stat[data.point_instances_stat != 0] += torch.max(data.point_instances)
-                data.point_instances[data.point_instances == 0] = data.point_instances_stat[data.point_instances == 0]
+            point_instances = data.point_instances
 
             # get bool edge mask
-            point_instances = data.point_instances.unsqueeze(
-                0) == data.point_instances.unsqueeze(0).T
+            point_instances = point_instances.unsqueeze(
+                0) == point_instances.unsqueeze(0).T
 
             # keep only edges that belong to same graph (for batching opteration)
             point_instances = torch.logical_and(point_instances, same_graph)
@@ -812,6 +805,9 @@ class GNNLoss(nn.Module):
             # setting edges that do not belong to object to zero
             # --> instance 0 is no object
             point_instances[data.point_instances == 0, :] = False
+            point_instances[:, data.point_instances == 0] = False
+
+            # sample edges
             point_instances = point_instances.to(self.rank)
             edge_index = edge_index.to(self.rank)
             point_instances = point_instances[
@@ -819,6 +815,12 @@ class GNNLoss(nn.Module):
             
             # if ignoring predictions for static edges in loss, get static edge filter
             if self.ignore_stat_edges:
+                static = torch.logical_and(
+                    ~data.point_instances_mov != 0, data.point_instances != 0)
+                point_instances_stat = torch.logical_or(
+                    static[edge_index[0, :]], static[edge_index[1, :]])
+
+                '''
                 # get bool edge mask
                 point_instances_stat = data.point_instances_stat.unsqueeze(
                     0) == data.point_instances_stat.unsqueeze(0).T
@@ -828,9 +830,9 @@ class GNNLoss(nn.Module):
                 # --> instance 0 is no object
                 point_instances_stat[data.point_instances_stat == 0, :] = False
                 point_instances_stat = point_instances_stat.to(self.rank)
-                edge_index = edge_index.to(self.rank)
                 point_instances_stat = point_instances_stat[
-                    edge_index[0, :], edge_index[1, :]].type(torch.FloatTensor).to(self.rank)
+                    edge_index[0, :], edge_index[1, :]].to(self.rank)
+                '''
 
                 # filter edge logits and point instances
                 edge_logits = edge_logits[~point_instances_stat]
@@ -872,18 +874,13 @@ class GNNLoss(nn.Module):
         if self.node_loss:
             # get if point is object
             is_object = data.point_instances != 0
-
-            # if use static nodes also for loss computation add them
-            if self.use_stat_and_mov_nodes:
-                is_object_stat = data.point_instances_stat != 0
-                is_object = torch.logical_or(is_object, is_object_stat)
-
             is_object = is_object.type(torch.FloatTensor).to(self.rank)
             
             # if ignoring static nodes for loss computation get filter
             if self.ignore_stat_nodes:
-                is_object_stat = data.point_instances != 0
-                is_object_stat = is_object.type(torch.FloatTensor).to(self.rank)
+                is_object_stat = torch.logical_and(
+                    ~data.point_instances_mov != 0, data.point_instances != 0)
+                is_object_stat = is_object_stat.to(self.rank)
 
                 # filter logits and object ground truth
                 is_object = is_object[~is_object_stat]
