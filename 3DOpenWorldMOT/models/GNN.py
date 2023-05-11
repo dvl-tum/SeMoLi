@@ -491,7 +491,7 @@ class ClusterGNN(MessagePassing):
                         torch.logical_and(edge_index[0] >= start, edge_index[1] < end),
                         torch.logical_and(edge_index[1] >= start, edge_index[0] < end))
                     graph_edge_index = edge_index[:, edge_mask]
-                    graph_edge_index = graph_edge_index - start
+                    # graph_edge_index = graph_edge_index - start
                     graph_node_score = _node_score[start:end]
                     graph_edge_score = _score[edge_mask]
 
@@ -597,16 +597,17 @@ class ClusterGNN(MessagePassing):
                     edges = set(
                         graph_edge_index.cpu().numpy()[0, :].tolist() +
                         graph_edge_index.cpu().numpy()[1, :].tolist())
-                    diff = set(list(range(end.item()-start.item()))).difference(edges)
+                    # diff = set(list(range(end.item()-start.item()))).difference(edges)
+                    diff = set(list(range(start.item(), end.item()))).difference(edges)
 
                     if len(diff):
-                        _edge_index = torch.tensor([[d, d] for d in diff]).T
+                        _edge_index = torch.tensor([[d, 0] for d in diff]).T
                         _edge_index = torch.cat([graph_edge_index.T, _edge_index.to(self.rank).T]).T
                         graph_edge_score = torch.cat([graph_edge_score, torch.tensor([0]*len(diff)).to(self.rank).unsqueeze(1)])
                     else:
                         _edge_index = graph_edge_index
 
-                    # _edge_index = _edge_index - start.item()
+                    _edge_index = _edge_index - start.item()
                     try:
                         rama_out = rama_py.rama_cuda(
                             [e[0] for e in _edge_index.T.cpu().numpy()],
@@ -799,7 +800,7 @@ class GNNLoss(nn.Module):
             # if using moving and static edges add static edges
             if self.use_stat_and_mov_edges:
                 data.point_instances_stat[data.point_instances_stat != 0] += torch.max(data.point_instances)
-                data.point_instances += data.point_instances_stat
+                data.point_instances[data.point_instances == 0] = data.point_instances_stat[data.point_instances == 0]
 
             # get bool edge mask
             point_instances = data.point_instances.unsqueeze(
