@@ -484,22 +484,6 @@ class TrajectoryDataset(PyGDataset):
             point_categories_mov=torch.atleast_2d(torch.from_numpy(point_categories_mov).squeeze())
             point_instances_mov=torch.atleast_2d(torch.from_numpy(point_instances_mov).squeeze())
 
-
-            '''
-            if self.split != 'train':
-                # Fitler rubbish
-                import sklearn.cluster
-                dbscan = sklearn.cluster.DBSCAN(min_samples=10, eps=1)
-                clustering = dbscan.fit(pc_list)
-                labels = clustering.labels_
-                labels = labels != -1
-                pc_list = pc_list[labels]
-                traj = traj[labels]
-                point_categories = point_categories[:, labels]
-                point_instances = point_instances[:, labels]
-                # pc_normals = pc_normals[labels]
-            '''
-
             # putting it all together
             data = PyGData(
                 pc_list=torch.from_numpy(pc_list),
@@ -557,8 +541,8 @@ class TrajectoryDataset(PyGDataset):
         data['point_instances'] = data['point_instances'].squeeze()[mean_traj]
         data['point_categories'] = data['point_categories'].squeeze()[mean_traj]
         if 'point_categories_mov' in data.keys:
-            data['point_instances'] = data['point_instances_mov'].squeeze()[mean_traj]
-            data['point_categories'] = data['point_categories_mov'].squeeze()[mean_traj]
+            data['point_instances_mov'] = data['point_instances_mov'].squeeze()[mean_traj]
+            data['point_categories_mov'] = data['point_categories_mov'].squeeze()[mean_traj]
         data['empty'] = empty
         
         return data
