@@ -390,8 +390,6 @@ class TrajectoryDataset(PyGDataset):
             filtered_file_path = '/dvlresearch/jenny/Waymo_Converted_filtered_val/val_1.0_per_frame_remove_non_move_remove_far_filtered_version.feather'
             labels_mov = self.loader.get_labels_at_lidar_timestamp_all(
                 filtered_file_path, log_id=seq, lidar_timestamp_ns=int(timestamps[0]), get_moving=True)
-            labels_stat = self.loader.get_labels_at_lidar_timestamp_all(
-                filtered_file_path, log_id=seq, lidar_timestamp_ns=int(timestamps[0]), get_moving=False)
             
             if self.margin and 'argo' in self.data_dir:
                 for label in labels:
@@ -419,7 +417,41 @@ class TrajectoryDataset(PyGDataset):
                 all_centroids = np.asarray([label.dst_SE3_object.translation for label in labels])[:, -1]
                 ind = np.where(all_centroids <= 4)[0]
                 labels = [labels[i] for i in ind]
+            
+            # ALL
+            # get per point and object masks and bounding boxs and their labels 
+            masks = list()
+            for label in labels:
+                interior = point_cloud_handling.compute_interior_points_mask(
+                        pc_list, label.vertices_m)
+                int_label = self.class_dict[label.category] if 'argo' in self.data_dir else int(label.category)
+                interior = interior.astype(int) * int_label
+                masks.append(interior)
 
+            if len(labels) == 0:
+                masks.append(np.zeros(pc_list.shape[0]))
+            
+            masks = np.asarray(masks).T
+        
+            # assign unique label and instance to each point
+            # label 0 and instance 0 is background
+            point_categories = list()
+            point_instances = list()
+            for j in range(masks.shape[0]):
+                if np.where(masks[j]>0)[0].shape[0] != 0:
+                    point_categories.append(masks[j, np.where(masks[j]>0)[0][0]])
+                    point_instances.append(np.where(masks[j]>0)[0][0]+1)
+                else:
+                    point_categories.append(0)
+                    point_instances.append(0)
+
+            point_instances = np.asarray(point_instances, dtype=np.int64)
+            point_categories = np.asarray(point_categories, dtype=np.int64)
+
+            point_categories=torch.atleast_2d(torch.from_numpy(point_categories).squeeze())
+            point_instances=torch.atleast_2d(torch.from_numpy(point_instances).squeeze())
+
+            # ONLY MOVING
             # get per point and object masks and bounding boxs and their labels 
             masks = list()
             for label in labels_mov:
@@ -429,61 +461,29 @@ class TrajectoryDataset(PyGDataset):
                 interior = interior.astype(int) * int_label
                 masks.append(interior)
 
-            if len(labels) == 0:
+            if len(labels_mov) == 0:
                 masks.append(np.zeros(pc_list.shape[0]))
             
             masks = np.asarray(masks).T
         
             # assign unique label and instance to each point
             # label 0 and instance 0 is background
-            point_categories = list()
-            point_instances = list()
+            point_categories_mov = list()
+            point_instances_mov = list()
             for j in range(masks.shape[0]):
                 if np.where(masks[j]>0)[0].shape[0] != 0:
-                    point_categories.append(masks[j, np.where(masks[j]>0)[0][0]])
-                    point_instances.append(np.where(masks[j]>0)[0][0]+1)
+                    point_categories_mov.append(masks[j, np.where(masks[j]>0)[0][0]])
+                    point_instances_mov.append(np.where(masks[j]>0)[0][0]+1)
                 else:
-                    point_categories.append(0)
-                    point_instances.append(0)
+                    point_categories_mov.append(0)
+                    point_instances_mov.append(0)
 
-            point_instances = np.asarray(point_instances, dtype=np.int64)
-            point_categories = np.asarray(point_categories, dtype=np.int64)
+            point_instances_mov = np.asarray(point_instances_mov, dtype=np.int64)
+            point_categories_mov = np.asarray(point_categories_mov, dtype=np.int64)
 
-            point_categories_mov=torch.atleast_2d(torch.from_numpy(point_categories).squeeze())
-            point_instances_mov=torch.atleast_2d(torch.from_numpy(point_instances).squeeze())
+            point_categories_mov=torch.atleast_2d(torch.from_numpy(point_categories_mov).squeeze())
+            point_instances_mov=torch.atleast_2d(torch.from_numpy(point_instances_mov).squeeze())
 
-            # STATIC
-            # get per point and object masks and bounding boxs and their labels 
-            masks = list()
-            for label in labels_stat:
-                interior = point_cloud_handling.compute_interior_points_mask(
-                        pc_list, label.vertices_m)
-                int_label = self.class_dict[label.category] if 'argo' in self.data_dir else int(label.category)
-                interior = interior.astype(int) * int_label
-                masks.append(interior)
-
-            if len(labels) == 0:
-                masks.append(np.zeros(pc_list.shape[0]))
-            
-            masks = np.asarray(masks).T
-        
-            # assign unique label and instance to each point
-            # label 0 and instance 0 is background
-            point_categories = list()
-            point_instances = list()
-            for j in range(masks.shape[0]):
-                if np.where(masks[j]>0)[0].shape[0] != 0:
-                    point_categories.append(masks[j, np.where(masks[j]>0)[0][0]])
-                    point_instances.append(np.where(masks[j]>0)[0][0]+1)
-                else:
-                    point_categories.append(0)
-                    point_instances.append(0)
-
-            point_instances = np.asarray(point_instances, dtype=np.int64)
-            point_categories = np.asarray(point_categories, dtype=np.int64)
-
-            point_categories_stat=torch.atleast_2d(torch.from_numpy(point_categories).squeeze())
-            point_instances_stat=torch.atleast_2d(torch.from_numpy(point_instances).squeeze())
 
             '''
             if self.split != 'train':
@@ -505,10 +505,10 @@ class TrajectoryDataset(PyGDataset):
                 pc_list=torch.from_numpy(pc_list),
                 traj=torch.from_numpy(traj),
                 timestamps=torch.from_numpy(timestamps),
-                point_categories=point_categories_mov,
-                point_instances=point_instances_mov,
-                point_categories_stat=point_categories_stat,
-                point_instances_stat=point_instances_stat,
+                point_categories_mov=point_categories_mov,
+                point_instances_mov=point_instances_mov,
+                point_categories=point_categories,
+                point_instances=point_instances,
                 log_id=seq,
                 pc_normals=pc_normals)
         else:
@@ -556,10 +556,11 @@ class TrajectoryDataset(PyGDataset):
         
         data['point_instances'] = data['point_instances'].squeeze()[mean_traj]
         data['point_categories'] = data['point_categories'].squeeze()[mean_traj]
-        data['point_instances'] = data['point_instances_stat'].squeeze()[mean_traj]
-        data['point_categories'] = data['point_categories_stat'].squeeze()[mean_traj]
+        if 'point_categories_mov' in data.keys:
+            data['point_instances'] = data['point_instances_mov'].squeeze()[mean_traj]
+            data['point_categories'] = data['point_categories_mov'].squeeze()[mean_traj]
         data['empty'] = empty
-
+        
         return data
 
     def get(self, idx):
@@ -575,8 +576,9 @@ class TrajectoryDataset(PyGDataset):
         else:
             data['point_categories'] = data['point_categories'].squeeze()
             data['point_instances'] = data['point_instances'].squeeze()
-            data['point_categories_stat'] = data['point_categories_stat'].squeeze()
-            data['point_instances_stat'] = data['point_instances_stat'].squeeze()
+            if 'point_categories_mov' in data.keys:
+                data['point_categories_mov'] = data['point_categories_mov'].squeeze()
+                data['point_instances_mov'] = data['point_instances_mov'].squeeze()
 
         # if you always want same number of points (during training), sample/re-sample
         if not self.use_all_points and data['traj'].shape[0] > self.num_points:
@@ -588,8 +590,9 @@ class TrajectoryDataset(PyGDataset):
             data['traj'] = data['traj'][idxs]
             data['point_categories'] = data['point_categories'][idxs]
             data['point_instances'] = data['point_instances'][idxs]
-            data['point_categories_stat'] = data['point_categories_stat'][idxs]
-            data['point_instances_stat'] = data['point_instances_stat'][idxs]
+            if 'point_categories_mov' in data.keys:
+                data['point_categories_mov'] = data['point_categories_mov'][idxs]
+                data['point_instances_mov'] = data['point_instances_mov'][idxs]
 
         if 'empty' not in data.keys:
             if data['pc_list'].shape[0] == 0:

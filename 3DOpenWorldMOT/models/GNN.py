@@ -491,7 +491,7 @@ class ClusterGNN(MessagePassing):
                         torch.logical_and(edge_index[0] >= start, edge_index[1] < end),
                         torch.logical_and(edge_index[1] >= start, edge_index[0] < end))
                     graph_edge_index = edge_index[:, edge_mask]
-                    graph_edge_index = graph_edge_index - start
+                    # graph_edge_index = graph_edge_index - start
                     graph_node_score = _node_score[start:end]
                     graph_edge_score = _score[edge_mask]
 
@@ -597,8 +597,8 @@ class ClusterGNN(MessagePassing):
                     edges = set(
                         graph_edge_index.cpu().numpy()[0, :].tolist() +
                         graph_edge_index.cpu().numpy()[1, :].tolist())
-                    diff = set(list(range(end.item()-start.item()))).difference(edges)
-                    # diff = set(list(range(start.item(), end.item()))).difference(edges)
+                    # diff = set(list(range(end.item()-start.item()))).difference(edges)
+                    diff = set(list(range(start.item(), end.item()))).difference(edges)
 
                     if len(diff):
                         _edge_index = torch.tensor([[d, 0] for d in diff]).T
@@ -607,7 +607,7 @@ class ClusterGNN(MessagePassing):
                     else:
                         _edge_index = graph_edge_index
 
-                    # _edge_index = _edge_index - start.item()
+                    _edge_index = _edge_index - start.item()
                     try:
                         rama_out = rama_py.rama_cuda(
                             [e[0] for e in _edge_index.T.cpu().numpy()],
@@ -805,7 +805,7 @@ class GNNLoss(nn.Module):
             # setting edges that do not belong to object to zero
             # --> instance 0 is no object
             point_instances[data.point_instances == 0, :] = False
-            point_instances[:, data.point_instances == 0] = False
+            # point_instances[:, data.point_instances == 0] = False
 
             # sample edges
             point_instances = point_instances.to(self.rank)
@@ -819,20 +819,6 @@ class GNNLoss(nn.Module):
                     ~data.point_instances_mov != 0, data.point_instances != 0)
                 point_instances_stat = torch.logical_or(
                     static[edge_index[0, :]], static[edge_index[1, :]])
-
-                '''
-                # get bool edge mask
-                point_instances_stat = data.point_instances_stat.unsqueeze(
-                    0) == data.point_instances_stat.unsqueeze(0).T
-                # keep only edges that belong to same graph (for batching opteration)
-                point_instances_stat = torch.logical_and(point_instances_stat, same_graph)
-                # setting edges that do not belong to object to zero
-                # --> instance 0 is no object
-                point_instances_stat[data.point_instances_stat == 0, :] = False
-                point_instances_stat = point_instances_stat.to(self.rank)
-                point_instances_stat = point_instances_stat[
-                    edge_index[0, :], edge_index[1, :]].to(self.rank)
-                '''
 
                 # filter edge logits and point instances
                 edge_logits = edge_logits[~point_instances_stat]

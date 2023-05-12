@@ -1,3 +1,5 @@
+checkpoints/
+out/
 slurm*
 *.jpg
 *.png

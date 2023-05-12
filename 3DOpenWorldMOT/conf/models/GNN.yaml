@@ -39,5 +39,3 @@ loss_hyperparams:
     edge_weight: 1
     ignore_stat_edges: 0
     ignore_stat_nodes: 0
-    use_stat_and_mov_edges: 1
-    use_stat_and_mov_nodes: 1
