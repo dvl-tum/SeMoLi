@@ -494,8 +494,8 @@ class ClusterGNN(MessagePassing):
                         graph_edge_score[data['point_instances'][src] <= 0] = 0
                         graph_edge_score[data['point_instances'][dst] <= 0] = 0
                     if self.oracle_node:
-                        graph_node_score[data['point_categories']>0] = 1
-                        graph_node_score[data['point_categories']<=0] = 1
+                        graph_node_score[data['point_categories'][start:end]>0] = 1
+                        graph_node_score[data['point_categories'][start:end]<=0] = 1
 
                     if self.do_visualize:
                         point_instances = data.point_instances[start:end].unsqueeze(
@@ -503,6 +503,7 @@ class ClusterGNN(MessagePassing):
                         # setting edges that do not belong to object to zero
                         # --> instance 0 is no object
                         point_instances[data.point_instances[start:end] == 0, :] = False
+                        point_instances[:, data.point_instances[start:end] == 0] = False
                         point_instances = point_instances.to(self.rank)
                         
                         point_instances = point_instances[
