@@ -498,7 +498,7 @@ class ClusterGNN(MessagePassing):
                         graph_node_score[data['point_categories'][start:end]<=0] = 1
 
                     if self.do_visualize:
-                        point_instances = data.point_instances[start:end].unsqueeze(
+                        '''point_instances = data.point_instances[start:end].unsqueeze(
                             0) == data.point_instances[start:end].unsqueeze(0).T
                         # setting edges that do not belong to object to zero
                         # --> instance 0 is no object
@@ -508,7 +508,12 @@ class ClusterGNN(MessagePassing):
                         
                         point_instances = point_instances[
                             graph_edge_index[0, :], graph_edge_index[1, :]]
-                        gt_edges = graph_edge_index.T[point_instances].T
+                        gt_edges = graph_edge_index.T[point_instances].T'''
+                        gt_edeges = graph_edge_score
+                        gt_edeges[data['point_instances'][src] == data['point_instances'][dst]] = 1
+                        gt_edeges[data['point_instances'][src] != data['point_instances'][dst]] = 0
+                        gt_edeges[data['point_instances'][src] <= 0] = 0
+                        gt_edeges[data['point_instances'][dst] <= 0] = 0
                         gt_clusters = data.point_instances[start:end]
                         gt_clusters = gt_clusters.type(torch.FloatTensor).to(self.rank).cpu().numpy().tolist()
                         # gt_clusters = data.point_categories.cpu().numpy().tolist()
@@ -808,7 +813,7 @@ class GNNLoss(nn.Module):
             # setting edges that do not belong to object to zero
             # --> instance 0 is no object
             point_instances[data.point_instances == 0, :] = False
-            # point_instances[:, data.point_instances == 0] = False
+            point_instances[:, data.point_instances == 0] = False
 
             # sample edges
             point_instances = point_instances.to(self.rank)
