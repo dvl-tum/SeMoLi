@@ -493,9 +493,17 @@ class ClusterGNN(MessagePassing):
                         graph_edge_score[data['point_instances'][src] != data['point_instances'][dst]] = 0
                         graph_edge_score[data['point_instances'][src] <= 0] = 0
                         graph_edge_score[data['point_instances'][dst] <= 0] = 0
+
+                        score[edge_mask][data['point_instances'][src] == data['point_instances'][dst]] = 1
+                        score[edge_mask][data['point_instances'][src] != data['point_instances'][dst]] = -1
+                        score[edge_mask][data['point_instances'][src] <= 0] = -1
+                        score[edge_mask][data['point_instances'][dst] <= 0] = -1
                     if self.oracle_node:
                         graph_node_score[data['point_categories'][start:end]>0] = 1
-                        graph_node_score[data['point_categories'][start:end]<=0] = 1
+                        graph_node_score[data['point_categories'][start:end]<=0] = 0
+
+                        node_score[start:end][data['point_categories'][start:end]>0] = 1
+                        node_score[start:end][data['point_categories'][start:end]<=0] = -1
 
                     if self.do_visualize:
                         '''point_instances = data.point_instances[start:end].unsqueeze(
@@ -509,18 +517,18 @@ class ClusterGNN(MessagePassing):
                         point_instances = point_instances[
                             graph_edge_index[0, :], graph_edge_index[1, :]]
                         gt_edges = graph_edge_index.T[point_instances].T'''
-                        gt_edeges = graph_edge_score
-                        gt_edeges[data['point_instances'][src] == data['point_instances'][dst]] = 1
-                        gt_edeges[data['point_instances'][src] != data['point_instances'][dst]] = 0
-                        gt_edeges[data['point_instances'][src] <= 0] = 0
-                        gt_edeges[data['point_instances'][dst] <= 0] = 0
+                        gt_edges = graph_edge_score
+                        gt_edges[data['point_instances'][src] == data['point_instances'][dst]] = 1
+                        gt_edges[data['point_instances'][src] != data['point_instances'][dst]] = 0
+                        gt_edges[data['point_instances'][src] <= 0] = 0
+                        gt_edges[data['point_instances'][dst] <= 0] = 0
                         gt_clusters = data.point_instances[start:end]
                         gt_clusters = gt_clusters.type(torch.FloatTensor).to(self.rank).cpu().numpy().tolist()
                         # gt_clusters = data.point_categories.cpu().numpy().tolist()
 
                         self.visualize(
                             torch.arange(end.item()-start.item()),
-                            gt_edges,
+                            gt_edges-start.item(),
                             pc[start:end],
                             gt_clusters,
                             data.timestamps[i,0],
