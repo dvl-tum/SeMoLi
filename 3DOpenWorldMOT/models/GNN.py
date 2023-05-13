@@ -385,7 +385,7 @@ class ClusterGNN(MessagePassing):
 
         return edge_index
 
-    def forward(self, data, eval=False, use_edge_att=True, augment=True, name='General'):
+    def forward(self, data, eval=False, use_edge_att=True, augment=False, name='General'):
         '''
         clustering: 'heuristic' / 'correlation'
         '''
@@ -475,14 +475,6 @@ class ClusterGNN(MessagePassing):
         if eval:
             _score = self.sigmoid(score)
             _node_score = self.sigmoid(node_score)
-            if self.oracle_edge:
-                _score[data['point_instances'][src] == data['point_instances'][dst]] = 1
-                _score[data['point_instances'][src] != data['point_instances'][dst]] = 0
-                _score[data['point_instances'][src] <= 0] = 0
-                _score[data['point_instances'][dst] <= 0] = 0
-            if self.oracle_node:
-                _node_score[data['point_categories']>0] = 1
-                _node_score[data['point_categories']<=0] = 1
 
             if self.clustering == 'correlation':
                 all_clusters = list()
@@ -491,9 +483,19 @@ class ClusterGNN(MessagePassing):
                         torch.logical_and(edge_index[0] >= start, edge_index[1] < end),
                         torch.logical_and(edge_index[1] >= start, edge_index[0] < end))
                     graph_edge_index = edge_index[:, edge_mask]
+                    src, dst = graph_edge_index
                     # graph_edge_index = graph_edge_index - start
                     graph_node_score = _node_score[start:end]
                     graph_edge_score = _score[edge_mask]
+
+                    if self.oracle_edge:
+                        graph_edge_score[data['point_instances'][src] == data['point_instances'][dst]] = 1
+                        graph_edge_score[data['point_instances'][src] != data['point_instances'][dst]] = 0
+                        graph_edge_score[data['point_instances'][src] <= 0] = 0
+                        graph_edge_score[data['point_instances'][dst] <= 0] = 0
+                    if self.oracle_node:
+                        graph_node_score[data['point_categories']>0] = 1
+                        graph_node_score[data['point_categories']<=0] = 1
 
                     if self.do_visualize:
                         point_instances = data.point_instances[start:end].unsqueeze(
