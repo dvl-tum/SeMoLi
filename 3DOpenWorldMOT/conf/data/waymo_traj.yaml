@@ -11,7 +11,7 @@ use_all_points_eval: True
 num_points: 4096
 num_points_eval: 4096
 # remove input data
-remove_static: 1
+remove_static: 0
 static_thresh: 1.0
 # remove gt data
 remove_static_gt: 1

@@ -16,6 +16,8 @@ import math
 import sklearn.metrics
 # import torchvision 
 from .losses import sigmoid_focal_loss
+from torch import multiprocessing as mp
+import pickle
 
 
 rgb_colors = {}
@@ -173,6 +175,8 @@ class ClusterGNN(MessagePassing):
             dataset='waymo',
             layer_sizes_edge=None,
             layer_sizes_node=None,
+            ignore_stat_edges=0,
+            ignore_stat_nodes=0,
             rank=0):
         super().__init__(aggr='mean')
         self.k = k
@@ -242,6 +246,8 @@ class ClusterGNN(MessagePassing):
         self.my_graph = my_graph
         self.oracle_node = oracle_node
         self.oracle_edge = oracle_edge
+        self.ignore_stat_edges = ignore_stat_edges
+        self.ignore_stat_nodes = ignore_stat_nodes
         self.dataset = dataset
 
         self.opts = rama_py.multicut_solver_options("PD")
@@ -477,199 +483,21 @@ class ClusterGNN(MessagePassing):
             _node_score = self.sigmoid(node_score)
 
             if self.clustering == 'correlation':
+                multiprocessing = False
+                data_loader = enumerate(zip(batch_idx[:-1], batch_idx[1:]))
+                rama_cuda = rama_py.rama_cuda
                 all_clusters = list()
-                for i, (start, end) in enumerate(zip(batch_idx[:-1], batch_idx[1:])):
-                    edge_mask = torch.logical_or(
-                        torch.logical_and(edge_index[0] >= start, edge_index[1] < end),
-                        torch.logical_and(edge_index[1] >= start, edge_index[0] < end))
-                    graph_edge_index = edge_index[:, edge_mask]
-                    src, dst = graph_edge_index
-                    # graph_edge_index = graph_edge_index - start
-                    graph_node_score = _node_score[start:end]
-                    graph_edge_score = _score[edge_mask]
-
-                    if self.oracle_edge:
-                        graph_edge_score[data['point_instances'][src] == data['point_instances'][dst]] = 1
-                        graph_edge_score[data['point_instances'][src] != data['point_instances'][dst]] = 0
-                        graph_edge_score[data['point_instances'][src] <= 0] = 0
-                        graph_edge_score[data['point_instances'][dst] <= 0] = 0
-
-                        score[edge_mask][data['point_instances'][src] == data['point_instances'][dst]] = 1
-                        score[edge_mask][data['point_instances'][src] != data['point_instances'][dst]] = -1
-                        score[edge_mask][data['point_instances'][src] <= 0] = -1
-                        score[edge_mask][data['point_instances'][dst] <= 0] = -1
-                    if self.oracle_node:
-                        graph_node_score[data['point_categories'][start:end]>0] = 1
-                        graph_node_score[data['point_categories'][start:end]<=0] = 0
-
-                        node_score[start:end][data['point_categories'][start:end]>0] = 1
-                        node_score[start:end][data['point_categories'][start:end]<=0] = -1
-
-                    if self.do_visualize:
-                        '''point_instances = data.point_instances[start:end].unsqueeze(
-                            0) == data.point_instances[start:end].unsqueeze(0).T
-                        # setting edges that do not belong to object to zero
-                        # --> instance 0 is no object
-                        point_instances[data.point_instances[start:end] == 0, :] = False
-                        point_instances[:, data.point_instances[start:end] == 0] = False
-                        point_instances = point_instances.to(self.rank)
-                        
-                        point_instances = point_instances[
-                            graph_edge_index[0, :], graph_edge_index[1, :]]
-                        gt_edges = graph_edge_index.T[point_instances].T'''
-                        gt_edges = graph_edge_score
-                        gt_edges[data['point_instances'][src] == data['point_instances'][dst]] = 1
-                        gt_edges[data['point_instances'][src] != data['point_instances'][dst]] = 0
-                        gt_edges[data['point_instances'][src] <= 0] = 0
-                        gt_edges[data['point_instances'][dst] <= 0] = 0
-                        gt_clusters = data.point_instances[start:end]
-                        gt_clusters = gt_clusters.type(torch.FloatTensor).to(self.rank).cpu().numpy().tolist()
-                        # gt_clusters = data.point_categories.cpu().numpy().tolist()
-
-                        self.visualize(
-                            torch.arange(end.item()-start.item()),
-                            gt_edges-start.item(),
-                            pc[start:end],
-                            gt_clusters,
-                            data.timestamps[i,0],
-                            mode='groundtruth',
-                            name=name)
-
-                        # visualize with all the same cluster
-                        self.visualize(
-                            torch.arange(end.item()-start.item()),
-                            graph_edge_index,
-                            pc[start:end],
-                            np.ones(end.item()-start.item()),
-                            data.timestamps[i,0],
-                            mode='before',
-                            name=name)
-                        
-                        edges_filtered = list()
-                        for iter, e in enumerate(graph_edge_index.T):
-                            if self.use_node_score:
-                                valid_nodes = graph_node_score[e[0]] > 0.5 or graph_node_score[e[1]] > 0.5
-                            else:
-                                valid_nodes = True
-                            if graph_edge_score[iter] > self.cut_edges and valid_nodes:
-                                edges_filtered.append(e)
-                        if len(edges_filtered):
-                            edges_filtered = torch.stack(edges_filtered).T
-                        else:
-                            edges_filtered = torch.empty((2, ))
-
-                        self.visualize(
-                            torch.arange(end.item()-start.item()),
-                            edges_filtered,
-                            pc[start:end],
-                            np.ones(end.item()-start.item()),
-                            data.timestamps[i,0],
-                            mode='filtered',
-                            name=name)
-                    
-                        # Visualize fails
-                        tp_edges = list()
-                        fp_edges = list()
-                        for e in edges_filtered.T:
-                            if torch.logical_and(gt_edges[0, :] == e[0], gt_edges[1, :] == e[1]).sum() + \
-                                torch.logical_and(gt_edges[1, :] == e[0], gt_edges[0, :] == e[1]).sum() > 0:
-                                tp_edges.append(e)
-                            else:
-                                fp_edges.append(e)
-                        if len(tp_edges):
-                            tp_edges = torch.stack(tp_edges).T
-                        else:
-                            tp_edges = None
-                        if len(fp_edges):
-                            fp_edges = torch.stack(fp_edges).T
-                        else:
-                            fp_edges = None
-
-                        fn_edges = list()
-                        for e in gt_edges.T:
-                            if torch.logical_and(edges_filtered[0, :] == e[0], edges_filtered[1, :] == e[1]).sum() + \
-                                torch.logical_and(edges_filtered[1, :] == e[0], edges_filtered[0, :] == e[1]).sum() < 1:
-                                fn_edges.append(e)
-                        if len(fn_edges):
-                            fn_edges = torch.atleast_2d(torch.stack(fn_edges)).T
-                        else:
-                            fn_edges = None
-                        
-                        for edge_set, mode in zip([tp_edges, fn_edges, fp_edges], ['tp', 'fn', 'fp']):
-                            if edge_set is None:
-                                if os.path.isfile(f'../../../vis_graph/{name}/{data.timestamps[0,0]}_{mode}.png'):
-                                    os.remove(f'../../../vis_graph/{name}/{data.timestamps[0,0]}_{mode}.png')
-                                continue
-                            self.visualize(
-                                torch.arange(end.item()-start.item()),
-                                edge_set,
-                                pc[start:end],
-                                np.ones(end.item()-start.item()),
-                                data.timestamps[i,0],
-                                mode=mode,
-                                name=name)
-
-                    # add edges to nodes not in edge set with dummy score
-                    edges = set(
-                        graph_edge_index.cpu().numpy()[0, :].tolist() +
-                        graph_edge_index.cpu().numpy()[1, :].tolist())
-                    # diff = set(list(range(end.item()-start.item()))).difference(edges)
-                    diff = set(list(range(start.item(), end.item()))).difference(edges)
-
-                    if len(diff):
-                        _edge_index = torch.tensor([[d, 0] for d in diff]).T
-                        _edge_index = torch.cat([graph_edge_index.T, _edge_index.to(self.rank).T]).T
-                        graph_edge_score = torch.cat([graph_edge_score, torch.tensor([0]*len(diff)).to(self.rank).unsqueeze(1)])
-                    else:
-                        _edge_index = graph_edge_index
-
-                    _edge_index = _edge_index - start.item()
-                    try:
-                        rama_out = rama_py.rama_cuda(
-                            [e[0] for e in _edge_index.T.cpu().numpy()],
-                            [e[1] for e in _edge_index.T.cpu().numpy()], 
-                            (graph_edge_score.cpu().numpy()*2)-1,
-                            self.opts)
-                        clusters = rama_out[0]
-                    except:
-                        clusters = list(range(end.item()-start.item()))
-                        print(len(clusters), end, start)
-
-                    # filter out nodes thatare classified as non-objects
-                    if self.use_node_score:
-                        clusters = torch.tensor(clusters)
-                        try:
-                            clusters[(graph_node_score.cpu() < 0.5).squeeze()] = -1
-                        except:
-                            print('why is node not working?', graph_node_score.shape, clusters.shape)
-                        clusters = clusters.numpy()
-
-                    _clusters = defaultdict(list)
-                    for iter, c in enumerate(clusters):
-                        _clusters[c].append(iter)
-
-                    cluster_assignment_new = dict()
-                    for c, node_list in _clusters.items():
-                        if len(node_list) < self.min_samples:
-                            for n in node_list:
-                                cluster_assignment_new[n] = -1
-                        else:
-                            for n in node_list:
-                                cluster_assignment_new[n] = c
-
-                    clusters = np.array([cluster_assignment_new[k] for k in sorted(cluster_assignment_new.keys())])
-                    all_clusters.append(clusters)
-
-                    if self.do_visualize:
-                        # visualize with all the with predicted cluster
-                        self.visualize(
-                            torch.arange(end.item()-start.item()),
-                            _edge_index,
-                            pc[start:end],
-                            clusters,
-                            data.timestamps[i,0],
-                            mode='after',
-                            name=name)
+                if multiprocessing:
+                    pickle.dumps(rama_cuda)
+                    self.args = edge_index, _node_score, _score, data, score, node_score, pc, rama_cuda, name
+                    with mp.Pool() as pool:
+                        clusters = pool.map(self.corr_clustering, data_loader, chunksize=None)
+                        all_clusters.append(clusters)
+                else:
+                    self.args = edge_index, _node_score, _score, data, score, node_score, pc, rama_cuda, name
+                    for iter_data in data_loader:
+                        clusters = self.corr_clustering(iter_data)
+                        all_clusters.append(clusters)
             else:
                 print('Invalid clustering choice')
                 quit()
@@ -677,6 +505,205 @@ class ClusterGNN(MessagePassing):
             return [score, node_score], all_clusters, edge_index, None
 
         return [score, node_score], edge_index, None
+    
+    def corr_clustering(self, iter_data):
+        i, (start, end) = iter_data
+        edge_index, _node_score, _score, data, score, node_score, pc, rama_cuda, name = self.args
+
+        edge_mask = torch.logical_or(
+            torch.logical_and(edge_index[0] >= start, edge_index[1] < end),
+            torch.logical_and(edge_index[1] >= start, edge_index[0] < end))
+        graph_edge_index = edge_index[:, edge_mask]
+        src, dst = graph_edge_index
+        # graph_edge_index = graph_edge_index - start
+        graph_node_score = _node_score[start:end]
+        graph_edge_score = _score[edge_mask]
+
+        if self.oracle_edge:
+            graph_edge_score[data['point_instances'][src] == data['point_instances'][dst]] = 1
+            graph_edge_score[data['point_instances'][src] != data['point_instances'][dst]] = 0
+            graph_edge_score[data['point_instances'][src] <= 0] = 0
+            graph_edge_score[data['point_instances'][dst] <= 0] = 0
+
+            score[edge_mask] = graph_edge_score
+            score[score == 0] = -10
+            score[score == 1] = 10
+
+        if self.oracle_node:
+            graph_node_score[data['point_categories'][start:end]>0] = 1
+            graph_node_score[data['point_categories'][start:end]<=0] = 0
+
+            node_score[start:end] = graph_node_score
+            node_score[node_score == 0] = -10
+            node_score[node_score == 1] = 10
+
+        if self.do_visualize:
+            gt_edge_score = graph_edge_score
+            gt_edge_score[data['point_instances'][src] == data['point_instances'][dst]] = 1
+            gt_edge_score[data['point_instances'][src] != data['point_instances'][dst]] = 0
+            gt_edge_score[data['point_instances'][src] <= 0] = 0
+            gt_edge_score[data['point_instances'][dst] <= 0] = 0
+            gt_edges = graph_edge_index[:, gt_edge_score[:, 0] == 1]
+            if self.ignore_stat_edges:
+                static = torch.logical_and(
+                    ~(data.point_instances_mov[start:end] != 0), data.point_instances[start:end] != 0)
+                mov_mask = ~torch.logical_or(
+                    static[gt_edges[0, :]-start.item()], static[gt_edges[1, :]-start.item()])
+                gt_edges = gt_edges[:, mov_mask]
+
+            gt_clusters = data.point_instances[start:end]
+            if self.ignore_stat_nodes:
+                is_object_stat = torch.logical_and(
+                    ~(data.point_instances_mov[start:end] != 0), data.point_instances[start:end] != 0)
+                gt_clusters[is_object_stat] = 0
+            gt_clusters = gt_clusters.type(torch.FloatTensor).to(self.rank).cpu().numpy().tolist()
+
+            print(data.timestamps[i,0], start, end, pc[start:end].shape, data)
+            self.visualize(
+                torch.arange(end.item()-start.item()),
+                gt_edges-start.item(),
+                pc[start:end],
+                gt_clusters,
+                data.timestamps[i,0],
+                mode='groundtruth',
+                name=name)
+
+            # visualize with all the same cluster
+            self.visualize(
+                torch.arange(end.item()-start.item()),
+                graph_edge_index-start.item(),
+                pc[start:end],
+                np.ones(end.item()-start.item()),
+                data.timestamps[i,0],
+                mode='before',
+                name=name)
+            
+            edges_filtered = list()
+            for iter, e in enumerate(graph_edge_index.T):
+                if self.use_node_score:
+                    valid_nodes = graph_node_score[e[0]-start.item()] > 0.5 or graph_node_score[e[1]-start.item()] > 0.5
+                else:
+                    valid_nodes = True
+                if graph_edge_score[iter] > self.cut_edges and valid_nodes:
+                    edges_filtered.append(e)
+            if len(edges_filtered):
+                edges_filtered = torch.stack(edges_filtered).T
+            else:
+                edges_filtered = torch.empty((2, ))
+
+            self.visualize(
+                torch.arange(end.item()-start.item()),
+                edges_filtered-start.item(),
+                pc[start:end],
+                np.ones(end.item()-start.item()),
+                data.timestamps[i,0],
+                mode='filtered',
+                name=name)
+        
+            # Visualize fails
+            tp_edges = list()
+            fp_edges = list()
+            for e in edges_filtered.T:
+                if torch.logical_and(gt_edges[0, :] == e[0], gt_edges[1, :] == e[1]).sum() + \
+                    torch.logical_and(gt_edges[1, :] == e[0], gt_edges[0, :] == e[1]).sum() > 0:
+                    tp_edges.append(e)
+                else:
+                    fp_edges.append(e)
+            if len(tp_edges):
+                tp_edges = torch.stack(tp_edges).T
+            else:
+                tp_edges = None
+            if len(fp_edges):
+                fp_edges = torch.stack(fp_edges).T
+            else:
+                fp_edges = None
+
+            fn_edges = list()
+            for e in gt_edges.T:
+                if torch.logical_and(edges_filtered[0, :] == e[0], edges_filtered[1, :] == e[1]).sum() + \
+                    torch.logical_and(edges_filtered[1, :] == e[0], edges_filtered[0, :] == e[1]).sum() < 1:
+                    fn_edges.append(e)
+            if len(fn_edges):
+                fn_edges = torch.atleast_2d(torch.stack(fn_edges)).T
+            else:
+                fn_edges = None
+            
+            for edge_set, mode in zip([tp_edges, fn_edges, fp_edges], ['tp', 'fn', 'fp']):
+                if edge_set is None:
+                    if os.path.isfile(f'../../../vis_graph/{name}/{data.timestamps[0,0]}_{mode}.png'):
+                        os.remove(f'../../../vis_graph/{name}/{data.timestamps[0,0]}_{mode}.png')
+                    continue
+                self.visualize(
+                    torch.arange(end.item()-start.item()),
+                    edge_set-start.item(),
+                    pc[start:end],
+                    np.ones(end.item()-start.item()),
+                    data.timestamps[i,0],
+                    mode=mode,
+                    name=name)
+
+        # add edges to nodes not in edge set with dummy score
+        edges = set(
+            graph_edge_index.cpu().numpy()[0, :].tolist() +
+            graph_edge_index.cpu().numpy()[1, :].tolist())
+        # diff = set(list(range(end.item()-start.item()))).difference(edges)
+        diff = set(list(range(start.item(), end.item()))).difference(edges)
+
+        if len(diff):
+            _edge_index = torch.tensor([[d, 0] for d in diff]).T
+            _edge_index = torch.cat([graph_edge_index.T, _edge_index.to(self.rank).T]).T
+            graph_edge_score = torch.cat([graph_edge_score, torch.tensor([0]*len(diff)).to(self.rank).unsqueeze(1)])
+        else:
+            _edge_index = graph_edge_index
+
+        _edge_index = _edge_index - start.item()
+        try:
+            rama_out = rama_cuda(
+                [e[0] for e in _edge_index.T.cpu().numpy()],
+                [e[1] for e in _edge_index.T.cpu().numpy()], 
+                (graph_edge_score.cpu().numpy()*2)-1,
+                self.opts)
+            clusters = rama_out[0]
+        except:
+            clusters = list(range(end.item()-start.item()))
+            print(len(clusters), end, start)
+
+        # filter out nodes thatare classified as non-objects
+        if self.use_node_score:
+            clusters = torch.tensor(clusters)
+            try:
+                clusters[(graph_node_score.cpu() < 0.5).squeeze()] = -1
+            except:
+                print('why is node not working?', graph_node_score.shape, clusters.shape)
+            clusters = clusters.numpy()
+
+        _clusters = defaultdict(list)
+        for iter, c in enumerate(clusters):
+            _clusters[c].append(iter)
+
+        cluster_assignment_new = dict()
+        for c, node_list in _clusters.items():
+            if len(node_list) < self.min_samples:
+                for n in node_list:
+                    cluster_assignment_new[n] = -1
+            else:
+                for n in node_list:
+                    cluster_assignment_new[n] = c
+
+        clusters = np.array([cluster_assignment_new[k] for k in sorted(cluster_assignment_new.keys())])
+
+        if self.do_visualize:
+            # visualize with all the with predicted cluster
+            self.visualize(
+                torch.arange(end.item()-start.item()),
+                _edge_index,
+                pc[start:end],
+                clusters,
+                data.timestamps[i,0],
+                mode='after',
+                name=name)
+    
+        return clusters
 
     def visualize(self, nodes, edge_indices, pos, clusters, timestamp, mode='before', name='General'):
         os.makedirs(f'../../../vis_graph/{name}', exist_ok=True)
@@ -832,7 +859,7 @@ class GNNLoss(nn.Module):
             # if ignoring predictions for static edges in loss, get static edge filter
             if self.ignore_stat_edges:
                 static = torch.logical_and(
-                    ~data.point_instances_mov != 0, data.point_instances != 0)
+                    ~(data.point_instances_mov != 0), data.point_instances != 0)
                 point_instances_stat = torch.logical_or(
                     static[edge_index[0, :]], static[edge_index[1, :]])
 
@@ -852,7 +879,7 @@ class GNNLoss(nn.Module):
             # compute loss
             if not self.focal_loss_edge:
                 bce_loss_edge = self._edge_loss(
-                    edge_logits.squeeze(), point_instances.squeeze())         
+                    edge_logits.squeeze(), point_instances.squeeze())
             else:
                 bce_loss_edge = self._edge_loss(
                     edge_logits.squeeze(),
@@ -881,7 +908,7 @@ class GNNLoss(nn.Module):
             # if ignoring static nodes for loss computation get filter
             if self.ignore_stat_nodes:
                 is_object_stat = torch.logical_and(
-                    ~data.point_instances_mov != 0, data.point_instances != 0)
+                    ~(data.point_instances_mov != 0), data.point_instances != 0)
                 is_object_stat = is_object_stat.to(self.rank)
 
                 # filter logits and object ground truth

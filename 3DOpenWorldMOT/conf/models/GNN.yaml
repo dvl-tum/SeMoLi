@@ -20,6 +20,8 @@ hyperparams:
     oracle_node: False
     oracle_edge: False
     dataset: ${data.dataset_name}
+    ignore_stat_edges: ${models.loss_hyperparams.ignore_stat_edges}
+    ignore_stat_nodes: ${models.loss_hyperparams.ignore_stat_nodes}
     layer_sizes_edge: 
         l_1: 64
         l_2: 64
