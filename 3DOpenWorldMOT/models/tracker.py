@@ -1134,16 +1134,25 @@ class InitialDetection():
         return city_SE3_t0.transform_point_cloud(canonical_points)
 
     def final_detection(self):
-        lwh, translation = get_center_and_lwh(
-            self.canonical_points, self.lwh, self.translation)
-
         mean_flow = (self.trajectory[:, 1, :] - self.trajectory[:, 0, :]).mean(dim=0)
         alpha = torch.arctan(mean_flow[1]/mean_flow[0])
         rot = torch.tensor([
             [torch.cos(alpha), -torch.sin(alpha), 0],
             [torch.sin(alpha), torch.cos(alpha), 0],
-            [0, 0, 1]])
-        self.final = Detection(rot, alpha, translation, lwh, self.timestamps[0, 0], self.log_id, self.num_interior)
+            [0, 0, 1]]).double()
+        
+        # rotate bounding box to get lwh in object coordinate system
+        pc = torch.stack([
+            self.translation + torch.tensor([0.5, 0, 0]) * self.lwh,
+            self.translation + torch.tensor([-0.5, 0, 0]) * self.lwh,
+            self.translation + torch.tensor([0, 0.5, 0]) * self.lwh,
+            self.translation + torch.tensor([0, -0.5, 0]) * self.lwh,
+            self.translation + torch.tensor([0, 0, 0.5]) * self.lwh,
+            self.translation + torch.tensor([0, 0, -0.5]) * self.lwh]).double()
+        pc = pc @ rot.T + (-self.translation @ rot.T)
+        self.lwh, _ = get_center_and_lwh(pc)
+
+        self.final = Detection(rot, alpha, self.translation, self.lwh, self.timestamps[0, 0], self.log_id, self.num_interior)
 
         return self.final
 
@@ -1157,7 +1166,6 @@ def get_center_and_lwh(canonical_points, lwh=None, translation=None):
     else: 
         lwh = lwh
         translation = translation
-    
     return lwh, translation
 
 
