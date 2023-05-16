@@ -49,7 +49,7 @@ def _addindent(s_, numSpaces):
 
 
 class ClusterLayer(MessagePassing):
-    def __init__(self, in_channel_node, in_channel_edge, out_channel_node, out_channel_edge, use_batchnorm=False, use_drop=False, drop_p=0.4):
+    def __init__(self, in_channel_node, in_channel_edge, out_channel_node, out_channel_edge, use_batchnorm=False, use_layernorm=True, use_drop=False, drop_p=0.4):
         super().__init__(aggr='mean')
         # get edge mlp
         self.edge_mlp = torch.nn.Linear(in_channel_node * 2 + in_channel_edge, out_channel_edge)
@@ -58,6 +58,8 @@ class ClusterLayer(MessagePassing):
         self.edge_relu = nn.ReLU(inplace=True)
         self.edge_batchnorm = nn.BatchNorm1d(in_channel_edge) \
             if use_batchnorm else use_batchnorm
+        self.edge_layernorm = nn.LayerNorm(in_channel_edge) \
+            if use_layernorm else use_layernorm
         self.edge_drop = nn.Dropout(p=drop_p) if use_drop else use_drop
         
         #get node mlp
@@ -67,6 +69,8 @@ class ClusterLayer(MessagePassing):
         self.node_relu = nn.ReLU(inplace=True)
         self.node_batchnorm = nn.BatchNorm1d(in_channel_node) \
             if use_batchnorm else use_batchnorm
+        self.node_layernorm = nn.LayerNorm(in_channel_edge) \
+            if use_layernorm else use_layernorm
         self.node_drop = nn.Dropout(p=drop_p) if use_drop else use_drop
 
     def edge_updater(self, edge_attr, node_attr, edge_index):
@@ -133,7 +137,6 @@ class ClusterLayer(MessagePassing):
                 main_str += extra_lines[0]
             else:
                 main_str += '\n  ' + '\n  '.join(lines) + '\n'
-
         main_str += ')'
         return main_str
 
@@ -177,6 +180,7 @@ class ClusterGNN(MessagePassing):
             layer_sizes_node=None,
             ignore_stat_edges=0,
             ignore_stat_nodes=0,
+            filter_edges=-1,
             rank=0):
         super().__init__(aggr='mean')
         self.k = k
@@ -248,6 +252,7 @@ class ClusterGNN(MessagePassing):
         self.oracle_edge = oracle_edge
         self.ignore_stat_edges = ignore_stat_edges
         self.ignore_stat_nodes = ignore_stat_nodes
+        self.filter_edges = filter_edges
         self.dataset = dataset
 
         self.opts = rama_py.multicut_solver_options("PD")
@@ -558,7 +563,6 @@ class ClusterGNN(MessagePassing):
                 gt_clusters[is_object_stat] = 0
             gt_clusters = gt_clusters.type(torch.FloatTensor).to(self.rank).cpu().numpy().tolist()
 
-            print(data.timestamps[i,0], start, end, pc[start:end].shape, data)
             self.visualize(
                 torch.arange(end.item()-start.item()),
                 gt_edges-start.item(),
@@ -642,13 +646,17 @@ class ClusterGNN(MessagePassing):
                     mode=mode,
                     name=name)
 
+        # filter out edges with very low score already
+        if self.filter_edges > 0:
+            graph_edge_index = graph_edge_index[:, (graph_edge_score > self.filter_edges).squeeze()]
+            graph_edge_score = graph_edge_score[(graph_edge_score > self.filter_edges).squeeze()]
+            print(graph_edge_score)
+
         # add edges to nodes not in edge set with dummy score
         edges = set(
             graph_edge_index.cpu().numpy()[0, :].tolist() +
             graph_edge_index.cpu().numpy()[1, :].tolist())
-        # diff = set(list(range(end.item()-start.item()))).difference(edges)
         diff = set(list(range(start.item(), end.item()))).difference(edges)
-
         if len(diff):
             _edge_index = torch.tensor([[d, 0] for d in diff]).T
             _edge_index = torch.cat([graph_edge_index.T, _edge_index.to(self.rank).T]).T
@@ -657,6 +665,7 @@ class ClusterGNN(MessagePassing):
             _edge_index = graph_edge_index
 
         _edge_index = _edge_index - start.item()
+
         try:
             rama_out = rama_cuda(
                 [e[0] for e in _edge_index.T.cpu().numpy()],
@@ -666,7 +675,7 @@ class ClusterGNN(MessagePassing):
             clusters = rama_out[0]
         except:
             clusters = list(range(end.item()-start.item()))
-            print(len(clusters), end, start)
+            print('maaan', len(clusters), end, start)
 
         # filter out nodes thatare classified as non-objects
         if self.use_node_score:
