@@ -1,8 +1,9 @@
 # @package training
 # Those arguments defines the training hyper-parameters
-epochs: 100
+epochs: 101
 hypersearch: False
 eval_per_seq: 10
+eval_per_seq_corr: 25
 num_workers: 4
 batch_size: 8
 batch_size_val: 1
