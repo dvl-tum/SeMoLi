@@ -115,12 +115,15 @@ def load_model(cfg, checkpoints_dir, logger, rank=0):
             if cfg.wandb:
                 wandb.login(key='3b716e6ab76d92ef92724aa37089b074ef19e29c')
                 wandb.init(config=cfg, project=cfg.job_name, name=name)
+
             try:
                 checkpoint = torch.load(cfg.models.weight_path)
                 start_epoch = checkpoint['epoch'] if not cfg.just_eval else start_epoch
                 model.load_state_dict(checkpoint['model_state_dict'])
-                met = checkpoint['class_avg_iou']
-                logger.info(f'Use pretrain model {met}')
+                logger.info(f'Use pretrain model')
+                # met = checkpoint['best_metric']
+                # metric_mode = checkpoint['metric_mode']
+                # logger.info(f'Use pretrain model with {metric_mode}: {met}')
             except:
                 logger.info('No existing model, starting training from scratch...')
 
@@ -163,15 +166,16 @@ def bn_momentum_adjust(m, momentum):
 def sample_params():
     params_list = list()
     for _  in range(30):
+        focal_loss = random.choice([True, False])
         params = {
             'lr': 10 ** random.uniform(-3, -1),
             'weight_decay': 10 ** random.uniform(-10, -5),
-            'focal_loss_node': random.choice([True, False]),
-            'focal_loss_edge': random.choice([True, False]),
+            'focal_loss_node': focal_loss,
+            'focal_loss_edge': focal_loss,
             'alpha_node': random.uniform(0, 1),
             'alpha_edge': random.uniform(0, 1),
-            'gamma_node': random.choice([2, 0.5, 1, 1.5, 3.5, 3, 3.5, 0]),
-            'gamma_edge': random.choice([2, 0.5, 1, 1.5, 3.5, 3, 3.5, 0]),
+            'gamma_node': random.uniform(1, 4),
+            'gamma_edge': random.uniform(1, 4),
         }
         params_list.append(params)
     return params_list
@@ -213,7 +217,7 @@ def main(cfg):
             in_args = (cfg, world_size)
             mp.spawn(train, args=in_args, nprocs=world_size, join=True)
         else:
-            train(0, cfg, world_size=1)
+            train(1, cfg, world_size=1)
         
         wandb.finish()
         logging.shutdown()
@@ -342,11 +346,20 @@ def train(rank, cfg, world_size):
                 node_acc = torch.zeros(2).to(rank)
                 edge_loss = torch.zeros(2).to(rank)
                 edge_acc = torch.zeros(2).to(rank)
+                num_node_pos = torch.zeros(len(train_loader)).to(rank)
+                num_node_neg = torch.zeros(len(train_loader)).to(rank)
+                num_edge_pos = torch.zeros(len(train_loader)).to(rank)
+                num_edge_neg = torch.zeros(len(train_loader)).to(rank)
                 for i, data in tqdm(enumerate(train_loader), total=len(train_loader), smoothing=0.9):
                     data = data.to(rank)
                     optimizer.zero_grad()
                     logits, edge_index, batch_edge = model(data)
-                    loss, log_dict = criterion(logits, data, edge_index)
+                    loss, log_dict, hist_node, hist_edge = criterion(logits, data, edge_index)
+                    if cfg.wandb:
+                        wandb.log({"train histogram node":
+                            wandb.Histogram(np_histogram=hist_node), "epoch": epoch})
+                        wandb.log({"train histogram edge":
+                            wandb.Histogram(np_histogram=hist_edge), "epoch": epoch})
                     loss.backward()
                     optimizer.step()
 
@@ -362,12 +375,24 @@ def train(rank, cfg, world_size):
                     if 'train accuracy node' in log_dict.keys():
                         node_acc[0] += float(log_dict['train accuracy node'])
                         node_acc[1] += 1
+                    if 'train num node pos' in log_dict.keys():
+                        num_node_pos[i] = float(log_dict['train num node pos'])
+                    if 'train num node neg' in log_dict.keys():
+                        num_node_neg[i] = float(log_dict['train num node neg'])
+                    if 'train num edge pos' in log_dict.keys():
+                        num_edge_pos[i] = float(log_dict['train num edge pos'])
+                    if 'train num edge neg' in log_dict.keys():
+                        num_edge_neg[i] = float(log_dict['train num edge neg'])
 
                 if cfg.multi_gpu:
                     dist.all_reduce(node_loss, op=dist.ReduceOp.SUM)
                     dist.all_reduce(edge_loss, op=dist.ReduceOp.SUM)
-                    dist.all_reduce(edge_acc, op=dist.ReduceOp.SUM)
+                    dist.all_reduce(edge_acc,   op=dist.ReduceOp.SUM)
                     dist.all_reduce(node_acc, op=dist.ReduceOp.SUM)
+                    dist.all_gather_into_tensor(num_node_pos)
+                    dist.all_gather_into_tensor(num_node_neg)
+                    dist.all_gather_into_tensor(num_edge_pos)
+                    dist.all_gather_into_tensor(num_edge_neg)
 
                 node_loss = float(node_loss[0] / node_loss[1])
                 edge_loss = float(edge_loss[0] / edge_loss[1])
@@ -385,6 +410,10 @@ def train(rank, cfg, world_size):
                         wandb.log({'train bce loss node': node_loss, "epoch": epoch})
                         wandb.log({'train accuracy edge': edge_acc, "epoch": epoch})
                         wandb.log({'train accuracy node': node_acc, "epoch": epoch})
+                        wandb.log({'train num node pos/neg ratio': wandb.Histogram(
+                            np_histogram=np.histogram(num_node_pos.cpu().numpy()/num_node_neg.cpu().numpy(), bins=30, range=(0., 3.))), "epoch": epoch})
+                        wandb.log({'train num edge pos/neg ratio': wandb.Histogram(
+                            np_histogram=np.histogram(num_edge_pos.cpu().numpy()/num_edge_neg.cpu().numpy(), bins=30, range=(0., 3.))), "epoch": epoch})
 
                     savepath = str(checkpoints_dir) + name + '/latest_model.pth'
                     logger.info(f'Saving at {savepath}...')
@@ -397,26 +426,32 @@ def train(rank, cfg, world_size):
                     torch.save(state, savepath)
         # evaluate
         if epoch % cfg.training.eval_per_seq == 0: # and (epoch != 0 or cfg.just_eval):
+            do_corr_clustering = epoch % cfg.training.eval_per_seq_corr == 0 and (epoch != 0 or cfg.just_eval)
             num_batches = len(val_loader)
             node_loss = torch.zeros(2).to(rank)
             node_acc = torch.zeros(2).to(rank)
             edge_loss = torch.zeros(2).to(rank)
             edge_acc = torch.zeros(2).to(rank)
             nmis = torch.zeros(2).to(rank)
+            num_node_pos = torch.zeros(len(val_loader)).to(rank)
+            num_node_neg = torch.zeros(len(val_loader)).to(rank)
+            num_edge_pos = torch.zeros(len(val_loader)).to(rank)
+            num_edge_neg = torch.zeros(len(val_loader)).to(rank)
 
-            # intialize tracker 
-            tracker = Tracker3D(
-                out_path + name,
-                split='val',
-                a_threshold=cfg.tracker_options.a_threshold,
-                i_threshold=cfg.tracker_options.i_threshold,
-                every_x_frame=cfg.data.every_x_frame,
-                num_interior=cfg.tracker_options.num_interior,
-                overlap=cfg.tracker_options.overlap,
-                av2_loader=val_data.loader,
-                rank=rank,
-                do_associate=cfg.tracker_options.do_associate,
-                precomp_tracks=cfg.tracker_options.precomp_tracks)
+            # intialize tracker
+            if do_corr_clustering:
+                tracker = Tracker3D(
+                    out_path + name,
+                    split='val',
+                    a_threshold=cfg.tracker_options.a_threshold,
+                    i_threshold=cfg.tracker_options.i_threshold,
+                    every_x_frame=cfg.data.every_x_frame,
+                    num_interior=cfg.tracker_options.num_interior,
+                    overlap=cfg.tracker_options.overlap,
+                    av2_loader=val_data.loader,
+                    rank=rank,
+                    do_associate=cfg.tracker_options.do_associate,
+                    precomp_tracks=cfg.tracker_options.precomp_tracks)
 
             with torch.no_grad():
                 if is_neural_net:
@@ -429,46 +464,53 @@ def train(rank, cfg, world_size):
                         continue'''
 
                     # compute clusters
-                    logits, all_clusters, edge_index, _ = model(data, eval=True, name=name)
+                    logits, all_clusters, edge_index, _ = model(data, eval=True, name=name, corr_clustering=do_corr_clustering)
 
                     _nmis = list()
                     batch_idx = data._slice_dict['pc_list']
-                    for g, clusters in enumerate(all_clusters):
-                        # continue if we didnt find clusters
-                        if not len(clusters):
-                            if i+1 == len(val_loader) and g+1 == len(all_clusters):
-                                found = tracker.to_feather()
-                                if not found:
-                                    logger.info(f'No detections found in {data.log_id[g]}')
-                            continue
+                    if do_corr_clustering:
+                        for g, clusters in enumerate(all_clusters):
+                            # continue if we didnt find clusters
+                            if not len(clusters):
+                                if i+1 == len(val_loader) and g+1 == len(all_clusters):
+                                    found = tracker.to_feather()
+                                    if not found:
+                                        logger.info(f'No detections found in {data.log_id[g]}')
+                                continue
 
-                        # compute nmi
-                        nmi = calc_nmi.calc_normalized_mutual_information(
-                            data['point_instances'].cpu()[batch_idx[g]:batch_idx[g+1]], clusters)
-                        _nmis.append(nmi)
+                            # compute nmi
+                            nmi = calc_nmi.calc_normalized_mutual_information(
+                                data['point_instances'].cpu()[batch_idx[g]:batch_idx[g+1]], clusters)
+                            _nmis.append(nmi)
 
-                        # generate detections
-                        detections = tracker.get_detections(
-                            data.pc_list[batch_idx[g]:batch_idx[g+1]],
-                            data.traj[batch_idx[g]:batch_idx[g+1]],
-                            clusters,
-                            data.timestamps[g].unsqueeze(0),
-                            data.log_id[g],
-                            data['point_instances'][batch_idx[g]:batch_idx[g+1]],
-                            last= i+1 == len(val_loader) and g+1 == len(all_clusters))
+                            # generate detections
+                            detections = tracker.get_detections(
+                                data.pc_list[batch_idx[g]:batch_idx[g+1]],
+                                data.traj[batch_idx[g]:batch_idx[g+1]],
+                                clusters,
+                                data.timestamps[g].unsqueeze(0),
+                                data.log_id[g],
+                                data['point_instances'][batch_idx[g]:batch_idx[g+1]],
+                                last= i+1 == len(val_loader) and g+1 == len(all_clusters))
 
-                        if cfg.tracker_options.precomp_tracks:
-                            break
+                            if cfg.tracker_options.precomp_tracks:
+                                break
 
                     if cfg.tracker_options.precomp_tracks:
                             break
 
                     if is_neural_net and logits[0] is not None:
-                        loss, log_dict = criterion(logits, data, edge_index, rank, mode='eval')
+                        loss, log_dict, hist_node, hist_edge = criterion(logits, data, edge_index, rank, mode='eval')
+                        if cfg.wandb:
+                            wandb.log({"eval histogram node":
+                                wandb.Histogram(np_histogram=hist_node), "epoch": epoch})
+                            wandb.log({"eval histogram edge":
+                                wandb.Histogram(np_histogram=hist_edge), "epoch": epoch})
 
-                    nmi = sum(_nmis) / len(_nmis)
-                    nmis[0] += float(nmi)
-                    nmis[1] += 1
+                    if do_corr_clustering:
+                        nmi = sum(_nmis) / len(_nmis)
+                        nmis[0] += float(nmi)
+                        nmis[1] += 1
 
                     if is_neural_net and logits[0] is not None:
                         if 'eval bce loss edge' in log_dict.keys():
@@ -487,6 +529,18 @@ def train(rank, cfg, world_size):
                             node_acc[0] += float(
                                 log_dict['eval accuracy node'])
                             node_acc[1] += 1
+                        if 'edge num node pos' in log_dict.keys():
+                            num_node_pos[i] += float(
+                                log_dict['edge num node pos'])
+                        if 'edge num node neg' in log_dict.keys():
+                            num_node_neg[i] += float(
+                                log_dict['edge num node neg'])
+                        if 'edge num edge pos' in log_dict.keys():
+                            num_edge_pos[i] += float(
+                                log_dict['edge num edge pos'])
+                        if 'edge num edge neg' in log_dict.keys():
+                            num_edge_neg[i] += float(
+                                log_dict['edge num edge neg'])
 
                 if is_neural_net:
                     model = model.train()
@@ -496,15 +550,21 @@ def train(rank, cfg, world_size):
                         dist.all_reduce(edge_loss, op=dist.ReduceOp.SUM)
                         dist.all_reduce(edge_acc, op=dist.ReduceOp.SUM)
                         dist.all_reduce(node_acc, op=dist.ReduceOp.SUM)
+                        dist.all_gather_into_tensor(num_node_pos, op=dist.ReduceOp.SUM)
+                        dist.all_gather_into_tensor(num_node_neg, op=dist.ReduceOp.SUM)
+                        dist.all_gather_into_tensor(num_edge_pos, op=dist.ReduceOp.SUM)
+                        dist.all_gather_into_tensor(num_edge_neg, op=dist.ReduceOp.SUM)
     
-                    nmis = float(nmis[0] / nmis[1])
+                    if do_corr_clustering:
+                        nmis = float(nmis[0] / nmis[1])
                     node_loss = float(node_loss[0] / node_loss[1])
                     edge_loss = float(edge_loss[0] / edge_loss[1])
                     edge_acc = float(edge_acc[0] / edge_acc[1])
                     node_acc = float(node_acc[0] / node_acc[1])
 
                     if rank == 0 or not cfg.multi_gpu:
-                        logger.info(f'nmi: {nmis}')
+                        if do_corr_clustering:
+                            logger.info(f'nmi: {nmis}')
                         logger.info(f'eval bce loss edge: {edge_loss}')
                         logger.info(f'eval bce loss node: {node_loss}')
                         logger.info(f'eval accuracy edge: {edge_acc}')
@@ -515,63 +575,70 @@ def train(rank, cfg, world_size):
                             wandb.log({'eval bce loss node': node_loss, "epoch": epoch})
                             wandb.log({'eval accuracy edge': edge_acc, "epoch": epoch})
                             wandb.log({'eval accuracy node': node_acc, "epoch": epoch})
+                            wandb.log({'eval num node pos/neg ratio': wandb.Histogram(
+                                np_histogram=np.histogram(num_node_pos.cpu().numpy()/num_node_neg.cpu().numpy(), bins=30, range=(0., 3.))), "epoch": epoch})
+                            wandb.log({'eval num edge pos/neg ratio': wandb.Histogram(
+                                np_histogram=np.histogram(num_edge_pos.cpu().numpy()/num_edge_neg.cpu().numpy(), bins=30, range=(0., 3.))), "epoch": epoch})
 
                 if rank == 0 or not cfg.multi_gpu:
-                    # get sequence list for evaluation
-                    tracker_dir = os.path.join(tracker.out_path, tracker.split)
-                    if os.path.isdir(os.path.join(tracker_dir, 'feathers')):
-                        for i, rank_file in enumerate(os.listdir(os.path.join(tracker_dir, 'feathers'))):
-                            # with open(os.path.join(tracker_dir, 'feathers', rank_file), 'rb') as f:
-                            df = feather.read_feather(os.path.join(tracker_dir, 'feathers', rank_file))
-                            if i == 0:
-                                df_all = df
-                            else:
-                                df_all = df_all.append(df)
-                        
-                        for log_id in os.listdir(tracker_dir):
-                            if 'feather' in log_id:
-                                continue
-                            df_seq = df_all[df_all['log_id']==log_id]
-                            df_seq = df_seq.drop(columns=['log_id'])
-                            write_path = os.path.join(tracker_dir, log_id, 'annotations.feather')
-                            with open(write_path, 'wb') as f:
-                                feather.write_feather(df_seq, f)
-                        
+                    if do_corr_clustering:
+                        # get sequence list for evaluation
+                        tracker_dir = os.path.join(tracker.out_path, tracker.split)
                         if os.path.isdir(os.path.join(tracker_dir, 'feathers')):
-                            shutil.rmtree(os.path.join(tracker_dir, 'feathers'))
+                            for i, rank_file in enumerate(os.listdir(os.path.join(tracker_dir, 'feathers'))):
+                                # with open(os.path.join(tracker_dir, 'feathers', rank_file), 'rb') as f:
+                                df = feather.read_feather(os.path.join(tracker_dir, 'feathers', rank_file))
+                                if i == 0:
+                                    df_all = df
+                                else:
+                                    df_all = df_all.append(df)
+                            
+                            for log_id in os.listdir(tracker_dir):
+                                if 'feather' in log_id:
+                                    continue
+                                df_seq = df_all[df_all['log_id']==log_id]
+                                df_seq = df_seq.drop(columns=['log_id'])
+                                write_path = os.path.join(tracker_dir, log_id, 'annotations.feather')
+                                with open(write_path, 'wb') as f:
+                                    feather.write_feather(df_seq, f)
+                            
+                            if os.path.isdir(os.path.join(tracker_dir, 'feathers')):
+                                shutil.rmtree(os.path.join(tracker_dir, 'feathers'))
                     
-                    try:
-                        seq_list = os.listdir(tracker_dir)
-                    except:
-                        seq_list = list()
+                        try:
+                            seq_list = os.listdir(tracker_dir)
+                        except:
+                            seq_list = list()
+                    
+                    if do_corr_clustering:
+                        # average NMI
+                        cluster_metric = [nmis]
+                        logger.info(f'NMI: {cluster_metric[0]}')
+                        # evaluate detection
+                        _, detection_metric = eval_detection.eval_detection(
+                            gt_folder=os.path.join(os.getcwd(), cfg.data.data_dir),
+                            trackers_folder=tracker_dir,
+                            seq_to_eval=seq_list,
+                            remove_far=True,#'80' in cfg.data.trajectory_dir,
+                            remove_non_drive='non_drive' in cfg.data.trajectory_dir,
+                            remove_non_move=cfg.data.remove_static_gt,
+                            remove_non_move_strategy=cfg.data.remove_static_strategy,
+                            remove_non_move_thresh=cfg.data.remove_static_thresh,
+                            classes_to_eval='all',
+                            debug=cfg.data.debug,
+                            name=name)
+                    
+                        # log metrics
+                        for_logs = {met: m for met, m in zip(['AP', 'ATE', 'ASE', 'AOE' ,'CDS'], detection_metric)}
+                    
+                        if cfg.wandb:
+                            for met, m in for_logs.items():
+                                wandb.log({met: m, "epoch": epoch})
+                            wandb.log({'NMI': cluster_metric[0], "epoch": epoch})
 
-                    # average NMI
-                    cluster_metric = [nmis]
-                    logger.info(f'NMI: {cluster_metric[0]}')
-                    
-                    # evaluate detection
-                    _, detection_metric = eval_detection.eval_detection(
-                        gt_folder=os.path.join(os.getcwd(), cfg.data.data_dir),
-                        trackers_folder=tracker_dir,
-                        seq_to_eval=seq_list,
-                        remove_far=True,#'80' in cfg.data.trajectory_dir,
-                        remove_non_drive='non_drive' in cfg.data.trajectory_dir,
-                        remove_non_move=cfg.data.remove_static_gt,
-                        remove_non_move_strategy=cfg.data.remove_static_strategy,
-                        remove_non_move_thresh=cfg.data.remove_static_thresh,
-                        classes_to_eval='all',
-                        debug=cfg.data.debug,
-                        name=name)
-                    
-                    # log metrics
-                    for_logs = {met: m for met, m in zip(['AP', 'ATE', 'ASE', 'AOE' ,'CDS'], detection_metric)}
-                
-                    if cfg.wandb:
-                        for met, m in for_logs.items():
-                            wandb.log({met: m, "epoch": epoch})
-                        wandb.log({'NMI': cluster_metric[0], "epoch": epoch})
-
-                    if cfg.metric == 'cluster':
+                    if cfg.metric == 'acc':
+                        metric = [edge_acc]
+                    elif cfg.metric == 'cluster':
                         metric = cluster_metric
                     else:
                         metric = detection_metric
@@ -582,17 +649,34 @@ def train(rank, cfg, world_size):
                         if is_neural_net and not cfg.just_eval:
                             savepath = str(checkpoints_dir) + name + '/best_model.pth'
                             logger.info('Saving at %s...' % savepath)
-                            state = {
-                                'epoch': epoch,
-                                'NMI': cluster_metric[0],
-                                'class_avg_iou': detection_metric[0],
-                                'model_state_dict': model.state_dict(),
-                                'optimizer_state_dict': optimizer.state_dict(),
-                            }
+                            if do_corr_clustering:
+                                state = {
+                                    'epoch': epoch,
+                                    'ACC': edge_acc,
+                                    'best_metric': best_metric,
+                                    'metric_mode': cfg.metric,
+                                    'NMI': cluster_metric[0],
+                                    'class_avg_iou': detection_metric[0],
+                                    'model_state_dict': model.state_dict(),
+                                    'optimizer_state_dict': optimizer.state_dict(),
+                                }
+                            else:
+                                state = {
+                                    'epoch': epoch,
+                                    'ACC': edge_acc,
+                                    'best_metric': best_metric,
+                                    'metric_mode': cfg.metric,
+                                    'model_state_dict': model.state_dict(),
+                                    'optimizer_state_dict': optimizer.state_dict(),
+                                }
                             torch.save(state, savepath)
                     
-                    logger.info(f'Best {cfg.metric} metric: {best_metric}, cluster metric: {cluster_metric}, detection metric: {for_logs}')
-                
+                    if do_corr_clustering:
+                        logger.info(f'Best {cfg.metric} metric: {best_metric}, acc: {edge_acc}, cluster metric: {cluster_metric}, detection metric: {for_logs}')
+                    else:
+                        logger.info(f'Best {cfg.metric} metric: {best_metric}, acc: {edge_acc}')
+
+
         if not is_neural_net or cfg.just_eval:
             break
 

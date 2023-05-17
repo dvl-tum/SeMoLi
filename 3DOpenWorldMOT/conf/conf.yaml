@@ -21,7 +21,7 @@ eval_frequency: 1
 wandb: False
 out_path: 'out'
 just_eval: False     
-metric: detection
+metric: acc
 multi_gpu: False                                                                               
 
 tracker_options: # Extra options for the tracker                                                                        

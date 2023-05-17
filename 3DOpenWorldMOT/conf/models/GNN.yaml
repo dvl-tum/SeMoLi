@@ -11,9 +11,9 @@ hyperparams:
     graph_construction: pos
     edge_attr: diffpostraj
     node_attr: traj
-    cut_edges: 0.0
     min_samples: ${tracker_options.num_interior}
     use_node_score: True
+    node_loss: ${models.loss_hyperparams.node_loss}
     clustering: 'correlation'
     do_visualize: False
     my_graph: True

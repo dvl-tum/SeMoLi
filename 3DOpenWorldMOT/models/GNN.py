@@ -18,6 +18,7 @@ import sklearn.metrics
 from .losses import sigmoid_focal_loss
 from torch import multiprocessing as mp
 import pickle
+import wandb
 
 
 rgb_colors = {}
@@ -181,6 +182,7 @@ class ClusterGNN(MessagePassing):
             ignore_stat_edges=0,
             ignore_stat_nodes=0,
             filter_edges=-1,
+            node_loss=True,
             rank=0):
         super().__init__(aggr='mean')
         self.k = k
@@ -190,7 +192,7 @@ class ClusterGNN(MessagePassing):
         self.edge_attr = edge_attr
         self.node_attr = node_attr
         self.graph_construction = graph_construction
-        self.use_node_score = use_node_score
+        self.use_node_score = use_node_score * node_loss
         self.clustering = clustering
         if self.edge_attr == 'diffpos':
             edge_dim = pos_channels
@@ -396,7 +398,7 @@ class ClusterGNN(MessagePassing):
 
         return edge_index
 
-    def forward(self, data, eval=False, use_edge_att=True, augment=False, name='General'):
+    def forward(self, data, eval=False, use_edge_att=True, augment=True, name='General', corr_clustering=False):
         '''
         clustering: 'heuristic' / 'correlation'
         '''
@@ -435,8 +437,11 @@ class ClusterGNN(MessagePassing):
         if not eval and augment:
             point_instances = data.point_instances.unsqueeze(
                 0) == data.point_instances.unsqueeze(0).T
+            same_graph = data['batch'].unsqueeze(0) == data['batch'].unsqueeze(0).T
+            point_instances = torch.logical_and(point_instances, same_graph)
             # setting edges that do not belong to object to zero
             point_instances[data.point_instances == 0, :] = False
+            point_instances[:, data.point_instances == 0] = False
             num_pos = edge_index[:, point_instances[
                 edge_index[0, :], edge_index[1, :]]].shape[1]
             num_neg = edge_index.shape[1] - num_pos
@@ -483,7 +488,7 @@ class ClusterGNN(MessagePassing):
             score = self.final(edge_attr)
         node_score = self.final_node(node_attr)
                    
-        if eval:
+        if eval and corr_clustering:
             _score = self.sigmoid(score)
             _node_score = self.sigmoid(node_score)
 
@@ -508,6 +513,8 @@ class ClusterGNN(MessagePassing):
                 quit()
 
             return [score, node_score], all_clusters, edge_index, None
+        elif eval:
+            return [score, node_score], [[]*len(batch_idx[:-1])], edge_index, None
 
         return [score, node_score], edge_index, None
     
@@ -584,11 +591,11 @@ class ClusterGNN(MessagePassing):
             
             edges_filtered = list()
             for iter, e in enumerate(graph_edge_index.T):
-                if self.use_node_score:
-                    valid_nodes = graph_node_score[e[0]-start.item()] > 0.5 or graph_node_score[e[1]-start.item()] > 0.5
+                if self.use_node_score > 0:
+                    valid_nodes = graph_node_score[e[0]-start.item()] > self.use_node_score or graph_node_score[e[1]-start.item()] > self.use_node_score
                 else:
                     valid_nodes = True
-                if graph_edge_score[iter] > self.cut_edges and valid_nodes:
+                if graph_edge_score[iter] > self.filter_edges and valid_nodes:
                     edges_filtered.append(e)
             if len(edges_filtered):
                 edges_filtered = torch.stack(edges_filtered).T
@@ -650,21 +657,25 @@ class ClusterGNN(MessagePassing):
         if self.filter_edges > 0:
             graph_edge_index = graph_edge_index[:, (graph_edge_score > self.filter_edges).squeeze()]
             graph_edge_score = graph_edge_score[(graph_edge_score > self.filter_edges).squeeze()]
-            print(graph_edge_score)
+        
+        graph_edge_index = graph_edge_index - start.item()
+        '''if self.use_node_score:
+            graph_edge_score = graph_edge_score[torch.logical_and(
+                graph_node_score[graph_edge_index[0]] > self.use_node_score, 
+                graph_node_score[graph_edge_index[1]] > self.use_node_score).squeeze()]
+            graph_edge_index = graph_edge_index[:, torch.logical_and(
+                graph_node_score[graph_edge_index[0]] > self.use_node_score, 
+                graph_node_score[graph_edge_index[1]] > self.use_node_score).squeeze()]'''
 
-        # add edges to nodes not in edge set with dummy score
-        edges = set(
-            graph_edge_index.cpu().numpy()[0, :].tolist() +
-            graph_edge_index.cpu().numpy()[1, :].tolist())
-        diff = set(list(range(start.item(), end.item()))).difference(edges)
-        if len(diff):
-            _edge_index = torch.tensor([[d, 0] for d in diff]).T
-            _edge_index = torch.cat([graph_edge_index.T, _edge_index.to(self.rank).T]).T
-            graph_edge_score = torch.cat([graph_edge_score, torch.tensor([0]*len(diff)).to(self.rank).unsqueeze(1)])
-        else:
-            _edge_index = graph_edge_index
-
-        _edge_index = _edge_index - start.item()
+        # map nodes
+        edges = torch.unique(graph_edge_index)
+        mapping = torch.ones(end.item()-start.item()) * - 1
+        mapping = mapping.int()
+        mapping[edges] = torch.arange(edges.shape[0]).int()
+        mapping = mapping.to(self.rank)
+        _edge_index = graph_edge_index
+        _edge_index[0, :] = mapping[graph_edge_index[0, :]]
+        _edge_index[1, :] = mapping[graph_edge_index[1, :]]
 
         try:
             rama_out = rama_cuda(
@@ -672,18 +683,23 @@ class ClusterGNN(MessagePassing):
                 [e[1] for e in _edge_index.T.cpu().numpy()], 
                 (graph_edge_score.cpu().numpy()*2)-1,
                 self.opts)
-            clusters = rama_out[0]
+            mapped_clusters = torch.tensor(rama_out[0]).to(self.rank).int()
         except:
-            clusters = list(range(end.item()-start.item()))
+            mapped_clusters = torch.arange(end.item()-start.item()).to(self.rank).int()
             print('maaan', len(clusters), end, start)
 
+        # map back 
+        _edge_index[0, :] = edges[_edge_index[0, :]]
+        _edge_index[1, :] = edges[_edge_index[1, :]]
+        clusters = torch.ones(end.item()-start.item()) * - 1
+        clusters = clusters.int().to(self.rank)
+        clusters[edges] = mapped_clusters
+        clusters = clusters.cpu().numpy().tolist()
+
         # filter out nodes thatare classified as non-objects
-        if self.use_node_score:
+        if self.use_node_score > 0:
             clusters = torch.tensor(clusters)
-            try:
-                clusters[(graph_node_score.cpu() < 0.5).squeeze()] = -1
-            except:
-                print('why is node not working?', graph_node_score.shape, clusters.shape)
+            clusters[(graph_node_score.cpu() < self.use_node_score).squeeze()] = -1
             clusters = clusters.numpy()
 
         _clusters = defaultdict(list)
@@ -875,6 +891,7 @@ class GNNLoss(nn.Module):
                 # filter edge logits and point instances
                 edge_logits = edge_logits[~point_instances_stat]
                 point_instances = point_instances[~point_instances_stat]
+            num_edge_pos, num_edge_neg = point_instances.sum(), (point_instances==0).sum()
 
             # compute loss
             if weight and not self.focal_loss_edge:
@@ -903,12 +920,15 @@ class GNNLoss(nn.Module):
             
             # get accuracy
             logits_rounded = self.sigmoid(edge_logits.clone().detach()).squeeze()
+            hist_edge = np.histogram(logits_rounded.cpu().numpy(), bins=10, range=(0., 1.))
             logits_rounded[logits_rounded>0.5] = 1
             logits_rounded[logits_rounded<=0.5] = 0
             correct = torch.sum(logits_rounded == point_instances.squeeze())
             edge_accuracy = correct/logits_rounded.shape[0]
             log_dict[f'{mode} accuracy edge'] = edge_accuracy.item()
-        
+            log_dict[f'{mode} num edge pos'] = num_edge_pos
+            log_dict[f'{mode} num edge neg'] = num_edge_neg
+
         if self.node_loss:
             # get if point is object
             is_object = data.point_instances != 0
@@ -923,7 +943,7 @@ class GNNLoss(nn.Module):
                 # filter logits and object ground truth
                 is_object = is_object[~is_object_stat]
                 node_logits = node_logits[~is_object_stat]
-
+            
             # weight pos and neg samples
             if weight_node and not self.focal_loss_node:
                 num_pos = torch.sum((is_object==1).float())
@@ -948,13 +968,17 @@ class GNNLoss(nn.Module):
             loss += self.node_weight * bce_loss_node
 
             # get accuracy
-            logits_rounded = self.sigmoid(node_logits.clone().detach()).squeeze()
-            logits_rounded[logits_rounded>0.5] = 1
-            logits_rounded[logits_rounded<=0.5] = 0
-            # print(mode, torch.histogram(logits_rounded.cpu(), bins=10, range=(0., 1.)))
-            correct = torch.sum(logits_rounded == is_object.squeeze())
-            node_accuracy = correct/logits_rounded.shape[0]
-            log_dict[f'{mode} accuracy node'] = node_accuracy.item()
+            logits_rounded_node = self.sigmoid(node_logits.clone().detach()).squeeze()
+            hist_node = np.histogram(logits_rounded_node.cpu().numpy(), bins=10, range=(0., 1.))
+            logits_rounded_node[logits_rounded_node>0.5] = 1
+            logits_rounded_node[logits_rounded_node<=0.5] = 0
 
-        return loss, log_dict
+            correct = torch.sum(logits_rounded_node == is_object.squeeze())
+            node_accuracy = correct/logits_rounded_node.shape[0]
+            log_dict[f'{mode} accuracy node'] = node_accuracy.item()
+            num_node_pos, num_node_neg = is_object.sum(), (is_object==0).sum()
+            log_dict[f'{mode} num node pos'] = num_node_pos
+            log_dict[f'{mode} num node neg'] = num_node_neg
+
+        return loss, log_dict, hist_node, hist_edge
     
