@@ -855,6 +855,7 @@ class GNNLoss(nn.Module):
         self.test = nn.BCEWithLogitsLoss().to(self.rank)
 
     def forward(self, logits, data, edge_index, weight=False, weight_node=True, mode='train'):
+        hist_node, hist_edge = None, None
         edge_logits, node_logits = logits
         loss = 0
         log_dict = dict()

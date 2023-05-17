@@ -358,10 +358,12 @@ def train(rank, cfg, world_size):
                     logits, edge_index, batch_edge = model(data)
                     loss, log_dict, hist_node, hist_edge = criterion(logits, data, edge_index)
                     if cfg.wandb and not cfg.multi_gpu:
-                        wandb.log({"train histogram node":
-                            wandb.Histogram(np_histogram=hist_node), "epoch": epoch})
-                        wandb.log({"train histogram edge":
-                            wandb.Histogram(np_histogram=hist_edge), "epoch": epoch})
+                        if hist_node is not None:
+                            wandb.log({"train histogram node":
+                                wandb.Histogram(np_histogram=hist_node), "epoch": epoch})
+                        if hist_edge is not None:
+                            wandb.log({"train histogram edge":
+                                wandb.Histogram(np_histogram=hist_edge), "epoch": epoch})
                     loss.backward()
                     optimizer.step()
 
@@ -503,10 +505,12 @@ def train(rank, cfg, world_size):
                     if is_neural_net and logits[0] is not None:
                         loss, log_dict, hist_node, hist_edge = criterion(logits, data, edge_index, rank, mode='eval')
                         if cfg.wandb and not cfg.multi_gpu:
-                            wandb.log({"eval histogram node":
-                                wandb.Histogram(np_histogram=hist_node), "epoch": epoch})
-                            wandb.log({"eval histogram edge":
-                                wandb.Histogram(np_histogram=hist_edge), "epoch": epoch})
+                            if hist_node is not None:
+                                wandb.log({"eval histogram node":
+                                    wandb.Histogram(np_histogram=hist_node), "epoch": epoch})
+                            if hist_edge is not None:
+                                wandb.log({"eval histogram edge":
+                                    wandb.Histogram(np_histogram=hist_edge), "epoch": epoch})
 
                     if do_corr_clustering:
                         nmi = sum(_nmis) / len(_nmis)
