@@ -176,9 +176,34 @@ def sample_params():
             'alpha_edge': random.uniform(0, 1),
             'gamma_node': random.uniform(1, 4),
             'gamma_edge': random.uniform(1, 4),
+            'node_loss': random.choice([True, False]),
         }
+        dims = sample_dims()
+        params['layer_sizes_edge'] = dims
+        params['layer_sizes_node'] = dims
         params_list.append(params)
+
     return params_list
+
+def sample_dims():
+    dims = [16, 32, 64, 128]                                                                                                                    
+    num_layers =  random.choice([1, 2, 3, 4])                                                                                      
+    sampled_dims = [random.choice([16, 32, 64])]                                                                                   
+    for i in range(1, num_layers):
+        if num_layers > 2 and i == 1:
+            dim = random.choice(dims[dims.index(sampled_dims[0]):])                                                      
+            sampled_dims.append(dim)                                                                                       
+        elif num_layers > 3 and i == 2:
+            dim = random.choice(dims[dims.index(sampled_dims[1]):])
+            sampled_dims.append(dim)
+        else:
+            dim = random.choice(dims)
+            sampled_dims.append(dim)
+    dim_dict = dict()
+    for i, d in enumerate(sampled_dims):
+        dim_dict[f'l_{i}'] = d
+            
+    return dim_dict
 
 @hydra.main(config_path="conf", config_name="conf")   
 def main(cfg):
@@ -197,6 +222,9 @@ def main(cfg):
             cfg.models.loss_hyperparams.gamma_edge = params_list[iter]['gamma_edge']
             cfg.models.loss_hyperparams.alpha_node = params_list[iter]['alpha_node']
             cfg.models.loss_hyperparams.alpha_edge = params_list[iter]['alpha_edge']
+            cfg.models.loss_hyperparams.node_loss = params_list[iter]['node_loss']
+            cfg.models.hyperparams.layer_sizes_edge = params_list[iter]['layer_sizes_edge']
+            cfg.models.hyperparams.layer_sizes_node = params_list[iter]['layer_sizes_node']
             cfg.training.epochs = 30
         
             print(f"Current params: {params_list[iter]}")
