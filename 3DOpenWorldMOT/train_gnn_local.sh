@@ -1,6 +1,8 @@
 #!/bin/bash
 directory_name = "trajectories_removestatic1_numcd44_removegroundrc1_removefar1_removeheight1_len25"
 directory_name = "trajectories_removestatic1_numcd44_removegroundrc0_remove_ground_pts_patch1_removefar1_removeheight1_len25"
+weight_path = "/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/checkpoints/trajectories_removestatic1_numcd44_removegroundrc0_remove_ground_pts_patch1_removefar1_removeheight1_len25_nooracle_32_32_32_32_1.2186921492525046e-07_0.020575523376985833_16000_16000__NS_MG_32_2.0/best_model.pth"
+
 
 HYDRA_FULL_ERROR=1 python3 trainer.py \
 	models=GNN \
@@ -8,8 +10,8 @@ HYDRA_FULL_ERROR=1 python3 trainer.py \
 	data=waymo_traj \
 	multi_gpu=False \
 	out_path=/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT \
-	data.trajectory_dir=/dvlresearch/jenny/debug_trajectories_waymo/traj_dataset_waymo/trajectories_removestatic1_numcd44_removegroundrc1_removefar1_removeheight1_len25/trajectories_removestatic1_numcd44_removegroundrc1_removefar1_removeheight1_len25 \
-	data.processed_dir=/dvlresearch/jenny/debug_trajectories_waymo/processed/normal/trajectories_removestatic1_numcd44_removegroundrc1_removefar1_removeheight1_len25/trajectories_removestatic1_numcd44_removegroundrc1_removefar1_removeheight1_len25 \
+	data.trajectory_dir=/dvlresearch/jenny/debug_trajectories_waymo/traj_dataset_waymo/trajectories_removestatic1_numcd44_removegroundrc0_remove_ground_pts_patch1_removefar1_removeheight1_len25/trajectories_removestatic1_numcd44_removegroundrc0_remove_ground_pts_patch1_removefar1_removeheight1_len25 \
+	data.processed_dir=/dvlresearch/jenny/debug_trajectories_waymo/processed/normal/trajectories_removestatic1_numcd44_removegroundrc0_remove_ground_pts_patch1_removefar1_removeheight1_len25/trajectories_removestatic1_numcd44_removegroundrc0_remove_ground_pts_patch1_removefar1_removeheight1_len25 \
 	data.data_dir=/dvlresearch/jenny/debug_trajectories_waymo/point_clouds_preprocessed \
 	models.hyperparams.edge_attr=min_mean_max_diffpostrajtime \
 	models.hyperparams.node_attr=min_mean_max_vel \
@@ -39,6 +41,8 @@ HYDRA_FULL_ERROR=1 python3 trainer.py \
 	models.hyperparams.oracle_node=False \
 	models.hyperparams.oracle_edge=False \
 	models.hyperparams.do_visualize=False \
+	models.hyperparams.layer_norm=False \
+	models.hyperparams.augment=False \
 	tracker_options.num_interior=20 \
 	training.eval_per_seq=1 \
 	lr_scheduler.params.step_size=100 \
@@ -46,16 +50,18 @@ HYDRA_FULL_ERROR=1 python3 trainer.py \
 	training.optim.optimizer.o_class=Adam \
 	data.do_process=False \
 	data.static_thresh=0.0 \
-	models.loss_hyperparams.focal_loss_node=False \
-	models.loss_hyperparams.alpha_node=0.75 \
-	models.loss_hyperparams.gamma_node=3.5 \
-	models.loss_hyperparams.focal_loss_edge=False \
-	training.optim.base_lr=0.020575523376985833 \
-	training.optim.weight_decay=1.2186921492525046e-07 \
+	models.loss_hyperparams.focal_loss_node=True \
+	models.loss_hyperparams.alpha_node=0.9221111 \
+	models.loss_hyperparams.gamma_node=3.155 \
+	models.loss_hyperparams.focal_loss_edge=True \
+	models.loss_hyperparams.alpha_edge=0.929 \
+	models.loss_hyperparams.gamma_edge=1.902 \
+	training.optim.base_lr=0.0011 \
+	training.optim.weight_decay=8.11e-08 \
 	models.hyperparams.layer_sizes_edge.l_1=32 \
-	models.hyperparams.layer_sizes_edge.l_2=32 \
+	models.hyperparams.layer_sizes_edge.l_2=64 \
 	models.hyperparams.layer_sizes_node.l_1=32 \
-	models.hyperparams.layer_sizes_node.l_2=32 \
+	models.hyperparams.layer_sizes_node.l_2=64 \
 	models.loss_hyperparams.ignore_stat_edges=1 \
 	models.loss_hyperparams.ignore_stat_nodes=1 \
 

@@ -86,9 +86,13 @@ def load_model(cfg, checkpoints_dir, logger, rank=0):
             node = '_NS' if cfg.models.hyperparams.use_node_score else ''
             # cluster = '_' + cfg.models.hyperparams.clustering
             my_graph = f"_MG_{cfg.models.hyperparams.k}_{cfg.models.hyperparams.r}" if cfg.models.hyperparams.my_graph else f'_TG_{cfg.models.hyperparams.k}_{cfg.models.hyperparams.r}'
+            layer_norm = "_LN_" if cfg.models.hyperparams.layer_norm else ""
+            batch_norm = "_BN_" if cfg.models.hyperparams.batch_norm else ""
+            drop = "_DR_" if cfg.models.hyperparams.drop_out else ""
+            augment = "_AU_" if cfg.models.hyperparams.augment else ""
 
             # name = cfg.models.hyperparams.graph_construction + '_' + cfg.models.hyperparams.edge_attr + "_" + cfg.models.hyperparams.node_attr + node + my_graph # + cluster
-            name = node + my_graph # + cluster
+            name = node + my_graph + layer_norm + batch_norm + drop + augment # + cluster
             name = f'{cfg.data.num_points_eval}' + "_" + name if not cfg.data.use_all_points_eval else name
             name = f'{cfg.data.num_points}' + "_" + name if not cfg.data.use_all_points else name
             name = f'{cfg.training.optim.base_lr}' + "_" + name
