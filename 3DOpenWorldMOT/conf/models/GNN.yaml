@@ -23,6 +23,10 @@ hyperparams:
     ignore_stat_edges: ${models.loss_hyperparams.ignore_stat_edges}
     ignore_stat_nodes: ${models.loss_hyperparams.ignore_stat_nodes}
     filter_edges: -1
+    layer_norm: False
+    batch_norm: False
+    drop_out: False
+    augment: False
     layer_sizes_edge: 
         l_1: 64
         l_2: 64

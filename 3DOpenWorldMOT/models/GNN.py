@@ -54,12 +54,12 @@ class ClusterLayer(MessagePassing):
         super().__init__(aggr='mean')
         # get edge mlp
         self.edge_mlp = torch.nn.Linear(in_channel_node * 2 + in_channel_edge, out_channel_edge)
-
+        print(use_layernorm, use_batchnorm, use_drop)
         # get edge relu, bn, drop
         self.edge_relu = nn.ReLU(inplace=True)
-        self.edge_batchnorm = nn.BatchNorm1d(in_channel_edge) \
+        self.edge_batchnorm = nn.BatchNorm1d(out_channel_edge) \
             if use_batchnorm else use_batchnorm
-        self.edge_layernorm = nn.LayerNorm(in_channel_edge) \
+        self.edge_layernorm = nn.LayerNorm(out_channel_edge) \
             if use_layernorm else use_layernorm
         self.edge_drop = nn.Dropout(p=drop_p) if use_drop else use_drop
         
@@ -68,9 +68,9 @@ class ClusterLayer(MessagePassing):
 
         # get node relu, bn, drop
         self.node_relu = nn.ReLU(inplace=True)
-        self.node_batchnorm = nn.BatchNorm1d(in_channel_node) \
+        self.node_batchnorm = nn.BatchNorm1d(out_channel_node) \
             if use_batchnorm else use_batchnorm
-        self.node_layernorm = nn.LayerNorm(in_channel_edge) \
+        self.node_layernorm = nn.LayerNorm(out_channel_node) \
             if use_layernorm else use_layernorm
         self.node_drop = nn.Dropout(p=drop_p) if use_drop else use_drop
 
@@ -85,6 +85,8 @@ class ClusterLayer(MessagePassing):
         edge_attr = self.edge_relu(self.edge_mlp(update_input))
         if self.edge_batchnorm:
             edge_attr = self.edge_batchnorm(edge_attr)
+        if self.edge_layernorm:
+            edge_attr = self.edge_layernorm(edge_attr)
         if self.edge_drop:
             edge_attr = self.edge_drop(edge_attr)
         return edge_attr
@@ -113,6 +115,8 @@ class ClusterLayer(MessagePassing):
         x = self.node_relu(self.mlp(tmp))
         if self.node_batchnorm:
             x = self.node_batchnorm(x)
+        if self.node_layernorm:
+            x = self.node_layernorm(x)
         if self.node_drop:
             x = self.node_drop(x)
         return x
@@ -183,6 +187,10 @@ class ClusterGNN(MessagePassing):
             ignore_stat_nodes=0,
             filter_edges=-1,
             node_loss=True,
+            layer_norm=False,
+            batch_norm=False,
+            drop_out=False,
+            augment=False,
             rank=0):
         super().__init__(aggr='mean')
         self.k = k
@@ -232,7 +240,10 @@ class ClusterGNN(MessagePassing):
                 in_channel_node=_node_dim,
                 in_channel_edge=_edge_dim,
                 out_channel_node=node_dim_hid,
-                out_channel_edge=edge_dim_hid))
+                out_channel_edge=edge_dim_hid,
+                use_batchnorm=batch_norm,
+                use_layernorm=layer_norm,
+                use_drop=drop_out))
             _node_dim = node_dim_hid
             _edge_dim = edge_dim_hid
         '''layers.append(ClusterLayer(
@@ -247,6 +258,7 @@ class ClusterGNN(MessagePassing):
         self.sigmoid = torch.nn.Sigmoid()
         # self.sigmoid = torch.nn.Tanh()
         self.cut_edges = cut_edges
+        self.augment = augment
         self.min_samples = min_samples
         self.do_visualize = do_visualize
         self.my_graph = my_graph
@@ -398,7 +410,7 @@ class ClusterGNN(MessagePassing):
 
         return edge_index
 
-    def forward(self, data, eval=False, use_edge_att=True, augment=True, name='General', corr_clustering=False):
+    def forward(self, data, eval=False, use_edge_att=True, name='General', corr_clustering=False):
         '''
         clustering: 'heuristic' / 'correlation'
         '''
@@ -434,7 +446,7 @@ class ClusterGNN(MessagePassing):
                 edge_index = radius_graph(graph_attr, self.r, data['batch'], max_num_neighbors=k)
 
         # add negative edges to edge_index
-        if not eval and augment:
+        if not eval and self.augment:
             point_instances = data.point_instances.unsqueeze(
                 0) == data.point_instances.unsqueeze(0).T
             same_graph = data['batch'].unsqueeze(0) == data['batch'].unsqueeze(0).T
@@ -550,7 +562,8 @@ class ClusterGNN(MessagePassing):
             node_score[node_score == 1] = 10
 
         if self.do_visualize:
-            gt_edge_score = graph_edge_score
+            import copy
+            gt_edge_score = copy.deepcopy(graph_edge_score)
             gt_edge_score[data['point_instances'][src] == data['point_instances'][dst]] = 1
             gt_edge_score[data['point_instances'][src] != data['point_instances'][dst]] = 0
             gt_edge_score[data['point_instances'][src] <= 0] = 0
@@ -570,16 +583,16 @@ class ClusterGNN(MessagePassing):
                 gt_clusters[is_object_stat] = 0
             gt_clusters = gt_clusters.type(torch.FloatTensor).to(self.rank).cpu().numpy().tolist()
 
-            self.visualize(
+            '''self.visualize(
                 torch.arange(end.item()-start.item()),
                 gt_edges-start.item(),
                 pc[start:end],
                 gt_clusters,
                 data.timestamps[i,0],
                 mode='groundtruth',
-                name=name)
+                name=name)'''
 
-            # visualize with all the same cluster
+            '''# visualize with all the same cluster
             self.visualize(
                 torch.arange(end.item()-start.item()),
                 graph_edge_index-start.item(),
@@ -587,21 +600,15 @@ class ClusterGNN(MessagePassing):
                 np.ones(end.item()-start.item()),
                 data.timestamps[i,0],
                 mode='before',
-                name=name)
+                name=name)'''
             
-            edges_filtered = list()
-            for iter, e in enumerate(graph_edge_index.T):
-                if self.use_node_score > 0:
-                    valid_nodes = graph_node_score[e[0]-start.item()] > self.use_node_score or graph_node_score[e[1]-start.item()] > self.use_node_score
-                else:
-                    valid_nodes = True
-                if graph_edge_score[iter] > self.filter_edges and valid_nodes:
-                    edges_filtered.append(e)
-            if len(edges_filtered):
-                edges_filtered = torch.stack(edges_filtered).T
-            else:
-                edges_filtered = torch.empty((2, ))
+            edges_filtered = copy.deepcopy(graph_edge_index)
+            edges_filtered = edges_filtered[:, torch.logical_and((graph_edge_score > self.filter_edges).squeeze(), 
+                torch.logical_and(
+                    (graph_node_score[edges_filtered[0, :]-start.item()] > self.use_node_score).squeeze(),
+                    (graph_node_score[edges_filtered[1, :]-start.item()] > self.use_node_score).squeeze()))]
 
+            
             self.visualize(
                 torch.arange(end.item()-start.item()),
                 edges_filtered-start.item(),
@@ -611,7 +618,7 @@ class ClusterGNN(MessagePassing):
                 mode='filtered',
                 name=name)
         
-            # Visualize fails
+            '''# Visualize fails
             tp_edges = list()
             fp_edges = list()
             for e in edges_filtered.T:
@@ -651,7 +658,7 @@ class ClusterGNN(MessagePassing):
                     np.ones(end.item()-start.item()),
                     data.timestamps[i,0],
                     mode=mode,
-                    name=name)
+                    name=name)'''
 
         # filter out edges with very low score already
         if self.filter_edges > 0:
@@ -780,7 +787,6 @@ class ClusterGNN(MessagePassing):
         plt.axis("off")
         plt.savefig(f'../../../vis_graph/{name}/{timestamp}_{mode}.png', bbox_inches='tight', dpi=300)
         plt.close()
-        logger.info(f'Stored to ../../../vis_graph/{name}/{timestamp}_{mode}.png...')
     
     def __repr__(self):
         # We treat the extra repr like the sub-module, one item per line
