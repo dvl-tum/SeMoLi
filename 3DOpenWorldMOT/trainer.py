@@ -172,7 +172,7 @@ def sample_params():
     for _  in range(30):
         focal_loss = random.choice([True, False])
         params = {
-            'lr': 10 ** random.uniform(-3, -1),
+            'lr': 10 ** random.uniform(-4, -1),
             'weight_decay': 10 ** random.uniform(-10, -5),
             'focal_loss_node': focal_loss,
             'focal_loss_edge': focal_loss,
