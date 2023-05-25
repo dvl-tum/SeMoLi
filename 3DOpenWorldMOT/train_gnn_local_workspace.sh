@@ -4,7 +4,7 @@ directory_name = "trajectories_removestatic1_numcd44_removegroundrc0_remove_grou
 
 HYDRA_FULL_ERROR=1 python3 trainer.py \
 	models=GNN \
-	job_name=GNN_RealData_HS_Results \
+	job_name=GNN_RealData_HS2 \
 	data=waymo_traj \
 	multi_gpu=True \
 	out_path=/workspace/result \
@@ -37,7 +37,7 @@ HYDRA_FULL_ERROR=1 python3 trainer.py \
 	just_eval=False \
 	tracker_options.do_associate=False \
 	models.hyperparams.oracle_node=False \
-	models.hyperparams.oracle_edge=False \
+	models.hyperparams.oracle_edge=True \
 	models.hyperparams.do_visualize=False \
 	models.hyperparams.layer_norm=False \
 	models.hyperparams.augment=True \
