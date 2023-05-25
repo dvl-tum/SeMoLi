@@ -259,8 +259,12 @@ class TrajectoryDataset(PyGDataset):
         else:
             self._processed_paths = self.processed_paths
             logger.info('Not Processing this time :) ')
+    
+    def process(self):
+        logger.info("Processing on the single GPUS")
+        return
 
-    def process(self, multiprocessing=False):
+    def process_once(self, multiprocessing=False):
         self._processed_paths = self.processed_paths
         # already_processed = glob.glob(str(self.processed_dir)+'/*/*')
         already_processed = list()
@@ -281,6 +285,8 @@ class TrajectoryDataset(PyGDataset):
         else:
             for data in data_loader:
                 self.process_sweep(len(missing_paths), data)
+        
+        self.processed_once = True
 
     def load_initial_pc(
             self, 
@@ -548,6 +554,9 @@ class TrajectoryDataset(PyGDataset):
         return data
 
     def get(self, idx):
+        if not self.processed_once or self.do_process:
+            self.process_once()
+
         path = self._processed_paths[idx]
         try:
             data = torch.load(path)
@@ -621,15 +630,15 @@ def get_TrajectoryDataLoader(cfg, train=True, val=True, test=False):
         logger.info('TRAIN')
         train_data = TrajectoryDataset(
             cfg.data.data_dir,
-            'val',
-            cfg.data.trajectory_dir + '_val',
+            'train',
+            cfg.data.trajectory_dir + '_train',
             cfg.data.use_all_points,
             cfg.data.num_points,
             cfg.data.remove_static,
             cfg.data.static_thresh,
             cfg.data.debug,
             do_process=cfg.data.do_process,
-            _processed_dir=cfg.data.processed_dir + '_val')
+            _processed_dir=cfg.data.processed_dir + '_train')
     else:
         train_data = None
     if val:
