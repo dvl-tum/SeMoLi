@@ -260,27 +260,29 @@ class TrajectoryDataset(PyGDataset):
             self._processed_paths = self.processed_paths
             logger.info('Not Processing this time :) ')
 
-    def process(self, multiprocessing=False):
+    def process(self, multiprocessing=True):
         self._processed_paths = self.processed_paths
-        # already_processed = glob.glob(str(self.processed_dir)+'/*/*')
-        already_processed = list()
+        already_processed = glob.glob(str(self.processed_dir)+'/*/*')
+        
+        # already_processed = list()
         missing_paths = set(self._processed_paths).difference(already_processed)
-
         missing_paths = [os.path.join(
             self.trajectory_dir, os.path.basename(os.path.dirname(m)), os.path.basename(m)[:-2] + 'npz')\
                 for m in missing_paths]
-
+        print(len(self._processed_paths), len(already_processed), len(missing_paths))
         if len(missing_paths) and self.loader is None:
             self.loader = AV2SensorDataLoader(data_dir=self.split_dir, labels_dir=self.split_dir)
 
         data_loader = enumerate(missing_paths)            
+        from torch import multiprocessing as mp
+        mp.set_start_method('spawn')
+        self.len_missing = len(missing_paths)
         if multiprocessing:
-            with Pool() as pool:
-                _eval_sequence = partial(self.process_sweep, len(missing_paths))
-                pool.map(_eval_sequence, data_loader)
+            with mp.Pool(20) as pool:
+                pool.map(self.process_sweep, data_loader, chunksize=None)
         else:
             for data in data_loader:
-                self.process_sweep(len(missing_paths), data)
+                self.process_sweep(data)
 
     def load_initial_pc(
             self, 
@@ -338,10 +340,11 @@ class TrajectoryDataset(PyGDataset):
 
         return lidar_points_ego, mask
                 
-    def process_sweep(self, num_data, data):
+    def process_sweep(self, data):
         j, traj_file = data
-        if j % 10000 == 0:
-            logger.info(f"sweep {j}/{num_data}, {j}-th file")
+        print(j)
+        if j % 1 == 0:
+            logger.info(f"sweep {j}/{self.len_missing}, {j}-th file")
         
         processed_path = os.path.join(
             self.processed_dir,
@@ -494,19 +497,19 @@ class TrajectoryDataset(PyGDataset):
                 point_categories=point_categories,
                 point_instances=point_instances,
                 log_id=seq,
-                pc_normals=pc_normals)
+                pc_normals=pc_normals
+		)
         else:
             data = PyGData(
                 pc_list=torch.from_numpy(pc_list),
                 traj=torch.from_numpy(traj),
                 timestamps=torch.from_numpy(timestamps),
                 log_id=seq,
-                pc_normals=pc_normals)
-
+                pc_normals=pc_normals
+		)
         os.makedirs(os.path.dirname(processed_path), exist_ok=True)
         torch.save(data, osp.join(processed_path))
-        # print(f"Save {osp.join(processed_path)}...")
-    
+        
     def _remove_static(self, data):
         # remove static points
         mean_traj = data['traj'][:, :, :-1]
@@ -620,21 +623,21 @@ def get_TrajectoryDataLoader(cfg, train=True, val=True, test=False):
     if train and not cfg.just_eval:
         logger.info('TRAIN')
         train_data = TrajectoryDataset(
-            cfg.data.data_dir,
-            'val',
-            cfg.data.trajectory_dir + '_val',
+            cfg.data.data_dir + '_train',
+            'train',
+            cfg.data.trajectory_dir + '_train',
             cfg.data.use_all_points,
             cfg.data.num_points,
             cfg.data.remove_static,
             cfg.data.static_thresh,
             cfg.data.debug,
             do_process=cfg.data.do_process,
-            _processed_dir=cfg.data.processed_dir + '_val')
+            _processed_dir=cfg.data.processed_dir + '_train')
     else:
         train_data = None
     if val:
         logger.info("VAL")
-        val_data = TrajectoryDataset(cfg.data.data_dir,
+        val_data = TrajectoryDataset(cfg.data.data_dir + '_val',
                 'val',
                 cfg.data.trajectory_dir + '_val',
                 cfg.data.use_all_points_eval,
