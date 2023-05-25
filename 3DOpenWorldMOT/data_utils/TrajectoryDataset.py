@@ -186,6 +186,8 @@ class TrajectoryDataset(PyGDataset):
                 for i, flow_file in enumerate(sorted(os.listdir(os.path.join(self.processed_dir, self.seq)))):
                     if i % self.every_x_frame != 0:
                         continue
+                    '''if '1543280278723549' not in flow_file:
+                        continue'''
                     '''if 'gt' in str(self.processed_dir) and i > 20:
                         break'''
                     processed_paths.append(os.path.join(self.processed_dir, self.seq, flow_file))
@@ -393,7 +395,7 @@ class TrajectoryDataset(PyGDataset):
         if self.split != 'test':
             labels = self.loader.get_labels_at_lidar_timestamp(
                 log_id=seq, lidar_timestamp_ns=int(timestamps[0]))
-            filtered_file_path = '/dvlresearch/jenny/Waymo_Converted_filtered_val/val_1.0_per_frame_remove_non_move_remove_far_filtered_version.feather'
+            filtered_file_path = f'/dvlresearch/jenny/Waymo_Converted_filtered_{self.split}/{self.split}_1.0_per_frame_remove_non_move_remove_far_filtered_version.feather'
             labels_mov = self.loader.get_labels_at_lidar_timestamp_all(
                 filtered_file_path, log_id=seq, lidar_timestamp_ns=int(timestamps[0]), get_moving=True)
             
