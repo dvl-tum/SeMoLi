@@ -114,6 +114,7 @@ column_names_dets = [
     'timestamp_ns',
     'category',
     'num_interior_pts',
+    'pts_density',
     'log_id']
 
 column_dtypes = {
@@ -749,6 +750,7 @@ class Tracker3D():
                     int(det.timestamp.item()),
                     'REGULAR_VEHICLE',
                     det.num_interior,
+                    det.pts_density,
                     det.log_id]
                 track_vals.append(values)
         
@@ -775,6 +777,7 @@ class Tracker3D():
                         int(det.timestamp.item()),
                         'REGULAR_VEHICLE',
                         det.num_interior,
+                        det.pts_density,
                         det.log_id]
                     track_vals.append(values)
                     
@@ -1016,7 +1019,20 @@ class Track():
                     [torch.cos(alpha), torch.sin(alpha), 0],
                     [torch.sin(alpha), torch.cos(alpha), 0],
                     [0, 0, 1]])
-                self.final.append(Detection(rot, translation, lwh, det.timestamps[0, time], det.log_id, det.num_interior))
+
+                # rotate bounding box to get lwh in object coordinate system
+                pc = torch.stack([
+                    self.translation + torch.tensor([0.5, 0, 0]) * self.lwh,
+                    self.translation + torch.tensor([-0.5, 0, 0]) * self.lwh,
+                    self.translation + torch.tensor([0, 0.5, 0]) * self.lwh,
+                    self.translation + torch.tensor([0, -0.5, 0]) * self.lwh,
+                    self.translation + torch.tensor([0, 0, 0.5]) * self.lwh,
+                    self.translation + torch.tensor([0, 0, -0.5]) * self.lwh]).double()
+                pc = pc @ rot.T + (-self.translation @ rot.T)
+                lwh, _ = get_center_and_lwh(pc)
+
+                pts_density = (lwh[0] * lwh[1] * lwh[2]) / det.num_interior
+                self.final.append(Detection(rot, translation, lwh, det.timestamps[0, time], det.log_id, det.num_interior, pts_density=pts_density))
     
     def _get_traj(self, i=-1):
         return self.detections[i].trajectory
@@ -1152,7 +1168,8 @@ class InitialDetection():
         pc = pc @ rot.T + (-self.translation @ rot.T)
         self.lwh, _ = get_center_and_lwh(pc)
 
-        self.final = Detection(rot, alpha, self.translation, self.lwh, self.timestamps[0, 0], self.log_id, self.num_interior)
+        pts_density = (self.lwh[0] * self.lwh[1] * self.lwh[2]) / self.num_interior
+        self.final = Detection(rot, alpha, self.translation, self.lwh, self.timestamps[0, 0], self.log_id, self.num_interior, pts_density=pts_density)
 
         return self.final
 
@@ -1170,7 +1187,7 @@ def get_center_and_lwh(canonical_points, lwh=None, translation=None):
 
 
 class Detection():
-    def __init__(self, rotation, heading, translation, lwh, timestamp, log_id, num_interior) -> None:
+    def __init__(self, rotation, heading, translation, lwh, timestamp, log_id, num_interior, pts_density) -> None:
         self.rotation = rotation
         self.heading = heading
         self.translation = translation
@@ -1178,6 +1195,7 @@ class Detection():
         self.timestamp = timestamp
         self.log_id = log_id
         self.num_interior = num_interior
+        self.pts_density = pts_density
 
 
 
