@@ -271,7 +271,7 @@ class TrajectoryDataset(PyGDataset):
         self.process_once()
         return
 
-    def process_once(self, multiprocessing=False):
+    def process_once(self, multiprocessing=True):
         already_processed = glob.glob(str(self.processed_dir)+'/*/*')
         # already_processed = list()
         missing_paths = set(self._processed_paths).difference(already_processed)
@@ -378,10 +378,10 @@ class TrajectoryDataset(PyGDataset):
                 map_dict[seq] = ArgoverseStaticMap.from_map_dir(log_map_dirpath, build_raster=True)
             
         # load original pc
-        lidar_points_ego, mask = self.load_initial_pc(orig_path)
-        normals = points_normals.estimate_pointcloud_normals(
-            torch.from_numpy(lidar_points_ego).cuda().unsqueeze(0)).squeeze()
-        pc_normals = normals[mask]
+        # lidar_points_ego, mask = self.load_initial_pc(orig_path)
+        # normals = points_normals.estimate_pointcloud_normals(
+        #     torch.from_numpy(lidar_points_ego).cuda().unsqueeze(0)).squeeze()
+        # pc_normals = normals[mask]
 
         # load point clouds
         pred = np.load(traj_file)
@@ -509,7 +509,7 @@ class TrajectoryDataset(PyGDataset):
                 point_categories=point_categories,
                 point_instances=point_instances,
                 log_id=seq,
-                pc_normals=pc_normals
+                # pc_normals=pc_normals
 		)
         else:
             data = PyGData(
@@ -517,7 +517,7 @@ class TrajectoryDataset(PyGDataset):
                 traj=torch.from_numpy(traj),
                 timestamps=torch.from_numpy(timestamps),
                 log_id=seq,
-                pc_normals=pc_normals
+                # pc_normals=pc_normals
 		)
         os.makedirs(os.path.dirname(processed_path), exist_ok=True)
         torch.save(data, osp.join(processed_path))
