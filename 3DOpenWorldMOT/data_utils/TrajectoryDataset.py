@@ -273,7 +273,7 @@ class TrajectoryDataset(PyGDataset):
 
     def process_once(self, multiprocessing=True):
         already_processed = glob.glob(str(self.processed_dir)+'/*/*')
-        # already_processed = list()
+        already_processed = list()
         missing_paths = set(self._processed_paths).difference(already_processed)
         missing_paths = [os.path.join(
             self.trajectory_dir, os.path.basename(os.path.dirname(m)), os.path.basename(m)[:-2] + 'npz')\
@@ -287,7 +287,7 @@ class TrajectoryDataset(PyGDataset):
         self.len_missing = len(missing_paths)
         if multiprocessing:
             mp.set_start_method('forkserver')
-            with mp.Pool(20) as pool:
+            with mp.Pool() as pool:
                 pool.map(self.process_sweep, data_loader, chunksize=None)
         else:
             for data in data_loader:
