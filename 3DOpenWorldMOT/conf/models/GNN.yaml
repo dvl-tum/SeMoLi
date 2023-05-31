@@ -29,10 +29,8 @@ hyperparams:
     augment: False
     layer_sizes_edge: 
         l_1: 64
-        l_2: 64
     layer_sizes_node:
         l_1: 64
-        l_2: 64
 loss_hyperparams:
     bce_loss: True
     node_loss: False

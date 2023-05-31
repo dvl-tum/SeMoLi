@@ -71,7 +71,7 @@ class TrajectoryDataset(PyGDataset):
 
         self.class_dict = ARGOVERSE_CLASSES if 'argo' in self.data_dir else WAYMO_CLASSES
         super().__init__()
-
+        
         # import glob
         # a = len(self._processed_paths)
         # self._processed_paths = glob.glob(str(self.processed_dir)+'/*/*')
@@ -181,6 +181,7 @@ class TrajectoryDataset(PyGDataset):
     @property
     def processed_paths(self):
         if not self.do_process:
+            self.processed_once = True
             if self.seq is not None:
                 processed_paths = list()
                 for i, flow_file in enumerate(sorted(os.listdir(os.path.join(self.processed_dir, self.seq)))):
@@ -198,6 +199,8 @@ class TrajectoryDataset(PyGDataset):
                         for i, flow_file in enumerate(sorted(os.listdir(osp.join(self.processed_dir, seq))))\
                             if i % self.every_x_frame == 0]
         else:
+            print("HERE I AM")
+            self.processed_once = False
             if self.seq is not None:
                 processed_paths = list()
                 for seq in os.listdir(self.trajectory_dir):
@@ -219,6 +222,7 @@ class TrajectoryDataset(PyGDataset):
                 return processed_paths
             else:
                 seqs = os.listdir(self.trajectory_dir)
+                print(len(seqs))
                 processed_paths = [os.path.join(self.processed_dir, seq, flow_file[:-3] + 'pt')\
                     for seq in seqs\
                         for i, flow_file in enumerate(sorted(os.listdir(osp.join(self.trajectory_dir, seq))))\
@@ -253,23 +257,22 @@ class TrajectoryDataset(PyGDataset):
         return label
     
     def _process(self):
+        self._processed_paths = self.processed_paths
+        print(len(self._processed_paths))
         if self.do_process:
             logger.info('Processing...')
             os.makedirs(self.processed_dir, exist_ok=True)
             self.process()
             logger.info('Done!')
         else:
-            self._processed_paths = self.processed_paths
             logger.info('Not Processing this time :) ')
     
     def process(self):
-        logger.info("Processing on the single GPUS")
+        self.process_once()
         return
 
     def process_once(self, multiprocessing=False):
-        self._processed_paths = self.processed_paths
         already_processed = glob.glob(str(self.processed_dir)+'/*/*')
-        
         # already_processed = list()
         missing_paths = set(self._processed_paths).difference(already_processed)
         missing_paths = [os.path.join(
@@ -281,9 +284,9 @@ class TrajectoryDataset(PyGDataset):
 
         data_loader = enumerate(missing_paths)            
         from torch import multiprocessing as mp
-        mp.set_start_method('spawn')
         self.len_missing = len(missing_paths)
         if multiprocessing:
+            mp.set_start_method('forkserver')
             with mp.Pool(20) as pool:
                 pool.map(self.process_sweep, data_loader, chunksize=None)
         else:
@@ -399,6 +402,7 @@ class TrajectoryDataset(PyGDataset):
             labels = self.loader.get_labels_at_lidar_timestamp(
                 log_id=seq, lidar_timestamp_ns=int(timestamps[0]))
             filtered_file_path = f'/dvlresearch/jenny/Waymo_Converted_filtered_{self.split}/{self.split}_1.0_per_frame_remove_non_move_remove_far_filtered_version.feather'
+            filtered_file_path = f'/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/Waymo_Converted_filtered_{self.split}/{self.split}_1.0_per_frame_remove_non_move_remove_far_filtered_version.feather'
             labels_mov = self.loader.get_labels_at_lidar_timestamp_all(
                 filtered_file_path, log_id=seq, lidar_timestamp_ns=int(timestamps[0]), get_moving=True)
             
@@ -558,10 +562,7 @@ class TrajectoryDataset(PyGDataset):
         
         return data
 
-    def get(self, idx):
-        if not self.processed_once or self.do_process:
-            self.process_once()
-
+    def get(self, idx): 
         path = self._processed_paths[idx]
         try:
             data = torch.load(path)
