@@ -115,7 +115,7 @@ column_names_dets = [
     'category',
     'num_interior_pts',
     'pts_density',
-    'log_id']
+    'log_id'] + [f'{i}_{j}' for i in range(25) for j in ['x', 'y', 'z']]
 
 column_dtypes = {
     'timestamp_ns': 'int64',
@@ -144,6 +144,8 @@ column_dtypes_dets = {
     'ty_m': 'float32',
     'tz_m': 'float32',
     'num_interior_pts': 'int64'}
+
+column_dtypes_dets.update({f'{i}_{j}': 'float32' for i in range(25) for j in ['x', 'y', 'z']})
 
 logger = logging.getLogger("Model.Tracker")
 
@@ -751,7 +753,7 @@ class Tracker3D():
                     'REGULAR_VEHICLE',
                     det.num_interior,
                     det.pts_density,
-                    det.log_id]
+                    det.log_id] + det.trajectory.numpy().tolist()
                 track_vals.append(values)
         
         else:
@@ -778,7 +780,7 @@ class Tracker3D():
                         'REGULAR_VEHICLE',
                         det.num_interior,
                         det.pts_density,
-                        det.log_id]
+                        det.log_id] + det.trajectory.numpy().tolist()
                     track_vals.append(values)
                     
         track_vals = np.asarray(track_vals)
@@ -1165,11 +1167,13 @@ class InitialDetection():
             self.translation + torch.tensor([0, -0.5, 0]) * self.lwh,
             self.translation + torch.tensor([0, 0, 0.5]) * self.lwh,
             self.translation + torch.tensor([0, 0, -0.5]) * self.lwh]).double()
-        pc = pc @ rot.T + (-self.translation @ rot.T)
+        print(pc, rot, self.translation)
+        pc = pc @ rot.T + (-self.translation.double() @ rot.T)
         self.lwh, _ = get_center_and_lwh(pc)
 
         pts_density = (self.lwh[0] * self.lwh[1] * self.lwh[2]) / self.num_interior
-        self.final = Detection(rot, alpha, self.translation, self.lwh, self.timestamps[0, 0], self.log_id, self.num_interior, pts_density=pts_density)
+        trajectory = torch.mean(self.trajectory, dim=0)
+        self.final = Detection(rot, alpha, self.translation, self.lwh, self.timestamps[0, 0], self.log_id, self.num_interior, pts_density=pts_density, trajectory=trajectory)
 
         return self.final
 
@@ -1187,7 +1191,7 @@ def get_center_and_lwh(canonical_points, lwh=None, translation=None):
 
 
 class Detection():
-    def __init__(self, rotation, heading, translation, lwh, timestamp, log_id, num_interior, pts_density) -> None:
+    def __init__(self, rotation, heading, translation, lwh, timestamp, log_id, num_interior, pts_density, trajectory) -> None:
         self.rotation = rotation
         self.heading = heading
         self.translation = translation
@@ -1196,8 +1200,7 @@ class Detection():
         self.log_id = log_id
         self.num_interior = num_interior
         self.pts_density = pts_density
-
-
+        self.trajectory = trajectory.reshape(trajectory.shape[0]*trajectory.shape[1])
 
 def store_initial_detections(detections, tracks=False):
     if not tracks:

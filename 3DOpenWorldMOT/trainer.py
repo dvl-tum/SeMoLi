@@ -119,26 +119,27 @@ def load_model(cfg, checkpoints_dir, logger, rank=0):
             if cfg.wandb and (not cfg.multi_gpu or rank == 0):
                 wandb.login(key='3b716e6ab76d92ef92724aa37089b074ef19e29c')
                 wandb.init(config=cfg, project=cfg.job_name, name=name)
-            checkpoint = torch.load(cfg.models.weight_path)
-            chkpt_new = dict()
-            for k, v in checkpoint['model_state_dict'].items():
-                if 'module' in k:
-                    chkpt_new[k[7:]] = v
-                else:
-                    chkpt_new[k] = v
-            checkpoint['model_state_dict'] = chkpt_new
-            start_epoch = checkpoint['epoch'] if not cfg.just_eval else start_epoch
-            model.load_state_dict(checkpoint['model_state_dict'])
+            
             try:
                 checkpoint = torch.load(cfg.models.weight_path)
+                chkpt_new = dict()
+                for k, v in checkpoint['model_state_dict'].items():
+                    if 'module' in k:
+                        chkpt_new[k[7:]] = v
+                    else:
+                        chkpt_new[k] = v
+                checkpoint['model_state_dict'] = chkpt_new
                 start_epoch = checkpoint['epoch'] if not cfg.just_eval else start_epoch
                 model.load_state_dict(checkpoint['model_state_dict'])
-                logger.info(f'Use pretrain model')
-                # met = checkpoint['best_metric']
-                # metric_mode = checkpoint['metric_mode']
-                # logger.info(f'Use pretrain model with {metric_mode}: {met}')
+                met = checkpoint['best_metric']
+                metric_mode = checkpoint['metric_mode']
+                logger.info(f'Use pretrained model with {metric_mode}: {met}')
             except:
-                logger.info('No existing model, starting training from scratch...')
+                if cfg.models.weight_path != '':
+                    logger.info(f'Did not find pretrained model with {cfg.models.weight_path}')
+                    quit()
+                else:
+                    logger.info('No existing model, starting training from scratch...')
 
             if cfg.training.optim.optimizer.o_class == 'Adam':
                 optimizer = torch.optim.Adam(
