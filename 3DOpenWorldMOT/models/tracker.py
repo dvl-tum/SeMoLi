@@ -1206,9 +1206,9 @@ class Detection():
 
 def store_initial_detections(detections, tracks=False):
     if not tracks:
-        p = '/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/initial_dets'
+        p = f'{os.getcwd()}/../../../initial_dets'
     else:
-        p = '/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/initial_tracks' 
+        p = f'{os.getcwd()}/../../../initial_tracks'
     os.makedirs(p, exist_ok=True)
     
     if tracks:
@@ -1237,9 +1237,9 @@ def store_initial_detections(detections, tracks=False):
 
 def load_initial_detections(tracks=False, every_x_frame=1, overlap=1):
     if not tracks:
-        p = '/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/initial_dets'
+        p = f'{os.getcwd()}/../../../initial_dets'
     else:
-        p = '/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/initial_tracks'
+        p = f'{os.getcwd()}/../../../initial_tracks'
     
     detections = defaultdict(list)
     for d in os.listdir(p):
