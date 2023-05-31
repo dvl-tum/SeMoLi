@@ -235,9 +235,9 @@ def main(cfg):
             cfg.models.loss_hyperparams.gamma_edge = params_list[iter]['gamma_edge']
             cfg.models.loss_hyperparams.alpha_node = params_list[iter]['alpha_node']
             cfg.models.loss_hyperparams.alpha_edge = params_list[iter]['alpha_edge']
-            cfg.models.loss_hyperparams.node_loss = params_list[iter]['node_loss']
-            cfg.models.hyperparams.layer_sizes_edge = params_list[iter]['layer_sizes_edge']
-            cfg.models.hyperparams.layer_sizes_node = params_list[iter]['layer_sizes_node']
+            cfg.models.loss_hyperparams.node_loss = False #params_list[iter]['node_loss']
+            # cfg.models.hyperparams.layer_sizes_edge = params_list[iter]['layer_sizes_edge']
+            # cfg.models.hyperparams.layer_sizes_node = params_list[iter]['layer_sizes_node']
             cfg.training.epochs = 30
         
             print(f"Current params: {params_list[iter]}")
@@ -258,7 +258,7 @@ def main(cfg):
             in_args = (cfg, world_size)
             mp.spawn(train, args=in_args, nprocs=world_size, join=True)
         else:
-            train(1, cfg, world_size=1)
+            train(0, cfg, world_size=1)
         
         wandb.finish()
         logging.shutdown()
@@ -495,7 +495,8 @@ def train(rank, cfg, world_size):
                     av2_loader=val_data.loader,
                     rank=rank,
                     do_associate=cfg.tracker_options.do_associate,
-                    precomp_tracks=cfg.tracker_options.precomp_tracks)
+                    precomp_tracks=cfg.tracker_options.precomp_tracks,
+                    precomp_dets=cfg.tracker_options.precomp_dets)
 
             with torch.no_grad():
                 if is_neural_net:
@@ -537,10 +538,10 @@ def train(rank, cfg, world_size):
                                 data['point_instances'][batch_idx[g]:batch_idx[g+1]],
                                 last= i+1 == len(val_loader) and g+1 == len(all_clusters))
 
-                            if cfg.tracker_options.precomp_tracks:
+                            if cfg.tracker_options.precomp_dets:
                                 break
 
-                    if cfg.tracker_options.precomp_tracks:
+                    if cfg.tracker_options.precomp_dets:
                             break
 
                     if is_neural_net and logits[0] is not None:

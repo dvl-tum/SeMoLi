@@ -36,3 +36,4 @@ tracker_options: # Extra options for the tracker
   alpha: 0.95
   do_associate: False
   precomp_tracks: False
+  precomp_dets: False

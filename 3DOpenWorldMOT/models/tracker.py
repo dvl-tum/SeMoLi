@@ -161,7 +161,8 @@ class Tracker3D():
             av2_loader=None, 
             rank=0,
             do_associate=None,
-            precomp_tracks=False) -> None:
+            precomp_tracks=False,
+            precomp_dets=False) -> None:
         
         self.active_tracks = list()
         self.inactive_tracks = list()
@@ -175,6 +176,7 @@ class Tracker3D():
         self.av2_loader = av2_loader
         self.do_associate = do_associate
         self.precomp_tracks = precomp_tracks
+        self.precomp_dets = precomp_dets
 
         self.a_threshold = a_threshold
         self.i_threshold = i_threshold
@@ -215,8 +217,8 @@ class Tracker3D():
         # set new log id
         if self.log_id != log_id:
             self.new_log_id(log_id)
-
-        if self.precomp_tracks and self.do_associate:
+        
+        if self.precomp_dets and self.do_associate:
             found = self.to_feather()
             if not found:
                 logger.info(f'No detections found in {log_id}')
@@ -703,7 +705,8 @@ class Tracker3D():
         track_vals = list()
         if self.do_associate:
             if not self.precomp_tracks:
-                store_initial_detections(self.detections)
+                if not self.precomp_dets:
+                    store_initial_detections(self.detections)
                 self.detections = load_initial_detections()
                 # per timestampdetections
                 for i, timestamp in enumerate(sorted(self.detections.keys())):
@@ -750,7 +753,7 @@ class Tracker3D():
                     int(det.timestamp.item()),
                     'REGULAR_VEHICLE',
                     det.num_interior,
-                    det.pts_density,
+                    det.pts_density.item(),
                     det.log_id]
                 track_vals.append(values)
         
@@ -777,7 +780,7 @@ class Tracker3D():
                         int(det.timestamp.item()),
                         'REGULAR_VEHICLE',
                         det.num_interior,
-                        det.pts_density,
+                        det.pts_density.item(),
                         det.log_id]
                     track_vals.append(values)
                     
@@ -1158,6 +1161,8 @@ class InitialDetection():
             [0, 0, 1]]).double()
         
         # rotate bounding box to get lwh in object coordinate system
+        self.translation = self.translation.cpu()
+        self.lwh = self.lwh.cpu()
         pc = torch.stack([
             self.translation + torch.tensor([0.5, 0, 0]) * self.lwh,
             self.translation + torch.tensor([-0.5, 0, 0]) * self.lwh,
@@ -1165,7 +1170,7 @@ class InitialDetection():
             self.translation + torch.tensor([0, -0.5, 0]) * self.lwh,
             self.translation + torch.tensor([0, 0, 0.5]) * self.lwh,
             self.translation + torch.tensor([0, 0, -0.5]) * self.lwh]).double()
-        pc = pc @ rot.T + (-self.translation @ rot.T)
+        pc = pc @ rot.T + (-self.translation.double() @ rot.T)
         self.lwh, _ = get_center_and_lwh(pc)
 
         pts_density = (self.lwh[0] * self.lwh[1] * self.lwh[2]) / self.num_interior
@@ -1201,10 +1206,9 @@ class Detection():
 
 def store_initial_detections(detections, tracks=False):
     if not tracks:
-        p = '/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/initial_dets'
+        p = '/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/initial_dets'
     else:
-        p = '/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/initial_tracks'
-    
+        p = '/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/initial_tracks' 
     os.makedirs(p, exist_ok=True)
     
     if tracks:
@@ -1233,14 +1237,18 @@ def store_initial_detections(detections, tracks=False):
 
 def load_initial_detections(tracks=False, every_x_frame=1, overlap=1):
     if not tracks:
-        p = '/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/initial_dets'
+        p = '/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/initial_dets'
     else:
-        p = '/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/initial_tracks'
+        p = '/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/initial_tracks'
     
     detections = defaultdict(list)
     for d in os.listdir(p):
         dict_key = int(d.split('_')[0])
-        d = np.load(os.path.join(p, d))
+        try:
+            d = np.load(os.path.join(p, d))
+        except:
+            print(os.path.join(p, d))
+            quit()
         d = InitialDetection(
             torch.from_numpy(d['trajectory']), 
             torch.from_numpy(d['canonical_points']), 
