@@ -108,7 +108,7 @@ def get_feather_files(
 
         path_filtered = os.path.join(split_dir, file)
         path_filtered = '/dvlresearch/jenny/Waymo_Converted_filtered_val/val_1.0_per_frame_remove_non_move_remove_far_filtered_version.feather'
-
+        path_filtered = "/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/Waymo_Converted_filtered_val/val_1.0_per_frame_remove_non_move_remove_far_filtered_version.feather"
     if not is_gt or not os.path.isfile(path_filtered):
         df = None
         for i, path in enumerate(os.listdir(paths)):
