@@ -120,6 +120,7 @@ def get_feather_files(
         file = split + '_' + file
 
         path_filtered = os.path.join(split_dir, file)
+        path_filtered = "/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/Waymo_Converted_filtered_val/val_1.0_per_frame_remove_non_move_remove_far_filtered_version.feather"
         # check if filtered version already exists
         if os.path.isfile(path_filtered):
             df = feather.read_feather(path_filtered)
@@ -457,7 +458,7 @@ def eval_detection(
     if not len(seq_to_eval):
         return None, np.array([0, 2, 1, 3.142, 0])
 
-    gt_folder = os.path.join(gt_folder, split)
+    gt_folder = os.path.join(gt_folder + f'_{split}', split)
     loader = AV2SensorDataLoader(data_dir=Path(
         gt_folder), labels_dir=Path(gt_folder))
     dataset_dir = Path(gt_folder)
@@ -493,7 +494,7 @@ def eval_detection(
         loader=loader,
         gt_folder=gt_folder,
         classes_to_eval=classes_to_eval)
-
+    
     if just_eval:
         print("Loaded detections...")
         
@@ -503,6 +504,8 @@ def eval_detection(
     gts['category'] = [_class_dict[c] for c in gts['category']]
     dts['category'] = [_class_dict[c] for c in dts['category']]
     gts['category'] = ['REGULAR_VEHICLE'] * gts.shape[0]
+
+    gts = gts[gts['filter_moving']]
 
     if print_detail:
         # remove gt objects without lidar points inside
@@ -569,8 +572,10 @@ if __name__ == '__main__':
     tracker_dir = 'out/gt_all_egocomp_margin0.6_width25_oraclenode_oracleedge_4096_8000_mean_dist_over_time_min_mean_max_diffpostrajtime_min_mean_max_vel_nodescore_correlation_mygraph/val'
     tracker_dir = '4495651/out/gt_all_egocomp_margin0.6_width25_oraclenode_oracleedge_4096_8000_mean_dist_over_time_min_mean_max_diffpostrajtime_min_mean_max_vel_nodescore_correlation_mygraph/val'
     tracker_dir ='../../3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/out/all_egocomp_margin0.6_width25_oraclenode_oracleedge_4096_8000_mean_dist_over_time_min_mean_max_diffpostrajtime_min_mean_max_vel_nodescore_correlation_mygraph/val/'
+    tracker_dir = '/workspace/result/out/all_egocomp_margin0.6_width25_nooracle_64_64_3.5900203994472646e-07_0.06176295901709523_16000_16000__NS_MG_32_2.0_LN_/val/'
     gt_folder = 'data/waymo_converted'
     gt_folder = '../../../Waymo_Converted_GT'
+    gt_folder = '/workspace/Waymo_Converted'
     seq_list = os.listdir(tracker_dir)
     min_points = -1
     max_points = 1000000
@@ -592,7 +597,7 @@ if __name__ == '__main__':
             remove_non_move_thresh=1.0,
             classes_to_eval='all',
             debug=False,
-            visualize=True,
+            visualize=False,
             name=name,
             min_points=min_points,
             max_points=max_points,
