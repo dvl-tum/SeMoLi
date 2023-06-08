@@ -303,12 +303,12 @@ def train(rank, cfg, world_size):
                 val_data,
                 batch_size=cfg.training.batch_size_val)
         else:
-            val_sampler = DistributedSampler(
+            val_sampler = DistributedTestSampler(
                     val_data,
                     num_replicas=torch.cuda.device_count(),
-                    drop_last=False,
                     rank=rank,
-                    shuffle=False)
+                    shuffle=False,
+                    drop_last=False)
             val_loader = PyGDataLoader(
                 val_data,
                 batch_size=cfg.training.batch_size_val,
