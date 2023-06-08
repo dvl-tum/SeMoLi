@@ -97,7 +97,7 @@ class DistributedTestSampler(Sampler[T_co]):
         max_len = list()
         for i in range(self.num_replicas):
             replica_list = list()
-            for log_id in log_ids[i:(i+1)*self.num_log_ids]:
+            for log_id in log_ids[i*self.num_log_ids:(i+1)*self.num_log_ids]:
                 replica_list.extend(self.per_log_id[log_id])
             self.per_replica_list.append(replica_list)
             max_len.append(len(replica_list))
