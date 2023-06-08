@@ -3,6 +3,10 @@ import os
 from collections import defaultdict
 import numpy as np
 import matplotlib.colors as mcolors
+from pytorch3d.ops import box3d_overlap
+from lapsolver import solve_dense
+from pyarrow import feather
+import pandas as pd
 
 
 _class_dict = {
@@ -99,6 +103,7 @@ column_names_dets_wo_traj = [
     'qz',
     'timestamp_ns',
     'category',
+    'gt_id',
     'num_interior_pts',
     'pts_density',
     'log_id']
@@ -131,6 +136,7 @@ column_dtypes_dets_wo_traj = {
     'tx_m': 'float32',
     'ty_m': 'float32',
     'tz_m': 'float32',
+    'gt_id': 'str',
     'num_interior_pts': 'int64'}
 
 column_dtypes_dets = {f'{i}_{j}': 'float32' for i in range(25) for j in ['x', 'y', 'z']}.update(column_dtypes_dets_wo_traj)
@@ -169,10 +175,6 @@ class Track():
                 ego_SE3_ego0 = city_SE3_ego.inverse().compose(city_SE3_ego0)
                 points_c_time = ego_SE3_ego0.transform_point_cloud(points_c_time)
 
-                mins, maxs = points_c_time.min(axis=0), points_c_time.max(axis=0)
-                lwh = maxs - mins
-
-                translation = (maxs + mins)/2
                 if time < det.trajectory.shape[1] - 1:
                     mean_flow = (det.trajectory[:, time+1, :] - det.trajectory[:, time, :]).mean(axis=0)
                 else:
@@ -183,17 +185,7 @@ class Track():
                     [torch.sin(alpha), torch.cos(alpha), 0],
                     [0, 0, 1]])
 
-                # rotate bounding box to get lwh in object coordinate system
-                pc = torch.stack([
-                    self.translation + torch.tensor([0.5, 0, 0]) * self.lwh,
-                    self.translation + torch.tensor([-0.5, 0, 0]) * self.lwh,
-                    self.translation + torch.tensor([0, 0.5, 0]) * self.lwh,
-                    self.translation + torch.tensor([0, -0.5, 0]) * self.lwh,
-                    self.translation + torch.tensor([0, 0, 0.5]) * self.lwh,
-                    self.translation + torch.tensor([0, 0, -0.5]) * self.lwh]).double()
-                pc = pc @ rot.T + (-self.translation @ rot.T)
-                lwh, _ = get_center_and_lwh(pc)
-
+                lwh, translation = get_rotated_center_and_lwh(points_c_time, rot)
                 pts_density = (lwh[0] * lwh[1] * lwh[2]) / det.num_interior
                 self.final.append(Detection(rot, translation, lwh, det.timestamps[0, time], det.log_id, det.num_interior, pts_density=pts_density))
     
@@ -277,7 +269,7 @@ class Track():
 
 
 class InitialDetection():
-    def __init__(self, trajectory, canonical_points, timestamps, log_id, num_interior, overlap, gt_id) -> None:
+    def __init__(self, trajectory, canonical_points, timestamps, log_id, num_interior, overlap, gt_id, gt_id_box=None) -> None:
         self.trajectory = trajectory
         self.canonical_points = canonical_points
         self.timestamps = timestamps
@@ -285,6 +277,7 @@ class InitialDetection():
         self.num_interior = num_interior
         self.overlap = overlap
         self.gt_id = gt_id
+        self.gt_id_box = gt_id
         self.length = trajectory.shape[1]
         self.track_id = 0
         
@@ -293,16 +286,7 @@ class InitialDetection():
         self.mean_trajectory = torch.mean(self.trajectory, dim=0)
     
     def get_alpha_rot_t0_to_t1(self, t0=None, t1=None, trajectory=None, traj_t0=None, traj_t1=None):
-        if t0 is not None:
-            mean_flow = (trajectory[:, t1, :] - trajectory[:, t0, :]).mean(dim=0)
-        else:
-            mean_flow = (traj_t1 - traj_t0).mean(dim=0)
-        alpha = torch.arctan(mean_flow[1]/mean_flow[0])
-
-        rot = torch.tensor([
-            [torch.cos(alpha), -torch.sin(alpha), 0],
-            [torch.sin(alpha), torch.cos(alpha), 0],
-            [0, 0, 1]]).double()
+        rot, alpha = get_alpha_rot_t0_to_t1(t0, t1, trajectory, traj_t0, traj_t1)
         return rot, alpha
 
     def _get_traj(self):
@@ -327,41 +311,49 @@ class InitialDetection():
 
     def final_detection(self):
         pts_density = (self.lwh[0] * self.lwh[1] * self.lwh[2]) / self.num_interior
-        self.final = Detection(self.rot, self.alpha, self.translation, self.lwh, self.timestamps[0, 0], self.log_id, self.num_interior, pts_density=pts_density, trajectory=self.mean_trajectory)
+        self.final = Detection(self.rot, self.alpha, self.translation, self.lwh, self.timestamps[0, 0], self.log_id, self.num_interior, pts_density=pts_density, trajectory=self.mean_trajectory, gt_id=self.gt_id)
         return self.final
 
 
 def get_rotated_center_and_lwh(pc, rot):
-    lwh, translation = get_center_and_lwh(pc)
+    translation = get_center(pc)
     translation = translation.cpu()
-    lwh = lwh.cpu()
-    pc = torch.stack([
-        translation + torch.tensor([0.5, 0, 0]) * lwh,
-        translation + torch.tensor([-0.5, 0, 0]) * lwh,
-        translation + torch.tensor([0, 0.5, 0]) * lwh,
-        translation + torch.tensor([0, -0.5, 0]) * lwh,
-        translation + torch.tensor([0, 0, 0.5]) * lwh,
-        translation + torch.tensor([0, 0, -0.5]) * lwh]).double()
     pc = pc @ rot.T + (-translation.double() @ rot.T)
-    lwh, _ = get_center_and_lwh(pc)
+    lwh = get_lwh(pc)
+
     return lwh, translation
 
+def get_alpha_rot_t0_to_t1(t0=None, t1=None, trajectory=None, traj_t0=None, traj_t1=None):
+    if t0 is not None:
+        mean_flow = (trajectory[:, t1, :] - trajectory[:, t0, :]).mean(dim=0)
+    else:
+        mean_flow = (traj_t1 - traj_t0).mean(dim=0)
+    alpha = torch.arctan(mean_flow[1]/mean_flow[0])
 
-def get_center_and_lwh(canonical_points, lwh=None, translation=None):
+    rot = torch.tensor([
+        [torch.cos(alpha), -torch.sin(alpha), 0],
+        [torch.sin(alpha), torch.cos(alpha), 0],
+        [0, 0, 1]]).double()
+    return rot, alpha
+
+
+def get_center(canonical_points):
     points_c_time = canonical_points
     mins, maxs = points_c_time.min(dim=0), points_c_time.max(dim=0)
-    if lwh is None:
-        lwh = maxs.values - mins.values
-        translation = (maxs.values + mins.values)/2
-    else: 
-        lwh = lwh
-        translation = translation
+    translation = (maxs.values + mins.values)/2
 
-    return lwh, translation
+    return translation
+
+def get_lwh(object_points):
+    points_c_time = object_points
+    mins, maxs = points_c_time.min(dim=0), points_c_time.max(dim=0)
+    lwh = maxs.values - mins.values
+
+    return lwh
 
 
 class Detection():
-    def __init__(self, rotation, heading, translation, lwh, timestamp, log_id, num_interior, pts_density, trajectory) -> None:
+    def __init__(self, rotation, heading, translation, lwh, timestamp, log_id, num_interior, pts_density, trajectory, gt_id) -> None:
         self.rotation = rotation
         self.heading = heading
         self.translation = translation
@@ -371,10 +363,11 @@ class Detection():
         self.num_interior = num_interior
         self.pts_density = pts_density
         self.trajectory = trajectory.reshape(trajectory.shape[0]*trajectory.shape[1])
+        self.gt_id = gt_id
 
 
 class CollapsedDetection():
-    def __init__(self, rotation, heading, translation, lwh, traj, canonical_points, timestamp, log_id, num_interior, overlap, pts_density) -> None:
+    def __init__(self, rotation, heading, translation, lwh, traj, canonical_points, timestamp, log_id, num_interior, overlap, pts_density, gt_id) -> None:
         self.rotation = rotation
         self.heading = heading
         self.translation = translation
@@ -387,13 +380,14 @@ class CollapsedDetection():
         self.overlap = overlap
         self.track_id = 0
         self.pts_density = pts_density
+        self.gt_id = gt_id
             
 
-def store_initial_detections(detections, seq, tracks=False):
+def store_initial_detections(detections, seq, out_path, split, tracks=False, gt_path=None):
     if not tracks:
-        p = f'{os.getcwd()}/../../../initial_dets/{seq}'
+        p = f'{out_path}/initial_dets/{split}/{seq}'
     else:
-        p = f'{os.getcwd()}/../../../initial_tracks/{seq}'
+        p = f'{out_path}/initial_tracks/{split}/{seq}'
     os.makedirs(p, exist_ok=True)
     
     if tracks:
@@ -403,6 +397,8 @@ def store_initial_detections(detections, seq, tracks=False):
         detections =  extracted_detections
     else:
         detections = {k.item(): v for k, v in detections.items()}
+        gt = load_gt(seq, gt_path)
+        detections = assign_gt(detections, gt)
         
     for _, t in enumerate(detections):
         for j, d in enumerate(detections[t]):
@@ -415,21 +411,16 @@ def store_initial_detections(detections, seq, tracks=False):
                 num_interior=d.num_interior,
                 overlap=d.overlap,
                 gt_id=d.gt_id,
-                length=d.length,
+                gt_id_box=d.gt_id_box,
                 track_id=d.track_id,
             )
     print(f'Stored {tracks}.....')
 
-def load_initial_detections(tracks=False, seq=None, every_x_frame=1, overlap=1, hydra_add=True):
-    if hydra_add:
-        hydra_add = '../../../'
-    else:
-        hydra_add = ''
-
+def load_initial_detections(out_path, split, seq=None, tracks=False, every_x_frame=1, overlap=1):
     if not tracks:
-        p = f'{os.getcwd()}/{hydra_add}initial_dets/{seq}'
+        p = f'{out_path}/initial_dets/{split}/{seq}'
     else:
-        p = f'{os.getcwd()}/{hydra_add}initial_tracks/{seq}'
+        p = f'{out_path}/initial_tracks/{split}/{seq}'
 
     detections = defaultdict(list)
     for d in os.listdir(p):
@@ -447,7 +438,8 @@ def load_initial_detections(tracks=False, seq=None, every_x_frame=1, overlap=1, 
             d['log_id'].item(),
             d['num_interior'].item(),
             d['overlap'].item(),
-            d['gt_id'].item()
+            d['gt_id'].item(),
+            d['gt_id_box'].item(),
         )
         if not tracks:
             detections[d.timestamps[0, 0].item()].append(d)
@@ -466,3 +458,158 @@ def load_initial_detections(tracks=False, seq=None, every_x_frame=1, overlap=1, 
         detections = tracks
 
     return detections
+
+
+def load_gt(seq_name, data_root_path):
+    """
+    Load MOT ground truth file
+    """
+    seq_path = os.path.join(data_root_path, seq_name)  # Sequence path
+    gt_file_path = os.path.join(seq_path, "annotations.feather")   # Ground truth file
+
+    gt_df = feather.read_feather(gt_file_path)
+
+    return gt_df
+
+
+def assign_gt(dets, gt, gt_assign_min_iou=0.25):
+    """
+    Assigns a GT identity to every detection in self.det_df, based on the ground truth boxes in self.gt_df.
+    The assignment is done frame by frame via bipartite matching.
+    """
+    for time, time_dets in dets:
+        frame_gt = gt[gt.timestamp_ns == time]
+
+        # Compute IoU for each pair of detected / GT bounding box
+        dets_trans = torch.stack([d.translation for d in time_dets])
+        dets_lwh = torch.stack([d.lwh for d in time_dets])
+        dets_alpha = torch.stack([d.alpha for d in time_dets])
+        det_boxes = _create_box(
+            dets_trans,
+            dets_lwh, 
+            dets_alpha)
+        
+        gt_boxes = _create_box(
+            torch.from_numpy(frame_gt[['tx_m', 'ty_m', 'tz_m']].values),
+            torch.from_numpy(frame_gt[['length_m', 'width_m', 'height_m']].values), 
+            torch.from_numpy(np.arccos(frame_gt['qw'].values)*2))
+        
+        _, iou_matrix = box3d_overlap(
+            det_boxes.cuda(),
+            gt_boxes.cuda(),
+            eps=1e-6)
+
+        iou_matrix[iou_matrix < gt_assign_min_iou] = np.nan
+        dist_matrix = 1 - iou_matrix
+        assigned_detect_ixs, assigned_detect_ixs_ped_ids = solve_dense(dist_matrix)
+        unassigned_detect_ixs = np.array(list(set(range(len(time_dets))) - set(assigned_detect_ixs)))
+
+        assigned_detect_ixs_ped_ids = frame_gt.iloc[assigned_detect_ixs_ped_ids]['id'].values
+
+        for i, idx in enumerate(assigned_detect_ixs):
+            time_dets[idx].gt_id_box = assigned_detect_ixs_ped_ids[i]
+        for idx in unassigned_detect_ixs:
+            time_dets[idx].gt_id_box = -1
+    return dets
+    
+
+def _create_box(xyz, lwh, rot):
+    '''
+    x, y, z = xyz
+    l, w, h = lwh
+
+    
+    verts = torch.tensor(
+        [
+            [x - l / 2.0, y - w / 2.0, z - h / 2.0],
+            [x + l / 2.0, y - w / 2.0, z - h / 2.0],
+            [x + l / 2.0, y + w / 2.0, z - h / 2.0],
+            [x - l / 2.0, y + w / 2.0, z - h / 2.0],
+            [x - l / 2.0, y - w / 2.0, z + h / 2.0],
+            [x + l / 2.0, y - w / 2.0, z + h / 2.0],
+            [x + l / 2.0, y + w / 2.0, z + h / 2.0],
+            [x - l / 2.0, y + w / 2.0, z + h / 2.0],
+        ],
+        device=xyz.device,
+        dtype=torch.float32,
+    )
+    '''
+
+    unit_vertices_obj_xyz_m = torch.tensor(
+        [
+            [- 1, - 1, - 1],
+            [+ 1, - 1, - 1],
+            [+ 1, + 1, - 1],
+            [- 1, + 1, - 1],
+            [- 1, - 1, + 1],
+            [+ 1, - 1, + 1],
+            [+ 1, + 1, + 1],
+            [- 1, + 1, + 1],
+        ],
+        device=xyz.device,
+        dtype=torch.float32,
+    )
+
+    # Transform unit polygons.
+    vertices_obj_xyz_m = (lwh/2.0) * unit_vertices_obj_xyz_m
+    vertices_dst_xyz_m = vertices_obj_xyz_m @ rot.T + xyz
+    vertices_dst_xyz_m = vertices_dst_xyz_m.type(torch.float32)
+    return vertices_dst_xyz_m
+
+
+def to_feather(detections, log_id, out_path, split, rank, precomp_dets=False):
+    track_vals = list()
+    if precomp_dets:
+        store_initial_detections(detections, seq=log_id)
+
+    # per timestamp detections
+    for i, timestamp in enumerate(sorted(detections.keys())):
+        dets = detections[timestamp]
+        for det in dets:
+            det = det.final_detection()
+            # quaternion rotation around z axis
+            quat = torch.tensor([torch.cos(det.heading/2), 0, 0, torch.sin(det.heading/2)]).numpy()
+            # REGULAR_VEHICLE = only dummy class
+            values = [
+                det.translation[0].item(),
+                det.translation[1].item(),
+                det.translation[2].item(),
+                det.lwh[0].item(),
+                det.lwh[1].item(),
+                det.lwh[2].item(),
+                quat[0],
+                quat[1],
+                quat[2],
+                quat[3],
+                int(det.timestamp.item()),
+                'REGULAR_VEHICLE',
+                det.gt_id,
+                det.num_interior,
+                det.pts_density,
+                det.log_id] + det.trajectory.numpy().tolist()
+            track_vals.append(values)
+                
+    track_vals = np.asarray(track_vals)
+
+    if track_vals.shape[0] == 0:
+        return False
+
+    df = pd.DataFrame(
+        data=track_vals,
+        columns=column_names_dets)
+    df = df.astype(column_dtypes_dets)
+    detections = dict()
+
+    os.makedirs(os.path.join(out_path, split, log_id), exist_ok=True)
+    os.makedirs(os.path.join(out_path, split, 'feathers'), exist_ok=True)
+    write_path = os.path.join(out_path, split, 'feathers', f'all_{rank}.feather') 
+
+    if os.path.isfile(write_path):
+        df_all = feather.read_feather(write_path)
+        df_all = df_all.append(df)
+    else:
+        df_all = df
+
+    feather.write_feather(df_all, write_path)
+    return True
+

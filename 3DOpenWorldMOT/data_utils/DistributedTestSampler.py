@@ -86,11 +86,11 @@ class DistributedTestSampler(Sampler[T_co]):
         for i, p in enumerate(self.dataset._processed_paths):
             log_id = os.path.basename(os.path.dirname(p))
             self.per_log_id[log_id].append(i)
-        print(len(self.per_log_id))
+
         # If the dataset length is evenly divisible by # of replicas, then there
         # is no need to drop any data, since the dataset will be split equally.
         self.num_log_ids = math.ceil(len(self.per_log_id) / self.num_replicas)  # type: ignore[arg-type]
-        print(self.num_log_ids)
+
         # get per replica paths and their length
         self.per_replica_list = list()
         log_ids = list(self.per_log_id.keys())
@@ -101,7 +101,6 @@ class DistributedTestSampler(Sampler[T_co]):
                 replica_list.extend(self.per_log_id[log_id])
             self.per_replica_list.append(replica_list)
             max_len.append(len(replica_list))
-        print(max_len)
         
         # get maximum length replica paths and expected total size of datset with padding
         self.num_samples = max(max_len)
@@ -112,7 +111,6 @@ class DistributedTestSampler(Sampler[T_co]):
         for i in range(self.num_replicas):
             if len(self.per_replica_list[i]) < self.num_samples:
                 padding_size = self.num_samples - len(self.per_replica_list[i])
-                print(padding_size, self.num_samples)
                 self.per_replica_list[i] += self.per_replica_list[i][padding_size:]
             assert len(self.per_replica_list[i]) == self.num_samples
         

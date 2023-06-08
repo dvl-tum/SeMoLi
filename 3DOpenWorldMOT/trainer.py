@@ -12,7 +12,7 @@ import torch.multiprocessing as mp
 from torch_geometric.loader import DataLoader as PyGDataLoader
 import torch.distributed as dist
 
-from models import _model_factory, _loss_factory, Tracker3D
+from models import _model_factory, _loss_factory, Detector3D
 from data_utils.TrajectoryDataset import get_TrajectoryDataLoader
 from data_utils.DistributedTestSampler import DistributedTestSampler
 from TrackEvalOpenWorld.scripts.run_av2_ow import evaluate_av2_ow_MOT
@@ -253,13 +253,12 @@ def main(cfg):
         logger.info("start loading training data ...")
         train_data, val_data, test_data = get_TrajectoryDataLoader(cfg)
 
-    
         if cfg.multi_gpu:
             world_size = torch.cuda.device_count()
             in_args = (cfg, world_size)
             mp.spawn(train, args=in_args, nprocs=world_size, join=True)
         else:
-            train(0, cfg, world_size=1)
+            train(1, cfg, world_size=1)
         
         wandb.finish()
         logging.shutdown()
@@ -483,21 +482,17 @@ def train(rank, cfg, world_size):
                 num_edge_pos = torch.zeros(len(val_loader)).to(rank)
                 num_edge_neg = torch.zeros(len(val_loader)).to(rank)
 
-            # intialize tracker
+            # intialize detector
             if do_corr_clustering:
-                tracker = Tracker3D(
+                detector = Detector3D(
                     out_path + name,
                     split='val',
-                    a_threshold=cfg.tracker_options.a_threshold,
-                    i_threshold=cfg.tracker_options.i_threshold,
                     every_x_frame=cfg.data.every_x_frame,
-                    num_interior=cfg.tracker_options.num_interior,
-                    overlap=cfg.tracker_options.overlap,
+                    num_interior=cfg.detection_options.num_interior,
+                    overlap=cfg.detection_options.overlap,
                     av2_loader=val_data.loader,
                     rank=rank,
-                    do_associate=cfg.tracker_options.do_associate,
-                    precomp_tracks=cfg.tracker_options.precomp_tracks,
-                    precomp_dets=cfg.tracker_options.precomp_dets)
+                    precomp_dets=cfg.detection_options.precomp_dets)
 
             with torch.no_grad():
                 if is_neural_net:
@@ -519,7 +514,7 @@ def train(rank, cfg, world_size):
                             # continue if we didnt find clusters
                             if not len(clusters):
                                 if i+1 == len(val_loader) and g+1 == len(all_clusters):
-                                    found = tracker.to_feather()
+                                    found = detector.to_feather()
                                     if not found:
                                         logger.info(f'No detections found in {data.log_id[g]}')
                                 continue
@@ -530,7 +525,7 @@ def train(rank, cfg, world_size):
                             _nmis.append(nmi)
 
                             # generate detections
-                            detections = tracker.get_detections(
+                            detections = detector.get_detections(
                                 data.pc_list[batch_idx[g]:batch_idx[g+1]],
                                 data.traj[batch_idx[g]:batch_idx[g+1]],
                                 clusters,
@@ -538,12 +533,6 @@ def train(rank, cfg, world_size):
                                 data.log_id[g],
                                 data['point_instances'][batch_idx[g]:batch_idx[g+1]],
                                 last= i+1 == len(val_loader) and g+1 == len(all_clusters))
-
-                            if cfg.tracker_options.precomp_dets:
-                                break
-
-                    if cfg.tracker_options.precomp_dets:
-                            break
 
                     if is_neural_net and logits[0] is not None:
                         loss, log_dict, hist_node, hist_edge = criterion(logits, data, edge_index, rank, mode='eval')
@@ -630,30 +619,30 @@ def train(rank, cfg, world_size):
                 if rank == 0 or not cfg.multi_gpu:
                     if do_corr_clustering:
                         # get sequence list for evaluation
-                        tracker_dir = os.path.join(tracker.out_path, tracker.split)
-                        if os.path.isdir(os.path.join(tracker_dir, 'feathers')):
-                            for i, rank_file in enumerate(os.listdir(os.path.join(tracker_dir, 'feathers'))):
-                                # with open(os.path.join(tracker_dir, 'feathers', rank_file), 'rb') as f:
-                                df = feather.read_feather(os.path.join(tracker_dir, 'feathers', rank_file))
+                        detector_dir = os.path.join(detector.out_path, detector.split)
+                        if os.path.isdir(os.path.join(detector_dir, 'feathers')):
+                            for i, rank_file in enumerate(os.listdir(os.path.join(detector_dir, 'feathers'))):
+                                # with open(os.path.join(detector_dir, 'feathers', rank_file), 'rb') as f:
+                                df = feather.read_feather(os.path.join(detector_dir, 'feathers', rank_file))
                                 if i == 0:
                                     df_all = df
                                 else:
                                     df_all = df_all.append(df)
                             
-                            for log_id in os.listdir(tracker_dir):
+                            for log_id in os.listdir(detector_dir):
                                 if 'feather' in log_id:
                                     continue
                                 df_seq = df_all[df_all['log_id']==log_id]
                                 df_seq = df_seq.drop(columns=['log_id'])
-                                write_path = os.path.join(tracker_dir, log_id, 'annotations.feather')
+                                write_path = os.path.join(detector_dir, log_id, 'annotations.feather')
                                 with open(write_path, 'wb') as f:
                                     feather.write_feather(df_seq, f)
                             
-                            if os.path.isdir(os.path.join(tracker_dir, 'feathers')):
-                                shutil.rmtree(os.path.join(tracker_dir, 'feathers'))
+                            if os.path.isdir(os.path.join(detector_dir, 'feathers')):
+                                shutil.rmtree(os.path.join(detector_dir, 'feathers'))
                     
                         try:
-                            seq_list = os.listdir(tracker_dir)
+                            seq_list = os.listdir(detector_dir)
                         except:
                             seq_list = list()
                     
@@ -664,7 +653,7 @@ def train(rank, cfg, world_size):
                         # evaluate detection
                         _, detection_metric = eval_detection.eval_detection(
                             gt_folder=os.path.join(os.getcwd(), cfg.data.data_dir),
-                            trackers_folder=tracker_dir,
+                            trackers_folder=detector_dir,
                             seq_to_eval=seq_list,
                             remove_far=True,#'80' in cfg.data.trajectory_dir,
                             remove_non_drive='non_drive' in cfg.data.trajectory_dir,
