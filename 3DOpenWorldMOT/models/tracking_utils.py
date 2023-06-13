@@ -139,7 +139,8 @@ column_dtypes_dets_wo_traj = {
     'gt_id': 'str',
     'num_interior_pts': 'int64'}
 
-column_dtypes_dets = {f'{i}_{j}': 'float32' for i in range(25) for j in ['x', 'y', 'z']}.update(column_dtypes_dets_wo_traj)
+column_dtypes_dets = {f'{i}_{j}': 'float32' for i in range(25) for j in ['x', 'y', 'z']}
+column_dtypes_dets.update(column_dtypes_dets_wo_traj)
 
 
 
@@ -597,6 +598,9 @@ def to_feather(detections, log_id, out_path, split, rank, precomp_dets=False):
     df = pd.DataFrame(
         data=track_vals,
         columns=column_names_dets)
+    print(column_dtypes_dets)
+    print(df[['pts_density', 'category']], column_dtypes_dets)
+    print(column_dtypes_dets)
     df = df.astype(column_dtypes_dets)
     detections = dict()
 

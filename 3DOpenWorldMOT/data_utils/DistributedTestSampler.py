@@ -111,7 +111,7 @@ class DistributedTestSampler(Sampler[T_co]):
         for i in range(self.num_replicas):
             if len(self.per_replica_list[i]) < self.num_samples:
                 padding_size = self.num_samples - len(self.per_replica_list[i])
-                self.per_replica_list[i] += self.per_replica_list[i][padding_size:]
+                self.per_replica_list[i] += self.per_replica_list[i][-padding_size:]
             assert len(self.per_replica_list[i]) == self.num_samples
         
         # flatten list
