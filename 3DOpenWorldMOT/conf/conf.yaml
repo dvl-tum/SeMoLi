@@ -40,7 +40,7 @@ tracker_options: # Extra options for the tracker
   tracked_dets: 'tracked_dets'
   registered_dets: 'registered_dets'
   tracker_type: 'OnlineOracleTracker'
-  registration_type: 'FlowRegistration'
+  registration_type: 'Flow'
   collaps_type: 'SimpleCollaps'
   out_path_for_eval: 'tracks/tracks_for_eval'
 

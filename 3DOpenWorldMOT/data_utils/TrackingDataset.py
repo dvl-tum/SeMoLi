@@ -21,9 +21,10 @@ class MOT3DTrackDataset:
         self.gt_path = gt_path
         self.data = os.listdir(os.path.join(dataset_path, split))
 
-    def get(self, idx):
+    def __getitem__(self, idx):
         seq_name = self.data[idx]
         return seq_name, self.dataset_path, self.gt_path, self.split
 
-
+    def __len__(self):
+        return len(self.data)
 

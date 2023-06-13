@@ -385,10 +385,7 @@ class CollapsedDetection():
             
 
 def store_initial_detections(detections, seq, out_path, split, tracks=False, gt_path=None):
-    if not tracks:
-        p = f'{out_path}/initial_dets/{split}/{seq}'
-    else:
-        p = f'{out_path}/initial_tracks/{split}/{seq}'
+    p = f'{out_path}/{split}/{seq}'
     os.makedirs(p, exist_ok=True)
     
     if tracks:
@@ -418,10 +415,7 @@ def store_initial_detections(detections, seq, out_path, split, tracks=False, gt_
     print(f'Stored {tracks}.....')
 
 def load_initial_detections(out_path, split, seq=None, tracks=False, every_x_frame=1, overlap=1):
-    if not tracks:
-        p = f'{out_path}/initial_dets/{split}/{seq}'
-    else:
-        p = f'{out_path}/initial_tracks/{split}/{seq}'
+    p = f'{out_path}/{split}/{seq}'
 
     detections = defaultdict(list)
     for d in os.listdir(p):

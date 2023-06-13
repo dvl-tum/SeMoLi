@@ -1,10 +1,10 @@
 
 import hydra
 from omegaconf import OmegaConf
-from .models import _tracker_factory, _registration_factory, _collaps_factory
+from models import _tracker_factory, _registration_factory, _collaps_factory
 import logging
-from .data_utils import MOT3DTrackDataset, MOT3DSeqDataset, DistributedSeqSampler
-from .models.tracking_utils import load_initial_detections, store_initial_detections, to_feather
+from data_utils import MOT3DTrackDataset, MOT3DSeqDataset, DistributedSeqSampler
+from models.tracking_utils import load_initial_detections, store_initial_detections, to_feather
 import os
 from av2.datasets.sensor.av2_sensor_dataloader import AV2SensorDataLoader
 from pathlib import Path
@@ -104,20 +104,20 @@ def main(cfg):
     if cfg.tracker_options.collaps:
         InitialDetProcessor.eval(
             cfg,
-            os.path.join(cfg.tracking_options.out_path_for_eval, 'collapsed'),
-            os.listdir(os.path.join(cfg.tracking_options.out_path_for_eval, 'collapsed')),
+            os.path.join(cfg.tracker_options.out_path_for_eval, 'collapsed'),
+            os.listdir(os.path.join(cfg.tracker_options.out_path_for_eval, 'collapsed')),
             'Collapsed')
     # if cfg.tracker_options.track:
     #     InitialDetProcessor.eval(
     #         cfg,
-    #         os.path.join(cfg.tracking_options.out_path_for_eval, 'tracked'),
-    #         os.listdir(os.path.join(cfg.tracking_options.out_path_for_eval, 'tracked')),
+    #         os.path.join(cfg.tracker_options.out_path_for_eval, 'tracked'),
+    #         os.listdir(os.path.join(cfg.tracker_options.out_path_for_eval, 'tracked')),
     #         'Tracked')
     if cfg.tracker_options.register:
         InitialDetProcessor.eval(
             cfg,
-            os.path.join(cfg.tracking_options.out_path_for_eval,
-            'registered'), os.listdir(os.path.join(cfg.tracking_options.out_path_for_eval, 'registered')),
+            os.path.join(cfg.tracker_options.out_path_for_eval,
+            'registered'), os.listdir(os.path.join(cfg.tracker_options.out_path_for_eval, 'registered')),
             'Registered')
 
 
@@ -150,31 +150,33 @@ def track(rank, cfg, world_size):
     
     for data in dataloader:
         seq_name, dataset_path, gt_path, split = data
+        seq_name, dataset_path, gt_path, split = seq_name[0], dataset_path[0], gt_path[0], split[0]
         detsprocessor = InitialDetProcessor(
-            tracker_type=cfg.tracking_options.tracker_type,
-            registration_type=cfg.tracking_options.registration_type,
-            collaps_type=cfg.tracking_options.collaps_type,
+            tracker_type=cfg.tracker_options.tracker_type,
+            tracker_params=cfg.tracker_options,
+            registration_type=cfg.tracker_options.registration_type,
+            collaps_type=cfg.tracker_options.collaps_type,
             every_x_frame=1,
             overlap=25, 
             av2_loader=loader,
             rank=0,
-            track_data_path=cfg.tracking_options.track_data_path,
-            initial_dets_path=cfg.tracking_options.initial_dets,
-            collapsed_dets_path=cfg.tracking_options.collapsed_dets,
-            tracked_dets_path=cfg.tracking_options.tracked_dets,
-            registered_dets_path=cfg.tracking_options.registered_dets,
+            track_data_path=cfg.tracker_options.track_data_path,
+            initial_dets_path=cfg.tracker_options.initial_dets,
+            collapsed_dets_path=cfg.tracker_options.collapsed_dets,
+            tracked_dets_path=cfg.tracker_options.tracked_dets,
+            registered_dets_path=cfg.tracker_options.registered_dets,
             gt_path=gt_path,
             split=split)
-
+        
         if cfg.tracker_options.collaps:
             detections = detsprocessor.collaps(seq_name, split)
-            detsprocessor.to_feather(detections, seq_name, os.path.join(cfg.tracking_options.out_path_for_eval, 'collapsed'))
+            detsprocessor.to_feather(detections, seq_name, os.path.join(cfg.tracker_options.out_path_for_eval, 'collapsed'))
         if cfg.tracker_options.track:
             detections = detsprocessor.track(seq_name, split)
-            # detsprocessor.to_feather(detections, seq_name, os.path.join(cfg.tracking_options.out_path_for_eval, 'tracked'))
+            # detsprocessor.to_feather(detections, seq_name, os.path.join(cfg.tracker_options.out_path_for_eval, 'tracked'))
         if cfg.tracker_options.register:
             detections = detsprocessor.register(seq_name, split)
-            detsprocessor.to_feather(detections, seq_name, os.path.join(cfg.tracking_options.out_path_for_eval, 'registered'))
+            detsprocessor.to_feather(detections, seq_name, os.path.join(cfg.tracker_options.out_path_for_eval, 'registered'))
 
 
 if __name__ == "__main__":
