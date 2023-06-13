@@ -8,6 +8,7 @@ from .SimpleTracker import SimpleTracker
 from .OracleTracker import OnlineOracleTracker, OfflineOracleTracker
 from .icp_registration import ICPRegistration
 from .flow_registration import FlowRegistration
+from .collapse import Collapser
 
 _model_factory = {
     'DBSCAN': DBSCAN,
@@ -28,4 +29,7 @@ _tracker_factory = {
 _registration_factory = {
     'ICP': ICPRegistration,
     'Flow': FlowRegistration
+}
+_collaps_factory = {
+    'SimpleCollaps': Collapser,
 }

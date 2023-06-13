@@ -30,6 +30,20 @@ tracker_options: # Extra options for the tracker
   matching: 'greedy'
   alpha: 0.95
   overlap: 5
+  track_data_path: 'tracks/tracks'
+  split: val
+  collaps: True
+  track: True
+  register: True
+  initial_dets: 'initial_dets'
+  collapsed_dets: 'collapsed_dets'
+  tracked_dets: 'tracked_dets'
+  registered_dets: 'registered_dets'
+  tracker_type: 'OnlineOracleTracker'
+  registration_type: 'FlowRegistration'
+  collaps_type: 'SimpleCollaps'
+  out_path_for_eval: 'tracks/tracks_for_eval'
+
 
 detection_options:                                                                       
   overlap: 5
