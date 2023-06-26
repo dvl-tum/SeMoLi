@@ -79,6 +79,15 @@ class Detector3D():
         detections = list()
         if type(clusters) == np.ndarray:
             clusters = torch.from_numpy(clusters).to(self.rank)
+        
+        if str(gt_instance_ids.device) == 'cpu':
+            gt_instance_ids = gt_instance_ids.to(self.rank)
+        
+        if str(points.device) == 'cpu':
+            points = points.to(self.rank)
+        
+        if str(traj.device) == 'cpu':
+            traj = traj.to(self.rank)
 
         for c in torch.unique(clusters):
             num_interior = torch.sum(clusters==c).item()

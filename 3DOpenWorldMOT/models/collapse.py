@@ -10,7 +10,7 @@ import sklearn
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import pandas as pd
-
+import models
 
 
 def convert_from_t0_to_t1(av2_loader, log_id, t0, t1, points):
@@ -28,7 +28,6 @@ class Collapser():
         self.overlap = overlap
         self.assign = assign
         self.collaps_mode = collaps_mode
-        self.gt_dir = gt_dir
         self.do_track = do_track
 
     def collaps(self, data, seq, gt_dir):
@@ -38,11 +37,11 @@ class Collapser():
         """
         timestamp_list = sorted([int(p[:-8]) for p in os.listdir(os.path.join(gt_dir, seq, 'sensors', 'lidar'))])
         collapsed_detections = defaultdict(list)
-        count = 0
+        _count = 0
         for k in sorted(data.keys()):
-            if count % 50 == 0:
-                print(f'{count}/{len(data)}')
-            count += 1
+            if _count % 50 == 0:
+                print(f'{_count}/{len(data)}')
+            _count += 1
             k_idx = timestamp_list.index(k)
             # go only until time = overlap - 2 cos we always need time + 1 for flow
             timestamps = timestamp_list[max(0, k_idx-(self.overlap-2)):k_idx+1]
@@ -78,6 +77,7 @@ class Collapser():
                                 len(timestamps)-i,
                                 traj_city)
                             lwh, translation = get_rotated_center_and_lwh(pc_city, rot)
+                            # print(lwh, alpha, translation)
                             dts_corners.append(_create_box(translation, lwh, rot))
                             alphas.append(alpha)
                             lwhs.append(lwh)
@@ -92,7 +92,7 @@ class Collapser():
                     dts_corners.shape[0]*dts_corners.shape[1], -1), dim=0)
                 dts_corners -= means
 
-                if assign == 'spectral':
+                if self.assign == 'spectral':
                     #### ASSIGN WITH SPECTRAL CLUSTERING
                     # get 3diou
                     _, iou_3d = box3d_overlap(
@@ -115,9 +115,10 @@ class Collapser():
                             traj_t0=traj_t0, traj_t1=traj_t1)
                         lwh, translation = get_rotated_center_and_lwh(pc_city, rot)
                         traj = torch.stack([traj_t0, traj_t1])
+                        print('a')
                         collapsed_detections[k].append(CollapsedDetection(traj, pc_city, time, seq, traj.shape[1], self.overlap))
 
-                elif assign == 'heuristic':
+                elif self.assign == 'heuristic':
                     #### ASSIGN WITH HEURISTIC
                     # get 3diou
                     pcs_dets = pcs_city[-num_det:]
@@ -133,11 +134,16 @@ class Collapser():
                     lwhs_other = lwhs[:-num_det]
                     translations_other = translations[:-num_det]
                     alphas_other = alphas[:-num_det]
-
+                    '''for i, d in enumerate(dts_corners.cuda()):
+                        print(i, d)
+                        _, iou_3d = box3d_overlap(
+                            d.cuda().unsqueeze(0),
+                            d.cuda().unsqueeze(0),
+                            eps=1e-4)'''
                     _, iou_3d = box3d_overlap(
                         dts_corners.cuda()[-num_det:],
                         dts_corners.cuda()[:-num_det],
-                        eps=1e-6)
+                        eps=1e-4)
                     
                     arg_max = torch.max(iou_3d, dim=0).indices
                     matches = iou_3d[arg_max.long(), torch.arange(iou_3d.shape[1], dtype=torch.long)]
@@ -145,6 +151,7 @@ class Collapser():
                     for i in range(num_det):
                         matched = torch.logical_and(arg_max==i, matches)
                         if torch.where(matched)[0].shape[0] and self.collaps_mode == 'accumulate':
+                            print('b')
                             collapsed_detections[k].append(accumulate(i,
                                         city_SE3_t,
                                         det,
@@ -179,9 +186,13 @@ class Collapser():
                                             trajs_city_t0_dets,
                                             trajs_city_t1_dets,
                                             det))
+                            if type(collapsed_detections[k][-1]) != models.tracking_utils.CollapsedDetection:
+                                print(type(collapsed_detections[k][-1]))
             else:
-                collapsed_detections[k] = [det.final_detection() for det in data[k]]
-
+                if sum([type(d) == models.tracking_utils.InitialDetection for d in data[k]]) != len(data[k]):
+                    print(set([type(d) for d in data[k]]))
+                collapsed_detections[k] = [det for det in data[k]]
+        print(set([type(d) for dets in collapsed_detections for d in collapsed_detections[dets]]))
         return collapsed_detections
 
 
@@ -230,7 +241,7 @@ class Collapser():
         lwh, translation = get_rotated_center_and_lwh(vertices, rot)
         pts_density = (lwh[0] * lwh[1] * lwh[2]) / pcs_dets[i].shape[0]
         return CollapsedDetection(
-            rot, alpha, translation, lwh, None, None, time, seq, pcs_dets[i].shape[0], overlap, pts_density)
+            rot, alpha, translation, lwh, None, None, time, seq, pcs_dets[i].shape[0], overlap, pts_density, det.gt_id)
 
 
     def accumulate(self, i, city_SE3_t, det, time, seq, overlap, pcs_other, trajs_city_t0_other, trajs_city_t1_other, pcs_dets, trajs_city_t0_dets, trajs_city_t1_dets, matched, alphas_other, alphas_dets):

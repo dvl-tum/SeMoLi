@@ -28,18 +28,18 @@ class MOT3DSeqDataset:
         Create additional features for each detection. (e.g bbox centre, area etc.)
         """
         # get timestamps2frame dict that matches timestamps to frames
-        timestamps2frame = {t: frame for frame, t in enumerate(
-            sorted(os.listdir(osp.join(self.gt_path, 'sensors', 'lidar'))))}
-
+        timestamps2frame = {int(t[:-8]): frame for frame, t in enumerate(
+            sorted(os.listdir(osp.join(self.gt_path, self.seq_name, 'sensors', 'lidar'))))}
+        
         # get frames from sorted timestamps for detections
         for _, dets in self.dets.items():
             for det in dets:
-                det.frame = timestamps2frame[dets.timestamps[0, 0].item()]
+                det.frame = timestamps2frame[det.timestamps[0, 0].item()]
 
         # get frames from sorted timestamps for ground truth
         if not 'test' in self.dataset_path:
-            frames = [timestamps2frame[t] for t in self.gt_df['timestamp_ns']]
-            self.gt_df['frames'] = frames
+            frames = [timestamps2frame[t] for t in self.gts['timestamp_ns']]
+            self.gts['frames'] = frames
 
     def _load_detections(self, tracks, load_path, split, log_id):
         """
@@ -49,7 +49,6 @@ class MOT3DSeqDataset:
         self.dets = load_initial_detections(load_path, split, log_id, tracks=tracks, every_x_frame=1, overlap=1)
         if not 'test' in self.dataset_path:
             self.gts = load_gt(self.seq_name, self.gt_path)
-            self._assign_gt()
 
         # Add extra measurements
         self._add_extra_det_features()

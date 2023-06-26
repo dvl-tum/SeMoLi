@@ -751,7 +751,7 @@ class ClusterGNN(MessagePassing):
                 data.timestamps[i,0],
                 mode='after',
                 name=name)
-    
+        
         return clusters
 
     def visualize(self, nodes, edge_indices, pos, clusters, timestamp, mode='before', name='General'):

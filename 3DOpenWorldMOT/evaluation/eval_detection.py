@@ -351,6 +351,7 @@ def filter_seq(data, width=25):
 
 def visualize_whole(df, gf, name, base_dir='../../../'):
     split_dir = Path('/dvlresearch/jenny/Waymo_Converted_GT/val')
+    split_dir = Path('/workspace/Waymo_Converted_val/val')
     loader = AV2SensorDataLoader(data_dir=split_dir, labels_dir=split_dir)
     for seq in df['log_id'].unique():
         print(f'storing to {base_dir}Visualization_Whole_DETS/{seq}')
@@ -646,10 +647,12 @@ if __name__ == '__main__':
     tracker_dir = 'collapsed/val'
     tracker_dir = 'out/trajectories2_nooracle_64_64_3.5900203994472646e-07_0.06176295901709523_16000_16000__NS_MG_32_2.0_LN_/val'
     # tracker_dir = 'collapsed_heuristic_mean/val'
+    tracker_dir = '/workspace/result/out/all_egocomp_margin0.6_width25_nooracle_64_64_3.5900203994472646e-07_0.06176295901709523_16000_16000__NS_MG_32_2.0_LN_/val'
     print(tracker_dir)
     gt_folder = 'data/waymo_converted'
     gt_folder = '/dvlresearch/jenny/Waymo_Converted_GT'
     gt_folder = '/dvlresearch/jenny/debug_Waymo_Converted_val/Waymo_Converted'
+    gt_folder = '/workspace/Waymo_Converted_val'
     seq_list = os.listdir(tracker_dir)
     min_points = -1
     max_points = 1000000
@@ -671,8 +674,8 @@ if __name__ == '__main__':
             remove_non_move_strategy='per_frame',
             remove_non_move_thresh=1.0,
             classes_to_eval='all',
-            debug=False,
-            visualize=False,
+            debug=True,
+            visualize=True,
             name=name,
             min_points=min_points,
             max_points=max_points,

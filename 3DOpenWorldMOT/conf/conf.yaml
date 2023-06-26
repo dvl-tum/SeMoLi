@@ -8,7 +8,7 @@ defaults: # for loading the default.yaml config
                                                                                                                   
   # - debugging: default                                                                                      
   - models: GNN                                                                                             
-  - data: argoverse2_traj                                                                                                     
+  - data: waymo_traj                                                                                                     
   # - sota # Contains current SOTA results on different datasets (extracted from papers !).                          
 #  - hydra/job_logging: custom                                                                                   
 #  - hydra/output: custom  # add the support for user-defined experiment folder (where to save the experiment files)
@@ -30,7 +30,7 @@ tracker_options: # Extra options for the tracker
   matching: 'greedy'
   alpha: 0.95
   overlap: 5
-  track_data_path: 'tracks/tracks'
+  track_data_path: '/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/tracks/tracks'
   split: val
   collaps: True
   track: True
@@ -42,7 +42,7 @@ tracker_options: # Extra options for the tracker
   tracker_type: 'OnlineOracleTracker'
   registration_type: 'Flow'
   collaps_type: 'SimpleCollaps'
-  out_path_for_eval: 'tracks/tracks_for_eval'
+  out_path_for_eval: '/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/tracks/tracks_for_eval'
 
 
 detection_options:                                                                       

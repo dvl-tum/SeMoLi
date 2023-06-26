@@ -181,7 +181,7 @@ class Track():
                 else:
                     mean_flow = (det.trajectory[:, time, :] - det.trajectory[:, time-1, :]).mean(axis=0)
                 alpha = torch.arctan(mean_flow[1]/mean_flow[0])
-                rot = torch.array([
+                rot = torch.tensor([
                     [torch.cos(alpha), torch.sin(alpha), 0],
                     [torch.sin(alpha), torch.cos(alpha), 0],
                     [0, 0, 1]])
@@ -286,6 +286,10 @@ class InitialDetection():
         self.lwh, self.translation = get_rotated_center_and_lwh(canonical_points, self.rot)
         self.mean_trajectory = torch.mean(self.trajectory, dim=0)
     
+    @property
+    def rotation(self):
+        return self.rot
+
     def get_alpha_rot_t0_to_t1(self, t0=None, t1=None, trajectory=None, traj_t0=None, traj_t1=None):
         rot, alpha = get_alpha_rot_t0_to_t1(t0, t1, trajectory, traj_t0, traj_t1)
         return rot, alpha
@@ -317,11 +321,17 @@ class InitialDetection():
 
 
 def get_rotated_center_and_lwh(pc, rot):
+    # translation = get_center(pc)
+    # translation = translation.cpu()
+    
+    pc = pc @ rot.T # + (-translation.double() @ rot.T)
     translation = get_center(pc)
     translation = translation.cpu()
-    pc = pc @ rot.T + (-translation.double() @ rot.T)
+    # rot.T @ translation not needed since taken from already rotated pc
+    pc = pc + (-translation.double())
     lwh = get_lwh(pc)
-
+    # but translatoin needs to be rotated to get correct translation
+    translation = rot.T @ translation.double()
     return lwh, translation
 
 def get_alpha_rot_t0_to_t1(t0=None, t1=None, trajectory=None, traj_t0=None, traj_t1=None):
@@ -365,6 +375,10 @@ class Detection():
         self.pts_density = pts_density
         self.trajectory = trajectory.reshape(trajectory.shape[0]*trajectory.shape[1])
         self.gt_id = gt_id
+   
+    @property
+    def timestamps(self):
+        return torch.tensor(self.timestamp)
 
 
 class CollapsedDetection():
@@ -382,7 +396,14 @@ class CollapsedDetection():
         self.track_id = 0
         self.pts_density = pts_density
         self.gt_id = gt_id
-            
+    
+    @property
+    def trajectory(self):
+        return self.traj
+
+    @property
+    def timestamps(self):
+        return torch.tensor(self.timestamp)
 
 def store_initial_detections(detections, seq, out_path, split, tracks=False, gt_path=None):
     p = f'{out_path}/{split}/{seq}'
@@ -394,16 +415,19 @@ def store_initial_detections(detections, seq, out_path, split, tracks=False, gt_
             extracted_detections[t.track_id] = t.detections
         detections =  extracted_detections
     else:
-        detections = {k.item(): v for k, v in detections.items()}
+        if type(list(detections.keys())[0]) == int:
+            detections = {k: v for k, v in detections.items()}
+        else:
+            detections = {k.item(): v for k, v in detections.items()}
         gt = load_gt(seq, gt_path)
         detections = assign_gt(detections, gt)
-        
+    print(set([type(d) for dets in detections for d in detections[dets]])) 
     for _, t in enumerate(detections):
         for j, d in enumerate(detections[t]):
             np.savez(
                 os.path.join(p, str(t) + '_' + str(j) + '.npz'),
-                trajectory=d.trajectory.numpy(),
-                canonical_points=d.canonical_points.numpy(),
+                trajectory=d.trajectory.numpy() if d.trajectory is not None else d.trajectory,
+                canonical_points=d.canonical_points.numpy() if d.canonical_points is not None else d.canonical_points,
                 timestamps=d.timestamps.numpy(),
                 log_id=d.log_id,
                 num_interior=d.num_interior,
@@ -425,17 +449,30 @@ def load_initial_detections(out_path, split, seq=None, tracks=False, every_x_fra
         except:
             print(os.path.join(p, d))
             quit()
-
-        d = InitialDetection(
-            torch.from_numpy(d['trajectory']), 
-            torch.from_numpy(d['canonical_points']), 
-            torch.from_numpy(d['timestamps']),
-            d['log_id'].item(),
-            d['num_interior'].item(),
-            d['overlap'].item(),
-            d['gt_id'].item(),
-            d['gt_id_box'].item(),
-        )
+        if 'gt_id_box' in d.keys():
+            d = InitialDetection(
+                torch.from_numpy(d['trajectory']), 
+                torch.from_numpy(d['canonical_points']), 
+                torch.from_numpy(d['timestamps']),
+                d['log_id'].item(),
+                d['num_interior'].item(),
+                d['overlap'].item(),
+                d['gt_id'].item(),
+                d['gt_id_box'].item(),
+            )
+        else:
+            d = InitialDetection(
+                torch.from_numpy(d['trajectory']),
+                torch.from_numpy(d['canonical_points']),
+                torch.from_numpy(d['timestamps']),
+                d['log_id'].item(),
+                d['num_interior'].item(),
+                d['overlap'].item(),
+                d['gt_id'].item(),
+                d['gt_id'].item(),
+            )
+        if d.lwh[0] < 0.1 or d.lwh[1] < 0.1 or d.lwh[2] < 0.1:
+            continue
         if not tracks:
             detections[d.timestamps[0, 0].item()].append(d)
         else:
@@ -459,7 +496,7 @@ def load_gt(seq_name, data_root_path):
     """
     Load MOT ground truth file
     """
-    seq_path = os.path.join(data_root_path, seq_name)  # Sequence path
+    seq_path = os.path.join(str(data_root_path), seq_name)  # Sequence path
     gt_file_path = os.path.join(seq_path, "annotations.feather")   # Ground truth file
 
     gt_df = feather.read_feather(gt_file_path)
@@ -472,23 +509,30 @@ def assign_gt(dets, gt, gt_assign_min_iou=0.25):
     Assigns a GT identity to every detection in self.det_df, based on the ground truth boxes in self.gt_df.
     The assignment is done frame by frame via bipartite matching.
     """
-    for time, time_dets in dets:
+    for time, time_dets in dets.items():
         frame_gt = gt[gt.timestamp_ns == time]
 
         # Compute IoU for each pair of detected / GT bounding box
         dets_trans = torch.stack([d.translation for d in time_dets])
         dets_lwh = torch.stack([d.lwh for d in time_dets])
-        dets_alpha = torch.stack([d.alpha for d in time_dets])
-        det_boxes = _create_box(
-            dets_trans,
-            dets_lwh, 
-            dets_alpha)
+        dets_rot = torch.stack([d.rotation for d in time_dets])
+        det_boxes = list()
+        for trans, lwh, rot in zip(dets_trans, dets_lwh, dets_rot):
+            det_boxes.append(_create_box(trans, lwh, rot))
         
-        gt_boxes = _create_box(
-            torch.from_numpy(frame_gt[['tx_m', 'ty_m', 'tz_m']].values),
-            torch.from_numpy(frame_gt[['length_m', 'width_m', 'height_m']].values), 
-            torch.from_numpy(np.arccos(frame_gt['qw'].values)*2))
+        gt_boxes = list()
+        for trans, lwh, alpha in zip(
+                torch.from_numpy(frame_gt[['tx_m', 'ty_m', 'tz_m']].values),
+                torch.from_numpy(frame_gt[['length_m', 'width_m', 'height_m']].values),
+                torch.from_numpy(np.arccos(frame_gt['qw'].values)*2)):
+            rot = torch.tensor([
+                    [torch.cos(alpha), torch.sin(alpha), 0],
+                    [torch.sin(alpha), torch.cos(alpha), 0],
+                    [0, 0, 1]])
+            gt_boxes.append(_create_box(trans, lwh, rot))
         
+        det_boxes = torch.stack(det_boxes)
+        gt_boxes = torch.stack(gt_boxes)
         _, iou_matrix = box3d_overlap(
             det_boxes.cuda(),
             gt_boxes.cuda(),
@@ -496,10 +540,9 @@ def assign_gt(dets, gt, gt_assign_min_iou=0.25):
 
         iou_matrix[iou_matrix < gt_assign_min_iou] = np.nan
         dist_matrix = 1 - iou_matrix
-        assigned_detect_ixs, assigned_detect_ixs_ped_ids = solve_dense(dist_matrix)
+        assigned_detect_ixs, assigned_detect_ixs_ped_ids = solve_dense(dist_matrix.cpu().numpy())
         unassigned_detect_ixs = np.array(list(set(range(len(time_dets))) - set(assigned_detect_ixs)))
-
-        assigned_detect_ixs_ped_ids = frame_gt.iloc[assigned_detect_ixs_ped_ids]['id'].values
+        assigned_detect_ixs_ped_ids = frame_gt.iloc[assigned_detect_ixs_ped_ids]['track_uuid'].values
 
         for i, idx in enumerate(assigned_detect_ixs):
             time_dets[idx].gt_id_box = assigned_detect_ixs_ped_ids[i]

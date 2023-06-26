@@ -199,7 +199,6 @@ class TrajectoryDataset(PyGDataset):
                         for i, flow_file in enumerate(sorted(os.listdir(osp.join(self.processed_dir, seq))))\
                             if i % self.every_x_frame == 0]
         else:
-            print("HERE I AM")
             self.processed_once = False
             if self.seq is not None:
                 processed_paths = list()
@@ -226,7 +225,7 @@ class TrajectoryDataset(PyGDataset):
                 processed_paths = [os.path.join(self.processed_dir, seq, flow_file[:-3] + 'pt')\
                     for seq in seqs\
                         for i, flow_file in enumerate(sorted(os.listdir(osp.join(self.trajectory_dir, seq))))\
-                             if i % self.every_x_frame == 0 and i < len(os.listdir(os.path.join(self.trajectory_dir, seq)))-1]
+                             if i % self.every_x_frame == 0] # and i < len(os.listdir(os.path.join(self.trajectory_dir, seq)))-1]
 
         if self.split_val and self.split == 'val':
             return processed_paths[:int(len(processed_paths)/2)]
@@ -258,7 +257,6 @@ class TrajectoryDataset(PyGDataset):
     
     def _process(self):
         self._processed_paths = self.processed_paths
-        print(len(self._processed_paths))
         if self.do_process:
             logger.info('Processing...')
             os.makedirs(self.processed_dir, exist_ok=True)
@@ -271,14 +269,14 @@ class TrajectoryDataset(PyGDataset):
         self.process_once()
         return
 
-    def process_once(self, multiprocessing=True):
+    def process_once(self, multiprocessing=False):
         already_processed = glob.glob(str(self.processed_dir)+'/*/*')
-        already_processed = list()
+        # already_processed = list()
         missing_paths = set(self._processed_paths).difference(already_processed)
         missing_paths = [os.path.join(
             self.trajectory_dir, os.path.basename(os.path.dirname(m)), os.path.basename(m)[:-2] + 'npz')\
                 for m in missing_paths]
-        print(len(self._processed_paths), len(already_processed), len(missing_paths))
+        print(len(already_processed), len(missing_paths), len(self._processed_paths))
         if len(missing_paths) and self.loader is None:
             self.loader = AV2SensorDataLoader(data_dir=self.split_dir, labels_dir=self.split_dir)
 

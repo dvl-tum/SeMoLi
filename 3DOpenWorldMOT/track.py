@@ -65,9 +65,11 @@ class InitialDetProcessor():
         return detections
 
     def collaps(self, log_id, split):
-        detections = self.dataset(self.initial_dets_path, self.gt_path, log_id, self.split)
-        detections = self._collaps(detections)
-        store_initial_detections(detections, log_id, self.collapsed_dets_path, split, tracks=True)
+        detections = self.dataset(self.initial_dets_path, self.gt_path, log_id, self.split).dets
+        self.collaps = self._collaps(self.av2_loader)
+        detections = self.collaps.collaps(detections, log_id, self.gt_path)
+        print(set([type(d) for dets in detections for d in detections[dets]]))
+        store_initial_detections(detections, log_id, self.collapsed_dets_path, split, tracks=False, gt_path=self.gt_path)
         return detections
 
     def to_feather(self, detections, log_id, out_path):
@@ -122,7 +124,7 @@ def main(cfg):
 
 
 def track(rank, cfg, world_size):
-    loader = AV2SensorDataLoader(data_dir=Path(cfg.data.data_dir), labels_dir=Path(cfg.data.data_dir))
+    loader = AV2SensorDataLoader(data_dir=Path(f'{cfg.data.data_dir}_{cfg.tracker_options.split}/{cfg.tracker_options.split}'), labels_dir=Path(f'{cfg.data.data_dir}_{cfg.tracker_options.split}/{cfg.tracker_options.split}'))
     if cfg.multi_gpu:
         os.environ['MASTER_ADDR'] = 'localhost'
         os.environ['MASTER_PORT'] = '12355'
@@ -165,7 +167,7 @@ def track(rank, cfg, world_size):
             collapsed_dets_path=cfg.tracker_options.collapsed_dets,
             tracked_dets_path=cfg.tracker_options.tracked_dets,
             registered_dets_path=cfg.tracker_options.registered_dets,
-            gt_path=gt_path,
+            gt_path=f'{gt_path}_{split}/{split}',
             split=split)
         
         if cfg.tracker_options.collaps:

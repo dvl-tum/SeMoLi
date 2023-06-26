@@ -2,7 +2,7 @@
 class_class: 'TrajectoryDataLoader'
 dataset_name: 'waymo_traj'
 trajectory_dir: '/storage/user/seidensc/datasets/trajectories_waymo/traj_dataset_waymo/gt_all_egocomp_margin0.6_width2' #'/storage/user/seidensc/datasets/trajectories_waymo/trajectories_rubbish/egocomp_remgroundrc_remclosepts_remlowpts_remstatic_alllaseridx_2000'
-data_dir: '../../../data/waymo_converted'
+data_dir: '/workspace/Waymo_Converted' # '../../../data/waymo_converted'
 processed_dir: False
 do_process: False
 num_classes: 1

@@ -671,8 +671,11 @@ def train(rank, cfg, world_size):
                             for met, m in for_logs.items():
                                 wandb.log({met: m, "epoch": epoch})
                             wandb.log({'NMI': cluster_metric[0], "epoch": epoch})
-
-                    if cfg.metric == 'acc':
+                    
+                    
+                    if not is_neural_net:
+                        metric = detection_metric
+                    elif cfg.metric == 'acc':
                         metric = [edge_acc]
                     elif cfg.metric == 'cluster':
                         metric = cluster_metric
@@ -680,6 +683,7 @@ def train(rank, cfg, world_size):
                         metric = detection_metric
 
                     # store weights if neural net                
+                    print(metric[0], best_metric)
                     if metric[0] >= best_metric:
                         best_metric = metric[0]
                         if is_neural_net and not cfg.just_eval:

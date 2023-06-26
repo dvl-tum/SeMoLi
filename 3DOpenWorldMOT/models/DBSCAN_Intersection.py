@@ -12,6 +12,7 @@ from collections import defaultdict
 class DBSCAN_Intersection():
     def __init__(
             self,
+            rank=0,
             min_samples_pos=2,
             thresh_pos=6,
             min_samples_traj=2,
@@ -40,7 +41,7 @@ class DBSCAN_Intersection():
 
         # if no moving point
         if traj.shape[0] == 0:
-            return None, [], None, None
+            return None, [[]], None, None
 
         if self.input_traj == 'traj':
             diff_traj = traj[:, :-1] - traj[:, 1:]
@@ -87,7 +88,7 @@ class DBSCAN_Intersection():
 
         # if no points left
         if inp_traj.shape[0] == 0:
-            return None, labels, None, None
+            return None, [labels], None, None
         
         # get clustering
         clustering_pos = self.model_pos.fit(inp_pos) # only flow 0.0015
@@ -121,8 +122,8 @@ class DBSCAN_Intersection():
         
         if self.visualization:
             self.visualize(pc.reshape(pc.shape[0], -1), labels, 'combined', timestamps[0])
-
-        return None, labels, None, None
+        labels = labels.astype(int)
+        return None, [labels], None, None
     
     def visualize(self, position, clustering, name, time):
         os.makedirs('../../../vis_intersection', exist_ok=True)
@@ -143,5 +144,5 @@ class DBSCAN_Intersection():
         plt.savefig(os.path.join('../../../vis_intersection', f'{str(time)}_{name}.jpg'))
         plt.close()
 
-    def __call__(self, clustering, eval=False, name='General'):
+    def __call__(self, clustering, eval=False, name='General', corr_clustering=False):
         return self.forward(clustering)

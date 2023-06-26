@@ -9,6 +9,7 @@ from scipy.stats import mode
 class DBSCAN():
     def __init__(
             self,
+            rank=0, 
             min_samples=2, 
             thresh=6,
             input='traj_pos',
@@ -50,6 +51,8 @@ class DBSCAN():
         if self.input == 'traj':
             traj = diff_traj # / time
             inp = traj.reshape(traj.shape[0], -1)
+        elif self.input == 'flow':
+            inp = diff_traj[:, 0, :].reshape(pc.shape[0], -1) # / time
         elif self.input == 'traj_pos':
             pc = np.expand_dims(pc, axis=1)
             pc = np.repeat(pc, traj.shape[1], axis=1)
@@ -66,14 +69,14 @@ class DBSCAN():
         
         # if no moving point
         if inp.shape[0] == 0:
-            return None, labels, None, None
+            return None, [labels], None, None
 
         # get clustering
         clustering = self.model.fit(inp) # only flow 0.0015
         _labels = clustering.labels_
         labels[mask] = _labels
-        
-        return None, labels, None, None
+        labels = labels.astype(int)
+        return None, [labels], None, None
     
-    def __call__(self, clustering, eval=False, name='General'):
+    def __call__(self, clustering, eval=False, name='General', corr_clustering=False):
         return self.forward(clustering)
