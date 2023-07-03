@@ -78,6 +78,7 @@ def load_model(cfg, checkpoints_dir, logger, rank=0):
     criterion = _loss_factory[cfg.models.model_name]
     start_epoch = 0
     optimizer = None
+
     if 'DBSCAN' not in cfg.models.model_name and cfg.models.model_name != 'SpectralClustering':
         model = model.to(rank)
         criterion = criterion(**cfg.models.loss_hyperparams, rank=rank).to(rank)
@@ -116,10 +117,6 @@ def load_model(cfg, checkpoints_dir, logger, rank=0):
             logger.info(f'Using this name: {name}')
             os.makedirs(checkpoints_dir + name, exist_ok=True)
 
-            if cfg.wandb and (not cfg.multi_gpu or rank == 0):
-                wandb.login(key='3b716e6ab76d92ef92724aa37089b074ef19e29c')
-                wandb.init(config=cfg, project=cfg.job_name, name=name)
-            
             try:
                 checkpoint = torch.load(cfg.models.weight_path)
                 chkpt_new = dict()
@@ -168,6 +165,10 @@ def load_model(cfg, checkpoints_dir, logger, rank=0):
     elif cfg.models.model_name == 'DBSCAN_Intersection':
         name = cfg.models.hyperparams.input_traj + "_" + str(cfg.models.hyperparams.thresh_traj) + "_" + str(cfg.models.hyperparams.min_samples_traj) + "_" + str(cfg.models.hyperparams.thresh_pos) + "_" + str(cfg.models.hyperparams.min_samples_pos) + "_" + str(cfg.models.hyperparams.flow_thresh)
         name = os.path.basename(cfg.data.trajectory_dir) + "_" + name
+    
+    if cfg.wandb and (not cfg.multi_gpu or rank == 0):
+        wandb.login(key='3b716e6ab76d92ef92724aa37089b074ef19e29c')
+        wandb.init(config=cfg, project=cfg.job_name, name=name)
 
     return model, start_epoch, name, optimizer, criterion
 
@@ -258,13 +259,18 @@ def main(cfg):
             in_args = (cfg, world_size)
             mp.spawn(train, args=in_args, nprocs=world_size, join=True)
         else:
-            train(1, cfg, world_size=1)
+            train(0, cfg, world_size=1)
         
         wandb.finish()
         logging.shutdown()
 
 
 def train(rank, cfg, world_size):
+    is_neural_net = cfg.models.model_name != 'DBSCAN' \
+                and cfg.models.model_name != 'SpectralClustering'\
+                    and cfg.models.model_name != 'SimpleGraph'\
+                    and cfg.models.model_name != 'DBSCAN_Intersection'
+
     if cfg.multi_gpu:
         os.environ['MASTER_ADDR'] = 'localhost'
         os.environ['MASTER_PORT'] = '12355'
@@ -272,8 +278,11 @@ def train(rank, cfg, world_size):
         dist.init_process_group('nccl', rank=rank, world_size=world_size)
     logger, experiment_dir, checkpoints_dir, out_path = initialize(cfg)
     
+    odel, start_epoch, name, optimizer, criterion = \
+        load_model(cfg, checkpoints_dir, logger, rank)
+
     cfg.data.do_process = False
-    train_data, val_data, test_data = get_TrajectoryDataLoader(cfg)
+    train_data, val_data, test_data = get_TrajectoryDataLoader(cfg, name)
 
     # get dataloaders 
     if train_data is not None:
@@ -345,7 +354,7 @@ def train(rank, cfg, world_size):
     model, start_epoch, name, optimizer, criterion = \
         load_model(cfg, checkpoints_dir, logger, rank)
 
-    if cfg.multi_gpu:
+    if cfg.multi_gpu and is_neural_net:
         model = nn.parallel.DistributedDataParallel(model, find_unused_parameters=True)
 
     is_neural_net = cfg.models.model_name != 'DBSCAN' \

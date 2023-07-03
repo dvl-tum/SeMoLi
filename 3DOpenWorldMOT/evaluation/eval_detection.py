@@ -619,7 +619,7 @@ def eval_detection(
             print(metrics.loc[classes_to_eval])
             metric = metrics.loc[classes_to_eval].values
 
-        # break
+        break
   
     return metrics, metric
 

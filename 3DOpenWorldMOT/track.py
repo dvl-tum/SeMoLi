@@ -73,7 +73,7 @@ class InitialDetProcessor():
         return detections
 
     def to_feather(self, detections, log_id, out_path):
-        detections = [d for track_dets in detections for d in track_dets]
+        detections = [d for track_dets in detections.values() for d in track_dets]
         to_feather(detections, log_id, out_path, self.split, self.rank, precomp_dets=False)
         write_path = os.path.join(out_path, self.split, 'feathers', f'all_{self.rank}.feather')
         logger.info(f'wrote {write_path}')
@@ -124,13 +124,12 @@ def main(cfg):
 
 
 def track(rank, cfg, world_size):
-    loader = AV2SensorDataLoader(data_dir=Path(f'{cfg.data.data_dir}_{cfg.tracker_options.split}/{cfg.tracker_options.split}'), labels_dir=Path(f'{cfg.data.data_dir}_{cfg.tracker_options.split}/{cfg.tracker_options.split}'))
+    loader = AV2SensorDataLoader(data_dir=Path(f'{cfg.data.data_dir}_{cfg.tracker_options.split}/Waymo_Converted/{cfg.tracker_options.split}'), labels_dir=Path(f'{cfg.data.data_dir}_{cfg.tracker_options.split}/Waymo_Converted/{cfg.tracker_options.split}'))
     if cfg.multi_gpu:
         os.environ['MASTER_ADDR'] = 'localhost'
         os.environ['MASTER_PORT'] = '12355'
         torch.cuda.set_device(rank)
         dist.init_process_group('nccl', rank=rank, world_size=world_size)
-
     dataset = MOT3DTrackDataset(
         os.path.join(cfg.tracker_options.track_data_path, 'initial_dets'),
         cfg.data.data_dir,
@@ -167,7 +166,7 @@ def track(rank, cfg, world_size):
             collapsed_dets_path=cfg.tracker_options.collapsed_dets,
             tracked_dets_path=cfg.tracker_options.tracked_dets,
             registered_dets_path=cfg.tracker_options.registered_dets,
-            gt_path=f'{gt_path}_{split}/{split}',
+            gt_path=f'{gt_path}_{split}/Waymo_Converted/{split}',
             split=split)
         
         if cfg.tracker_options.collaps:
