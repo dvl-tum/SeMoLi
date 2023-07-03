@@ -582,41 +582,43 @@ def train(rank, cfg, world_size):
 
                 if is_neural_net:
                     model = model.train()
-                    if cfg.multi_gpu:
-                        if do_corr_clustering:
-                            dist.all_reduce(nmis, op=dist.ReduceOp.SUM)
+                if cfg.multi_gpu:
+                    if do_corr_clustering:
+                        dist.all_reduce(nmis, op=dist.ReduceOp.SUM)
+                    if is_neural_net:
                         dist.all_reduce(node_loss, op=dist.ReduceOp.SUM)
                         dist.all_reduce(edge_loss, op=dist.ReduceOp.SUM)
                         dist.all_reduce(edge_acc, op=dist.ReduceOp.SUM)
                         dist.all_reduce(node_acc, op=dist.ReduceOp.SUM)
-    
-                    if do_corr_clustering:
-                        nmis = float(nmis[0] / nmis[1])
+
+                if do_corr_clustering:
+                    nmis = float(nmis[0] / nmis[1])
+                if is_neural_net:
                     node_loss = float(node_loss[0] / node_loss[1])
                     edge_loss = float(edge_loss[0] / edge_loss[1])
                     edge_acc = float(edge_acc[0] / edge_acc[1])
                     node_acc = float(node_acc[0] / node_acc[1])
 
-                    if rank == 0 or not cfg.multi_gpu:
-                        if do_corr_clustering:
-                            logger.info(f'nmi: {nmis}')
+                if rank == 0 or not cfg.multi_gpu:
+                    if do_corr_clustering:
+                        logger.info(f'nmi: {nmis}')
+                    if is_neural_net:
                         logger.info(f'eval bce loss edge: {edge_loss}')
                         logger.info(f'eval bce loss node: {node_loss}')
                         logger.info(f'eval accuracy edge: {edge_acc}')
                         logger.info(f'eval accuracy node: {node_acc}')
 
-                        if cfg.wandb:
-                            wandb.log({'eval bce loss edge': edge_loss, "epoch": epoch})
-                            wandb.log({'eval bce loss node': node_loss, "epoch": epoch})
-                            wandb.log({'eval accuracy edge': edge_acc, "epoch": epoch})
-                            wandb.log({'eval accuracy node': node_acc, "epoch": epoch})
-                            if not cfg.multi_gpu:
-                                wandb.log({'eval num node pos/neg ratio': wandb.Histogram(
-                                    np_histogram=np.histogram(num_node_pos.cpu().numpy()/num_node_neg.cpu().numpy(), bins=30, range=(0., 3.))), "epoch": epoch})
-                                wandb.log({'eval num edge pos/neg ratio': wandb.Histogram(
-                                    np_histogram=np.histogram(num_edge_pos.cpu().numpy()/num_edge_neg.cpu().numpy(), bins=30, range=(0., 3.))), "epoch": epoch})
+                    if cfg.wandb and is_neural_net:
+                        wandb.log({'eval bce loss edge': edge_loss, "epoch": epoch})
+                        wandb.log({'eval bce loss node': node_loss, "epoch": epoch})
+                        wandb.log({'eval accuracy edge': edge_acc, "epoch": epoch})
+                        wandb.log({'eval accuracy node': node_acc, "epoch": epoch})
+                        if not cfg.multi_gpu:
+                            wandb.log({'eval num node pos/neg ratio': wandb.Histogram(
+                                np_histogram=np.histogram(num_node_pos.cpu().numpy()/num_node_neg.cpu().numpy(), bins=30, range=(0., 3.))), "epoch": epoch})
+                            wandb.log({'eval num edge pos/neg ratio': wandb.Histogram(
+                                np_histogram=np.histogram(num_edge_pos.cpu().numpy()/num_edge_neg.cpu().numpy(), bins=30, range=(0., 3.))), "epoch": epoch})
 
-                if rank == 0 or not cfg.multi_gpu:
                     if do_corr_clustering:
                         # get sequence list for evaluation
                         detector_dir = os.path.join(detector.out_path, detector.split)
@@ -673,7 +675,7 @@ def train(rank, cfg, world_size):
                             wandb.log({'NMI': cluster_metric[0], "epoch": epoch})
                     
                     
-                    if not is_neural_net:
+                    if not is_neural_net and cfg.metric == 'acc':
                         metric = detection_metric
                     elif cfg.metric == 'acc':
                         metric = [edge_acc]
