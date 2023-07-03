@@ -1,6 +1,6 @@
 # @package models
 model_name: GNN
-weight_path: None
+weight_path: ''
 hyperparams:
     graph: knn
     traj_channels: 75

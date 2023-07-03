@@ -421,7 +421,7 @@ def store_initial_detections(detections, seq, out_path, split, tracks=False, gt_
             detections = {k.item(): v for k, v in detections.items()}
         gt = load_gt(seq, gt_path)
         detections = assign_gt(detections, gt)
-    print(set([type(d) for dets in detections for d in detections[dets]])) 
+    
     for _, t in enumerate(detections):
         for j, d in enumerate(detections[t]):
             np.savez(
@@ -635,9 +635,7 @@ def to_feather(detections, log_id, out_path, split, rank, precomp_dets=False):
     df = pd.DataFrame(
         data=track_vals,
         columns=column_names_dets)
-    print(column_dtypes_dets)
-    print(df[['pts_density', 'category']], column_dtypes_dets)
-    print(column_dtypes_dets)
+    
     df = df.astype(column_dtypes_dets)
     detections = dict()
 

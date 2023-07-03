@@ -1,3 +1,4 @@
+import glob
 from torch.utils.data import Dataset, DataLoader
 from torch_geometric.data import Dataset as PyGDataset
 from torch_geometric.data import Data as PyGData
@@ -30,7 +31,7 @@ WAYMO_CLASSES = {'TYPE_UNKNOWN': 0, 'TYPE_VECHICLE': 1, 'TYPE_PEDESTRIAN': 2, 'T
 
 
 class TrajectoryDataset(PyGDataset):
-    def __init__(self, data_dir, split, trajectory_dir, use_all_points, num_points, remove_static, static_thresh, debug, _eval=False, every_x_frame=1, margin=0.6, split_val=False, _processed_dir=False, do_process=True, seq=None):
+    def __init__(self, data_dir, split, trajectory_dir, use_all_points, num_points, remove_static, static_thresh, debug, _eval=False, every_x_frame=1, margin=0.6, split_val=False, _processed_dir=False, do_process=True, seq=None, name=None):
         self.split_dir = Path(os.path.join(data_dir, split))
         if 'gt' in _processed_dir:
             self.trajectory_dir = Path(os.path.join(trajectory_dir, split))
@@ -70,6 +71,11 @@ class TrajectoryDataset(PyGDataset):
                 self.seq = '2400780041057579262'
 
         self.class_dict = ARGOVERSE_CLASSES if 'argo' in self.data_dir else WAYMO_CLASSES
+        if name is not None:
+            self.already_evaluated = [f'{os.sep}'.join(f'{os.sep}'.split(f)[-2:]) for f in glob.glob('/workspace/result/out/' + name + '/val/*/*')]
+        else:
+            self.already_evaluated = list()
+        print(self.already_evaluated)
         super().__init__()
         
         # import glob
@@ -257,6 +263,7 @@ class TrajectoryDataset(PyGDataset):
     
     def _process(self):
         self._processed_paths = self.processed_paths
+        self._processed_paths = [f for f in self._processed_paths if f'{os.sep}'.join(f'{os.sep}'.split(f)[-2:]) not in self.already_evaluated]
         if self.do_process:
             logger.info('Processing...')
             os.makedirs(self.processed_dir, exist_ok=True)
@@ -571,8 +578,9 @@ class TrajectoryDataset(PyGDataset):
         if self.remove_static and self.static_thresh > 0:
             data = self._remove_static(data)
         else:
-            data['point_categories'] = data['point_categories'].squeeze()
-            data['point_instances'] = data['point_instances'].squeeze()
+            # print("HOOOHO", data, data['point_categories'], type(data['point_categories']), data['point_categories'].shape)
+            data['point_categories'] = torch.atleast_1d(data['point_categories'].squeeze())
+            data['point_instances'] = torch.atleast_1d(data['point_instances'].squeeze())
             if 'point_categories_mov' in data.keys:
                 data['point_categories_mov'] = data['point_categories_mov'].squeeze()
                 data['point_instances_mov'] = data['point_instances_mov'].squeeze()
@@ -601,7 +609,7 @@ class TrajectoryDataset(PyGDataset):
             data = torch.load(self._processed_paths_0)
         data['batch'] = torch.ones(data['pc_list'].shape[0])*idx
         data['timestamps'] = data['timestamps'].unsqueeze(0)
-
+        
         return data
 
     def visualize(self, data, idx):
@@ -628,7 +636,7 @@ class TrajectoryDataset(PyGDataset):
         plt.close()
 
 
-def get_TrajectoryDataLoader(cfg, train=True, val=True, test=False):
+def get_TrajectoryDataLoader(cfg, name=None, train=True, val=True, test=False):
     # get datasets
     if train and not cfg.just_eval:
         logger.info('TRAIN')
@@ -659,7 +667,8 @@ def get_TrajectoryDataLoader(cfg, train=True, val=True, test=False):
                 every_x_frame=cfg.data.every_x_frame,
                 split_val=cfg.data.split_val,
                 do_process=cfg.data.do_process,
-                _processed_dir=cfg.data.processed_dir + '_val')
+                _processed_dir=cfg.data.processed_dir + '_val', 
+                name=name)
 
         '''val_data = list()
         seq_list = os.listdir(f'{cfg.data.trajectory_dir}_val/val')[:4]
