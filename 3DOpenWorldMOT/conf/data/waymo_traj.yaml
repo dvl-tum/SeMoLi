@@ -23,3 +23,4 @@ split_val: False
 every_x_frame: 1
 margin: 0.6
 traj_channels: 75
+percentage_data: 0.5

@@ -31,7 +31,7 @@ WAYMO_CLASSES = {'TYPE_UNKNOWN': 0, 'TYPE_VECHICLE': 1, 'TYPE_PEDESTRIAN': 2, 'T
 
 
 class TrajectoryDataset(PyGDataset):
-    def __init__(self, data_dir, split, trajectory_dir, use_all_points, num_points, remove_static, static_thresh, debug, _eval=False, every_x_frame=1, margin=0.6, split_val=False, _processed_dir=False, do_process=True, seq=None, name=None):
+    def __init__(self, data_dir, split, trajectory_dir, use_all_points, num_points, remove_static, static_thresh, debug, _eval=False, every_x_frame=1, margin=0.6, split_val=False, _processed_dir=False, do_process=True, seq=None, name=None, percentage_data=1):
         self.split_dir = Path(os.path.join(data_dir, split))
         if 'gt' in _processed_dir:
             self.trajectory_dir = Path(os.path.join(trajectory_dir, split))
@@ -54,6 +54,7 @@ class TrajectoryDataset(PyGDataset):
         self.margin = margin
         self._processed_dir = _processed_dir
         self.do_process =  do_process
+        self.percentage_data = percentage_data
         
         self.seq = None
         # for validation multi-gpu processing
@@ -104,7 +105,7 @@ class TrajectoryDataset(PyGDataset):
             return raw_file_names
         
         seqs = os.listdir(self.trajectory_dir)
-
+        seqs = seqs[:int(self.percentage_data*len(seqs))]
         raw_file_names = [flow_file for seq in seqs\
             for i, flow_file in enumerate(sorted(os.listdir(osp.join(self.trajectory_dir, seq)))) \
                 if i % self.every_x_frame == 0 and i < len(os.listdir(os.path.join(self.trajectory_dir, seq)))-1]
@@ -136,7 +137,7 @@ class TrajectoryDataset(PyGDataset):
             return raw_paths
 
         seqs = os.listdir(self.trajectory_dir)
-
+        seqs = seqs[:int(self.percentage_data*len(seqs))]
         raw_paths = [os.path.join(self.trajectory_dir, seq, flow_file)\
             for seq in seqs\
                 for i, flow_file in enumerate(sorted(os.listdir(osp.join(self.trajectory_dir, seq)))) \
@@ -172,7 +173,7 @@ class TrajectoryDataset(PyGDataset):
             return processed_file_names
 
         seqs = os.listdir(self.trajectory_dir)
-
+        seqs = seqs[:int(self.percentage_data*len(seqs))]
         processed_file_names =  [flow_file[:-3] + 'pt' for seq in seqs\
             for i, flow_file in enumerate(sorted(os.listdir(osp.join(self.trajectory_dir, seq)))) \
                 if i % self.every_x_frame == 0 and i < len(os.listdir(os.path.join(self.trajectory_dir, seq)))-1]
@@ -200,6 +201,7 @@ class TrajectoryDataset(PyGDataset):
                     processed_paths.append(os.path.join(self.processed_dir, self.seq, flow_file))
             else:
                 seqs = os.listdir(self.processed_dir)
+                seqs = seqs[:int(self.percentage_data*len(seqs))]
                 processed_paths = [os.path.join(self.processed_dir, seq, flow_file)\
                     for seq in seqs\
                         for i, flow_file in enumerate(sorted(os.listdir(osp.join(self.processed_dir, seq))))\
@@ -227,6 +229,7 @@ class TrajectoryDataset(PyGDataset):
                 return processed_paths
             else:
                 seqs = os.listdir(self.trajectory_dir)
+                seqs = seqs[:int(self.percentage_data*len(seqs))]
                 print(len(seqs))
                 processed_paths = [os.path.join(self.processed_dir, seq, flow_file[:-3] + 'pt')\
                     for seq in seqs\
@@ -650,7 +653,8 @@ def get_TrajectoryDataLoader(cfg, name=None, train=True, val=True, test=False):
             cfg.data.static_thresh,
             cfg.data.debug,
             do_process=cfg.data.do_process,
-            _processed_dir=cfg.data.processed_dir + '_train')
+            _processed_dir=cfg.data.processed_dir + '_train',
+            percentage_data=cfg.data.percentage_data)
     else:
         train_data = None
     if val:
@@ -668,7 +672,8 @@ def get_TrajectoryDataLoader(cfg, name=None, train=True, val=True, test=False):
                 split_val=cfg.data.split_val,
                 do_process=cfg.data.do_process,
                 _processed_dir=cfg.data.processed_dir + '_val', 
-                name=name)
+                name=name,
+                percentage_data=cfg.data.percentage_data)
 
         '''val_data = list()
         seq_list = os.listdir(f'{cfg.data.trajectory_dir}_val/val')[:4]
