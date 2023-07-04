@@ -284,7 +284,7 @@ def train(rank, cfg, world_size):
         load_model(cfg, checkpoints_dir, logger, rank)
 
     cfg.data.do_process = False
-    train_data, val_data, test_data = get_TrajectoryDataLoader(cfg, name)
+    train_data, val_data, test_data = get_TrajectoryDataLoader(cfg)
 
     # get dataloaders 
     if train_data is not None:
@@ -508,9 +508,6 @@ def train(rank, cfg, world_size):
                 logger.info('---- EPOCH %03d EVALUATION ----' % (epoch + 1))
                 # Iterate over validation set
                 for i, (data) in tqdm(enumerate(val_loader), total=len(val_loader), smoothing=0.9):
-                    '''# continue if not moving points
-                    if data['empty']:
-                        continue'''
 
                     # compute clusters
                     logits, all_clusters, edge_index, _ = model(data, eval=True, name=name, corr_clustering=do_corr_clustering)
