@@ -60,4 +60,5 @@ HYDRA_FULL_ERROR=1 python3 trainer.py \
 	models.hyperparams.layer_sizes_node.l_1=64 \
 	models.loss_hyperparams.ignore_stat_edges=0 \
 	models.loss_hyperparams.ignore_stat_nodes=0 \
+	data.filtered_file_path=/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/\
 	models.weight_path=/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/model_weights/old_flow/best_model.pth

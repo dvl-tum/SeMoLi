@@ -21,6 +21,9 @@ from functools import partial
 import pytorch3d.ops.points_normals as points_normals
 from pyarrow import feather
 import av2.utils.io as io_utils
+from splits import get_seq_list
+from torch import multiprocessing as mp
+
 
 
 logger = logging.getLogger("Model.Dataset")
@@ -31,8 +34,24 @@ WAYMO_CLASSES = {'TYPE_UNKNOWN': 0, 'TYPE_VECHICLE': 1, 'TYPE_PEDESTRIAN': 2, 'T
 
 
 class TrajectoryDataset(PyGDataset):
-    def __init__(self, data_dir, split, trajectory_dir, use_all_points, num_points, remove_static, static_thresh, debug, _eval=False, every_x_frame=1, margin=0.6, split_val=False, _processed_dir=False, do_process=True, seq=None, name=None, percentage_data=1):
-        self.split_dir = Path(os.path.join(data_dir, split))
+    def __init__(
+            self,
+            data_dir,
+            split,
+            trajectory_dir,
+            use_all_points,
+            num_points,
+            remove_static,
+            static_thresh,
+            debug,
+            every_x_frame=1,
+            margin=0.6,
+            _processed_dir=False,
+            do_process=True,
+            percentage_data=1,
+            evaluation_split='train_gnn',
+            filtered_file_path=None):
+        
         if 'gt' in _processed_dir:
             self.trajectory_dir = Path(os.path.join(trajectory_dir, split))
         else:
@@ -44,204 +63,69 @@ class TrajectoryDataset(PyGDataset):
         self.split = split
         self.use_all_points = use_all_points
         self.num_points = num_points
-        self.split_val = split_val
         if self.split == 'train' or self.split == 'val' or self.split == 'test':
-            self.loader = AV2SensorDataLoader(data_dir=self.split_dir, labels_dir=self.split_dir)
+            self.loader = AV2SensorDataLoader(
+                data_dir=Path(os.path.join(data_dir, split)),
+                labels_dir=Path(os.path.join(data_dir, split)))
         else:
             self.loader = None
-        self._eval = _eval
         self.every_x_frame = every_x_frame
         self.margin = margin
         self._processed_dir = _processed_dir
         self.do_process =  do_process
         self.percentage_data = percentage_data
+        self.filtered_file_path = filtered_file_path
         
-        self.seq = None
-        # for validation multi-gpu processing
-        if seq is not None:
-            self.seq = seq
         # for debugging
-        elif debug:
+        if debug:
             if split == 'val' and 'argo' in self.data_dir:
-                self.seq = '04994d08-156c-3018-9717-ba0e29be8153'
+                self.seqs = ['04994d08-156c-3018-9717-ba0e29be8153']
             elif split == 'train' and 'argo' in self.data_dir:
-                self.seq = '00a6ffc1-6ce9-3bc3-a060-6006e9893a1a'
+                self.seqs = ['00a6ffc1-6ce9-3bc3-a060-6006e9893a1a']
             elif split == 'val':
-                self.seq = '16473613811052081539'
+                self.seqs = ['16473613811052081539']
             else:
-                self.seq = '2400780041057579262'
+                self.seqs = ['2400780041057579262']
+        else:
+            self.seqs = get_seq_list(
+                path=os.path.join(data_dir, split),
+                mode='train' if 'detector' not in evaluation_split else 'evaluation',
+                percentage=self.percentage_data)
 
         self.class_dict = ARGOVERSE_CLASSES if 'argo' in self.data_dir else WAYMO_CLASSES
-        if name is not None:
-            self.already_evaluated = [f'{os.sep}'.join(f'{os.sep}'.split(f)[-2:]) for f in glob.glob('/workspace/result/out/' + name + '/val/*/*')]
-        else:
-            self.already_evaluated = list()
-        print(self.already_evaluated)
         super().__init__()
         
-        # import glob
-        # a = len(self._processed_paths)
-        # self._processed_paths = glob.glob(str(self.processed_dir)+'/*/*')
-        # logger.info(f'Missing files {a-len(self._processed_paths)}')
-        self._processed_paths_0 = self._processed_paths[0]
-        # self._processed_paths = ['/storage/user/seidensc/datasets/trajectories_waymo/processed_remove_static/normal/gt_all_egocomp_margin0.6_width25/val/16473613811052081539/1543280278723549.pt']
-    
     @property
     def raw_file_names(self):
-        if self.seq is not None:
-            raw_file_names = list()
-            for seq in os.listdir(self.trajectory_dir):
-                # to get results just for specific seq
-                if seq != self.seq:
-                    continue
-                # don't take last file in directory cos some how only 24 not 25 long
-                for i, flow_file in enumerate(sorted(os.listdir(os.path.join(self.trajectory_dir, seq)))):
-                    if i >= len(os.listdir(os.path.join(self.processed_dir, seq)))-1:
-                        continue
-                    if i % self.every_x_frame != 0:
-                        continue
-                    raw_file_names.append(flow_file)
-                    
-            return raw_file_names
-        
-        seqs = os.listdir(self.trajectory_dir)
-        seqs = seqs[:int(self.percentage_data*len(seqs))]
-        raw_file_names = [flow_file for seq in seqs\
+        return [flow_file for seq in self.seqs\
             for i, flow_file in enumerate(sorted(os.listdir(osp.join(self.trajectory_dir, seq)))) \
                 if i % self.every_x_frame == 0 and i < len(os.listdir(os.path.join(self.trajectory_dir, seq)))-1]
-        
-        if self.split_val and self.split == 'val':
-            return raw_file_names[:int(len(raw_file_names)/2)]
-        elif self.split_val and self.split == 'val':
-            return raw_file_names[int(len(raw_file_names)/2):]
-        else:
-            return raw_file_names
-    
+            
     @property
     def raw_paths(self):
-        if self.seq is not None:
-            raw_paths = list()
-            for seq in os.listdir(self.trajectory_dir):
-                # to get results just for specific seq
-                if seq != self.seq:
-                    continue
-                # don't take last file in directory cos some how only 24 not 25 long
-                for i, flow_file in enumerate(sorted(os.listdir(os.path.join(self.trajectory_dir, seq)))):
-                    if i >= len(os.listdir(os.path.join(self.trajectory_dir, seq)))-1 and\
-                            len(os.listdir(os.path.join(self.trajectory_dir, seq))) != 1:
-                        continue
-                    if i % self.every_x_frame != 0:
-                        continue
-                    raw_paths.append(os.path.join(self.trajectory_dir, seq, flow_file))
-
-            return raw_paths
-
-        seqs = os.listdir(self.trajectory_dir)
-        seqs = seqs[:int(self.percentage_data*len(seqs))]
-        raw_paths = [os.path.join(self.trajectory_dir, seq, flow_file)\
-            for seq in seqs\
+        return [os.path.join(self.trajectory_dir, seq, flow_file)\
+            for seq in self.seqs\
                 for i, flow_file in enumerate(sorted(os.listdir(osp.join(self.trajectory_dir, seq)))) \
                     if i % self.every_x_frame == 0 and i < len(os.listdir(os.path.join(self.trajectory_dir, seq)))-1]
     
-        if self.split_val and self.split == 'val':
-            return raw_paths[:int(len(raw_paths)/2)]
-        elif self.split_val and self.split == 'val':
-            return raw_paths[int(len(raw_paths)/2):]
-        else:
-            return raw_paths
-
     @property
     def processed_file_names(self):
-        if self.seq is not None:
-            processed_file_names = list()
-            for seq in os.listdir(self.processed_dir):
-                # ignore pre_transfor files
-                if seq[-3:] == '.pt':
-                    continue
-                # to get results just for specific seq
-                if seq != self.seq:
-                    continue
-                # don't take last file in directory cos some how only 24 not 25 long
-                for i, flow_file in enumerate(sorted(os.listdir(os.path.join(self.processed_dir, seq)))):
-                    if i >= len(os.listdir(os.path.join(self.processed_dir, seq)))-1 and\
-                            len(os.listdir(os.path.join(self.processed_dir, seq))) != 1:
-                        continue
-                    if i % self.every_x_frame != 0:
-                        continue
-                    processed_file_names.append(flow_file)
-
-            return processed_file_names
-
-        seqs = os.listdir(self.trajectory_dir)
-        seqs = seqs[:int(self.percentage_data*len(seqs))]
-        processed_file_names =  [flow_file[:-3] + 'pt' for seq in seqs\
+        return [flow_file[:-3] + 'pt' for seq in self.seqs\
             for i, flow_file in enumerate(sorted(os.listdir(osp.join(self.trajectory_dir, seq)))) \
                 if i % self.every_x_frame == 0 and i < len(os.listdir(os.path.join(self.trajectory_dir, seq)))-1]
-        
-        if self.split_val and self.split == 'val':
-            return processed_file_names[:int(len(processed_file_names)/2)]
-        elif self.split_val and self.split == 'val':
-            return processed_file_names[int(len(processed_file_names)/2):]
-        else:
-            return processed_file_names
-    
+            
     @property
     def processed_paths(self):
         if not self.do_process:
-            self.processed_once = True
-            if self.seq is not None:
-                processed_paths = list()
-                for i, flow_file in enumerate(sorted(os.listdir(os.path.join(self.processed_dir, self.seq)))):
-                    if i % self.every_x_frame != 0:
-                        continue
-                    '''if '1543280278723549' not in flow_file:
-                        continue'''
-                    '''if 'gt' in str(self.processed_dir) and i > 20:
-                        break'''
-                    processed_paths.append(os.path.join(self.processed_dir, self.seq, flow_file))
-            else:
-                seqs = os.listdir(self.processed_dir)
-                seqs = seqs[:int(self.percentage_data*len(seqs))]
-                processed_paths = [os.path.join(self.processed_dir, seq, flow_file)\
-                    for seq in seqs\
+            return [os.path.join(self.processed_dir, seq, flow_file)\
+                    for seq in self.seqs\
                         for i, flow_file in enumerate(sorted(os.listdir(osp.join(self.processed_dir, seq))))\
                             if i % self.every_x_frame == 0]
         else:
-            self.processed_once = False
-            if self.seq is not None:
-                processed_paths = list()
-                for seq in os.listdir(self.trajectory_dir):
-                    # ignore pre_transfor files
-                    if seq[-3:] == '.pt':
-                        continue
-                    # to get results just for specific seq
-                    if seq != self.seq:
-                        continue
-                    # don't take last file in directory cos some how only 24 not 25 long
-                    for i, flow_file in enumerate(sorted(os.listdir(os.path.join(self.trajectory_dir, seq)))):
-                        if i % self.every_x_frame != 0:
-                            continue
-                        if i >= len(os.listdir(os.path.join(self.trajectory_dir, seq)))-1 \
-                                and len(os.listdir(os.path.join(self.trajectory_dir, seq))) != 1:
-                            continue
-                        processed_paths.append(os.path.join(self.processed_dir, seq, flow_file[:-3] + 'pt'))
-
-                return processed_paths
-            else:
-                seqs = os.listdir(self.trajectory_dir)
-                seqs = seqs[:int(self.percentage_data*len(seqs))]
-                print(len(seqs))
-                processed_paths = [os.path.join(self.processed_dir, seq, flow_file[:-3] + 'pt')\
-                    for seq in seqs\
+            return [os.path.join(self.processed_dir, seq, flow_file[:-3] + 'pt')\
+                    for seq in self.seqs\
                         for i, flow_file in enumerate(sorted(os.listdir(osp.join(self.trajectory_dir, seq))))\
-                             if i % self.every_x_frame == 0] # and i < len(os.listdir(os.path.join(self.trajectory_dir, seq)))-1]
-
-        if self.split_val and self.split == 'val':
-            return processed_paths[:int(len(processed_paths)/2)]
-        elif self.split_val and self.split == 'train':
-            return processed_paths[int(len(processed_paths)/2):]
-        else:
-            return processed_paths
+                             if i % self.every_x_frame == 0]
 
     def __len__(self):
         return len(self._processed_paths)
@@ -266,7 +150,6 @@ class TrajectoryDataset(PyGDataset):
     
     def _process(self):
         self._processed_paths = self.processed_paths
-        self._processed_paths = [f for f in self._processed_paths if f'{os.sep}'.join(f'{os.sep}'.split(f)[-2:]) not in self.already_evaluated]
         if self.do_process:
             logger.info('Processing...')
             os.makedirs(self.processed_dir, exist_ok=True)
@@ -275,24 +158,26 @@ class TrajectoryDataset(PyGDataset):
         else:
             logger.info('Not Processing this time :) ')
     
-    def process(self):
-        self.process_once()
-        return
-
-    def process_once(self, multiprocessing=False):
+    def process(self, multiprocessing=False):
+        # only process what is not there yet
         already_processed = glob.glob(str(self.processed_dir)+'/*/*')
         # already_processed = list()
         missing_paths = set(self._processed_paths).difference(already_processed)
         missing_paths = [os.path.join(
             self.trajectory_dir, os.path.basename(os.path.dirname(m)), os.path.basename(m)[:-2] + 'npz')\
                 for m in missing_paths]
-        print(len(already_processed), len(missing_paths), len(self._processed_paths))
-        if len(missing_paths) and self.loader is None:
-            self.loader = AV2SensorDataLoader(data_dir=self.split_dir, labels_dir=self.split_dir)
+        
+        logger.info(f"Already processed {len(already_processed)},\
+                    Missing {len(missing_paths)},\
+                    In total {len(self._processed_paths)}")
+        self.len_missing = len(missing_paths)
+
+        if self.len_missing and self.loader is None:
+            self.loader = AV2SensorDataLoader(
+                data_dir=Path(os.path.join(self.data_dir, self.split)),
+                labels_dir=Path(os.path.join(self.data_dir, self.split)))
 
         data_loader = enumerate(missing_paths)            
-        from torch import multiprocessing as mp
-        self.len_missing = len(missing_paths)
         if multiprocessing:
             mp.set_start_method('forkserver')
             with mp.Pool() as pool:
@@ -301,8 +186,6 @@ class TrajectoryDataset(PyGDataset):
             for data in data_loader:
                 self.process_sweep(data)
         
-        self.processed_once = True
-
     def load_initial_pc(
             self, 
             lidar_fpath: Path,
@@ -361,31 +244,24 @@ class TrajectoryDataset(PyGDataset):
                 
     def process_sweep(self, data):
         j, traj_file = data
-        print(j)
-        if j % 1 == 0:
+
+        if j % 100 == 0:
             logger.info(f"sweep {j}/{self.len_missing}, {j}-th file")
         
         processed_path = os.path.join(
             self.processed_dir,
             os.path.basename(os.path.dirname(traj_file)),
             os.path.basename(traj_file)[:-3] + 'pt')
-
-        orig_path = os.path.join(
-            self.data_dir,
-            self.split,
-            os.path.basename(os.path.dirname(traj_file)),
-            'sensors',
-            'lidar',
-            os.path.basename(traj_file)[:-3] + 'feather')
-        
-        # If processed does not exist
         seq = os.path.basename(os.path.dirname(traj_file))
-        if 'non_drive' in self._trajectory_dir and not 'waymo' in self._trajectory_dir:
-            if seq not in map_dict.keys():
-                log_map_dirpath = self.split_dir / seq / "map"
-                map_dict[seq] = ArgoverseStaticMap.from_map_dir(log_map_dirpath, build_raster=True)
             
         # load original pc
+        # orig_path = os.path.join(
+        #     self.data_dir,
+        #     self.split,
+        #     os.path.basename(os.path.dirname(traj_file)),
+        #     'sensors',
+        #     'lidar',
+        #     os.path.basename(traj_file)[:-3] + 'feather')
         # lidar_points_ego, mask = self.load_initial_pc(orig_path)
         # normals = points_normals.estimate_pointcloud_normals(
         #     torch.from_numpy(lidar_points_ego).cuda().unsqueeze(0)).squeeze()
@@ -404,29 +280,16 @@ class TrajectoryDataset(PyGDataset):
             timestamps = timestamps[0]
 
         # get labels
-        all_instances = list()
-        all_categories = list()
         if self.split != 'test':
             labels = self.loader.get_labels_at_lidar_timestamp(
                 log_id=seq, lidar_timestamp_ns=int(timestamps[0]))
-            filtered_file_path = f'/dvlresearch/jenny/Waymo_Converted_filtered_{self.split}/{self.split}_1.0_per_frame_remove_non_move_remove_far_filtered_version.feather'
-            filtered_file_path = f'/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/Waymo_Converted_filtered_{self.split}/{self.split}_1.0_per_frame_remove_non_move_remove_far_filtered_version.feather'
+            filtered_file_path = f'{self.filtered_file_path}/Waymo_Converted_filtered_{self.split}/{self.split}_1.0_per_frame_remove_non_move_remove_far_filtered_version.feather'
             labels_mov = self.loader.get_labels_at_lidar_timestamp_all(
                 filtered_file_path, log_id=seq, lidar_timestamp_ns=int(timestamps[0]), get_moving=True)
             
             if self.margin and 'argo' in self.data_dir:
                 for label in labels:
                     self.add_margin(label)
-
-            # remove labels that are non in dirvable area
-            if 'non_drive' in self._trajectory_dir and not 'waymo' in self._trajectory_dir:
-                centroids_ego = np.asarray([label.dst_SE3_object.translation for label in labels])
-                city_SE3_ego = self.loader.get_city_SE3_ego(seq, int(timestamps[0]))
-                centroids_city = city_SE3_ego.transform_point_cloud(
-                        centroids_ego)
-                bool_labels = map_dict[seq].get_raster_layer_points_boolean(
-                    centroids_city, layer_name=RasterLayerType.DRIVABLE_AREA)
-                labels = [l for i, l in enumerate(labels) if bool_labels[i]]
 
             # remove points of labels that are far away (>80,)
             if 'far' in self._trajectory_dir:
@@ -548,12 +411,10 @@ class TrajectoryDataset(PyGDataset):
         mean_traj = diff_dist/diff_time
         mean_traj = mean_traj > self.static_thresh
 
-        empty = False
         # if no moving point and not evaluation, sample few random
         if torch.all(~mean_traj):
             idxs = torch.randint(0, mean_traj.shape[0], size=(200, ))
             mean_traj[idxs] = True
-            empty = True                    
         
         # apply mask
         data['pc_list'] = data['pc_list'][mean_traj, :]
@@ -566,22 +427,16 @@ class TrajectoryDataset(PyGDataset):
         if 'point_categories_mov' in data.keys:
             data['point_instances_mov'] = data['point_instances_mov'].squeeze()[mean_traj]
             data['point_categories_mov'] = data['point_categories_mov'].squeeze()[mean_traj]
-        data['empty'] = empty
         
         return data
 
     def get(self, idx): 
         path = self._processed_paths[idx]
-        try:
-            data = torch.load(path)
-        except:
-            print(f"Not able to load {self._processed_paths_0}")
-            data = torch.load(self._processed_paths_0)
+        data = torch.load(path)
 
         if self.remove_static and self.static_thresh > 0:
             data = self._remove_static(data)
         else:
-            # print("HOOOHO", data, data['point_categories'], type(data['point_categories']), data['point_categories'].shape)
             data['point_categories'] = torch.atleast_1d(data['point_categories'].squeeze())
             data['point_instances'] = torch.atleast_1d(data['point_instances'].squeeze())
             if 'point_categories_mov' in data.keys:
@@ -602,44 +457,13 @@ class TrajectoryDataset(PyGDataset):
                 data['point_categories_mov'] = data['point_categories_mov'][idxs]
                 data['point_instances_mov'] = data['point_instances_mov'][idxs]
 
-        if 'empty' not in data.keys:
-            if data['pc_list'].shape[0] == 0:
-                data['empty'] = True
-            else:
-                data['empty'] = False
-
-        if data['empty']:
-            data = torch.load(self._processed_paths_0)
         data['batch'] = torch.ones(data['pc_list'].shape[0])*idx
         data['timestamps'] = data['timestamps'].unsqueeze(0)
         
         return data
 
-    def visualize(self, data, idx):
-        import matplotlib.pyplot as plt
-        idxs = torch.randint(0, data['flow'].shape[0], size=(200, ))
-        idxs = torch.arange(0, data['flow'].shape[0])
-        pc_list = data['pc_list'][idxs, :]
-        traj = data['traj'][idxs]
-        flow = data['flow'][idxs]
 
-        here = list(range(pc_list.shape[0]))[-3]
-        for i, (p, t, f) in enumerate(zip(pc_list, traj, flow)):
-            future = p.repeat((t.shape[0], 1)) + t
-            if idx == 0:
-                t = t[10:15]
-                future = future[10:15]
-            else:
-                t = t[:5]
-                future = future[:5]
-            plt.scatter(future[:, 0], future[:, 1])
-            # future2 = future[:-1, :] + flow
-            # plt.scatter(future2[:, 0], future2[:, 1])
-        plt.savefig(f'../../../vis_{idx}.jpg')
-        plt.close()
-
-
-def get_TrajectoryDataLoader(cfg, name=None, train=True, val=True, test=False):
+def get_TrajectoryDataLoader(cfg, train=True, val=True, test=False):
     # get datasets
     if train and not cfg.just_eval:
         logger.info('TRAIN')
@@ -654,67 +478,48 @@ def get_TrajectoryDataLoader(cfg, name=None, train=True, val=True, test=False):
             cfg.data.debug,
             do_process=cfg.data.do_process,
             _processed_dir=cfg.data.processed_dir + '_train',
-            percentage_data=cfg.data.percentage_data)
+            percentage_data=cfg.data.percentage_data,
+            filtered_file_path=cfg.data.filtered_file_path)
     else:
         train_data = None
     if val:
         logger.info("VAL")
-        val_data = TrajectoryDataset(cfg.data.data_dir + '_val',
-                'val',
-                cfg.data.trajectory_dir + '_val',
+        if cfg.data.evaluation_split == 'val_gnn' or cfg.data.evaluation_split == 'val_detector':
+            split = 'val'
+        else:
+            split = 'train'
+        val_data = TrajectoryDataset(cfg.data.data_dir + f'_{split}',
+                split,
+                cfg.data.trajectory_dir + f'_{split}',
                 cfg.data.use_all_points_eval,
                 cfg.data.num_points_eval,
                 cfg.data.remove_static,
                 cfg.data.static_thresh,
                 cfg.data.debug,
-                _eval=True, 
                 every_x_frame=cfg.data.every_x_frame,
-                split_val=cfg.data.split_val,
                 do_process=cfg.data.do_process,
-                _processed_dir=cfg.data.processed_dir + '_val', 
-                name=name,
-                percentage_data=cfg.data.percentage_data)
-
-        '''val_data = list()
-        seq_list = os.listdir(f'{cfg.data.trajectory_dir}_val/val')[:4]
-        for i, seq in enumerate(seq_list):
-            logger.info(f"Seq {i}/{len(seq_list)}")
-            val_data.append(TrajectoryDataset(cfg.data.data_dir,
-                'val',
-                cfg.data.trajectory_dir + '_val',
-                cfg.data.use_all_points_eval,
-                cfg.data.num_points_eval,
-                cfg.data.remove_static,
-                cfg.data.static_thresh,
-                cfg.data.debug,
-                _eval=True, 
-                every_x_frame=cfg.data.every_x_frame,
-                split_val=cfg.data.split_val,
-                do_process=cfg.data.do_process,
-                _processed_dir=cfg.data.processed_dir + '_val',
-                seq=seq))'''
+                _processed_dir=cfg.data.processed_dir + f'_{split}', 
+                percentage_data=cfg.data.percentage_data,
+                evaluation_split=cfg.data.evaluation_split,
+                filtered_file_path=cfg.data.filtered_file_path)
     else:
         val_data = None
     if test:
         logger.info("TEST")
-        test_data = list()
-        seq_list = os.listdir(f'{cfg.data.trajectory_dir}_test/test')
-        for i, seq in enumerate(seq_list):
-            logger.info(f"Seq {i}/{len(seq_list)}")
-            test_data.append(TrajectoryDataset(cfg.data.data_dir,
-                'test',
-                cfg.data.trajectory_dir + '_test',
+        split = 'test'
+        test_data = TrajectoryDataset(cfg.data.data_dir + f'_{split}',
+                split,
+                cfg.data.trajectory_dir + f'_{split}',
                 cfg.data.use_all_points_eval,
                 cfg.data.num_points_eval,
                 cfg.data.remove_static,
                 cfg.data.static_thresh,
                 cfg.data.debug,
-                _eval=True, 
                 every_x_frame=cfg.data.every_x_frame,
-                split_val=cfg.data.split_val,
                 do_process=cfg.data.do_process,
-                _processed_dir=cfg.data.processed_dir + '_test',
-                seq=seq))
+                _processed_dir=cfg.data.processed_dir + f'_{split}', 
+                percentage_data=1.0,
+                filtered_file_path=cfg.data.filtered_file_path)
     else:
         test_data = None
     

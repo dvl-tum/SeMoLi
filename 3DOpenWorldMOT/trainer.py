@@ -166,7 +166,7 @@ def load_model(cfg, checkpoints_dir, logger, rank=0):
         name = cfg.models.hyperparams.input_traj + "_" + str(cfg.models.hyperparams.thresh_traj) + "_" + str(cfg.models.hyperparams.min_samples_traj) + "_" + str(cfg.models.hyperparams.thresh_pos) + "_" + str(cfg.models.hyperparams.min_samples_pos) + "_" + str(cfg.models.hyperparams.flow_thresh)
         name = os.path.basename(cfg.data.trajectory_dir) + "_" + name
     
-    if cfg.wandb and (not cfg.multi_gpu or rank == 0):
+    if cfg.wandb and (not cfg.multi_gpu or rank == 0 or rank == 'cpu'):
         wandb.login(key='3b716e6ab76d92ef92724aa37089b074ef19e29c')
         wandb.init(config=cfg, project=cfg.job_name, name=name)
 
@@ -258,8 +258,10 @@ def main(cfg):
             world_size = torch.cuda.device_count()
             in_args = (cfg, world_size)
             mp.spawn(train, args=in_args, nprocs=world_size, join=True)
-        else:
+        elif torch.cuda.is_available():
             train(0, cfg, world_size=1)
+        else:
+            train('cpu', cfg, world_size=1)
         
         wandb.finish()
         logging.shutdown()
@@ -271,18 +273,18 @@ def train(rank, cfg, world_size):
                     and cfg.models.model_name != 'SimpleGraph'\
                     and cfg.models.model_name != 'DBSCAN_Intersection'
 
-    if cfg.multi_gpu:
+    if cfg.multi_gpu and rank != 'cpu':
         os.environ['MASTER_ADDR'] = 'localhost'
         os.environ['MASTER_PORT'] = '12355'
         torch.cuda.set_device(rank)
         dist.init_process_group('nccl', rank=rank, world_size=world_size)
     logger, experiment_dir, checkpoints_dir, out_path = initialize(cfg)
     
-    odel, start_epoch, name, optimizer, criterion = \
+    model, start_epoch, name, optimizer, criterion = \
         load_model(cfg, checkpoints_dir, logger, rank)
 
     cfg.data.do_process = False
-    train_data, val_data, test_data = get_TrajectoryDataLoader(cfg, name)
+    train_data, val_data, test_data = get_TrajectoryDataLoader(cfg)
 
     # get dataloaders 
     if train_data is not None:
@@ -350,9 +352,6 @@ def train(rank, cfg, world_size):
         logger.info("The number of training data is: %d" % len(train_loader.dataset))
     if val_loader is not None:
         logger.info("The number of test data is: %d" % len(val_loader.dataset))
-
-    model, start_epoch, name, optimizer, criterion = \
-        load_model(cfg, checkpoints_dir, logger, rank)
 
     if cfg.multi_gpu and is_neural_net:
         model = nn.parallel.DistributedDataParallel(model, find_unused_parameters=True)
@@ -450,7 +449,7 @@ def train(rank, cfg, world_size):
                 edge_acc = float(edge_acc[0] / edge_acc[1])
                 node_acc = float(node_acc[0] / node_acc[1])
 
-                if rank == 0 or not cfg.multi_gpu:
+                if rank == 0 or rank == 'cpu' or not cfg.multi_gpu:
                     logger.info(f'train bce loss edge: {edge_loss}')
                     logger.info(f'train bce loss node: {node_loss}')
                     logger.info(f'train accuracy edge: {edge_acc}')
@@ -509,9 +508,6 @@ def train(rank, cfg, world_size):
                 logger.info('---- EPOCH %03d EVALUATION ----' % (epoch + 1))
                 # Iterate over validation set
                 for i, (data) in tqdm(enumerate(val_loader), total=len(val_loader), smoothing=0.9):
-                    '''# continue if not moving points
-                    if data['empty']:
-                        continue'''
 
                     # compute clusters
                     logits, all_clusters, edge_index, _ = model(data, eval=True, name=name, corr_clustering=do_corr_clustering)
@@ -608,7 +604,7 @@ def train(rank, cfg, world_size):
                     edge_acc = float(edge_acc[0] / edge_acc[1])
                     node_acc = float(node_acc[0] / node_acc[1])
 
-                if rank == 0 or not cfg.multi_gpu:
+                if rank == 0 or rank == 'cpu' or not cfg.multi_gpu:
                     if do_corr_clustering:
                         logger.info(f'nmi: {nmis}')
                     if is_neural_net:
