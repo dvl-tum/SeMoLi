@@ -21,7 +21,7 @@ from functools import partial
 import pytorch3d.ops.points_normals as points_normals
 from pyarrow import feather
 import av2.utils.io as io_utils
-from splits import get_seq_list
+from .splits import get_seq_list
 from torch import multiprocessing as mp
 
 
@@ -97,33 +97,38 @@ class TrajectoryDataset(PyGDataset):
         
     @property
     def raw_file_names(self):
-        return [flow_file for seq in self.seqs\
+        seqs = [seq for seq in self.seqs if seq in os.listdir(self.trajectory_dir)]
+        return [flow_file for seq in seqs\
             for i, flow_file in enumerate(sorted(os.listdir(osp.join(self.trajectory_dir, seq)))) \
                 if i % self.every_x_frame == 0 and i < len(os.listdir(os.path.join(self.trajectory_dir, seq)))-1]
             
     @property
     def raw_paths(self):
+        seqs = [seq for seq in self.seqs if seq in os.listdir(self.trajectory_dir)]
         return [os.path.join(self.trajectory_dir, seq, flow_file)\
-            for seq in self.seqs\
+            for seq in seqs\
                 for i, flow_file in enumerate(sorted(os.listdir(osp.join(self.trajectory_dir, seq)))) \
                     if i % self.every_x_frame == 0 and i < len(os.listdir(os.path.join(self.trajectory_dir, seq)))-1]
     
     @property
     def processed_file_names(self):
-        return [flow_file[:-3] + 'pt' for seq in self.seqs\
+        seqs = [seq for seq in self.seqs if seq in os.listdir(self.trajectory_dir)]
+        return [flow_file[:-3] + 'pt' for seq in seqs\
             for i, flow_file in enumerate(sorted(os.listdir(osp.join(self.trajectory_dir, seq)))) \
                 if i % self.every_x_frame == 0 and i < len(os.listdir(os.path.join(self.trajectory_dir, seq)))-1]
             
     @property
     def processed_paths(self):
         if not self.do_process:
+            seqs = [seq for seq in self.seqs if seq in os.listdir(self.processed_dir)]
             return [os.path.join(self.processed_dir, seq, flow_file)\
-                    for seq in self.seqs\
+                    for seq in seqs\
                         for i, flow_file in enumerate(sorted(os.listdir(osp.join(self.processed_dir, seq))))\
                             if i % self.every_x_frame == 0]
         else:
+            seqs = [seq for seq in self.seqs if seq in os.listdir(self.trajectory_dir)]
             return [os.path.join(self.processed_dir, seq, flow_file[:-3] + 'pt')\
-                    for seq in self.seqs\
+                    for seq in seqs\
                         for i, flow_file in enumerate(sorted(os.listdir(osp.join(self.trajectory_dir, seq))))\
                              if i % self.every_x_frame == 0]
 
@@ -467,8 +472,7 @@ def get_TrajectoryDataLoader(cfg, train=True, val=True, test=False):
     # get datasets
     if train and not cfg.just_eval:
         logger.info('TRAIN')
-        train_data = TrajectoryDataset(
-            cfg.data.data_dir + '_train',
+        train_data = TrajectoryDataset(cfg.data.data_dir + f'_train/' + os.path.basename(cfg.data.data_dir),
             'train',
             cfg.data.trajectory_dir + '_train',
             cfg.data.use_all_points,
@@ -488,7 +492,7 @@ def get_TrajectoryDataLoader(cfg, train=True, val=True, test=False):
             split = 'val'
         else:
             split = 'train'
-        val_data = TrajectoryDataset(cfg.data.data_dir + f'_{split}',
+        val_data = TrajectoryDataset(cfg.data.data_dir + f'_{split}/' + os.path.basename(cfg.data.data_dir),
                 split,
                 cfg.data.trajectory_dir + f'_{split}',
                 cfg.data.use_all_points_eval,
