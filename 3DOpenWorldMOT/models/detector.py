@@ -68,11 +68,6 @@ class Detector3D():
         # set new log id
         if self.log_id != log_id:
             self.new_log_id(log_id)
-        
-        if self.precomp_dets and self.do_associate:
-            found = self.to_feather()
-            if not found:
-                logger.info(f'No detections found in {log_id}')
 
         # iterate over clusters that were found and get detections with their 
         # corresponding flows, trajectories and canonical points
