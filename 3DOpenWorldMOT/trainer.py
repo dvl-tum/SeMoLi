@@ -268,6 +268,9 @@ def main(cfg):
 
 
 def train(rank, cfg, world_size):
+    if cfg.half_precision:
+        scaler = torch.cuda.amp.GradScaler()
+
     is_neural_net = cfg.models.model_name != 'DBSCAN' \
                 and cfg.models.model_name != 'SpectralClustering'\
                     and cfg.models.model_name != 'SimpleGraph'\
@@ -404,8 +407,18 @@ def train(rank, cfg, world_size):
                 for i, data in tqdm(enumerate(train_loader), total=len(train_loader), smoothing=0.9):
                     data = data.to(rank)
                     optimizer.zero_grad()
-                    logits, edge_index, batch_edge = model(data)
-                    loss, log_dict, hist_node, hist_edge = criterion(logits, data, edge_index)
+                    if cfg.half_precision:
+                        with torch.cuda.amp.autocast():
+                            logits, edge_index, batch_edge = model(data)
+                            loss, log_dict, hist_node, hist_edge = criterion(logits, data, edge_index)
+                            scaler.scale(loss).backward()
+                            scaler.step(optimizer)
+                            scaler.update()
+                    else:
+                        logits, edge_index, batch_edge = model(data)
+                        loss, log_dict, hist_node, hist_edge = criterion(logits, data, edge_index)
+                        loss.backward()
+                        optimizer.step()
                     if cfg.wandb and not cfg.multi_gpu:
                         if hist_node is not None:
                             wandb.log({"train histogram node":
@@ -413,8 +426,6 @@ def train(rank, cfg, world_size):
                         if hist_edge is not None:
                             wandb.log({"train histogram edge":
                                 wandb.Histogram(np_histogram=hist_edge), "epoch": epoch})
-                    loss.backward()
-                    optimizer.step()
 
                     if 'train bce loss edge' in log_dict.keys():
                         edge_loss[0] += float(log_dict['train bce loss edge'])
@@ -627,26 +638,26 @@ def train(rank, cfg, world_size):
                     if do_corr_clustering:
                         # get sequence list for evaluation
                         detector_dir = os.path.join(detector.out_path, detector.split)
-                        if os.path.isdir(os.path.join(detector_dir, 'feathers')):
-                            for i, rank_file in enumerate(os.listdir(os.path.join(detector_dir, 'feathers'))):
-                                # with open(os.path.join(detector_dir, 'feathers', rank_file), 'rb') as f:
-                                df = feather.read_feather(os.path.join(detector_dir, 'feathers', rank_file))
-                                if i == 0:
-                                    df_all = df
-                                else:
-                                    df_all = df_all.append(df)
+                        # if os.path.isdir(os.path.join(detector_dir, 'feathers')):
+                        #    for i, rank_file in enumerate(os.listdir(os.path.join(detector_dir, 'feathers'))):
+                        #         # with open(os.path.join(detector_dir, 'feathers', rank_file), 'rb') as f:
+                        #         df = feather.read_feather(os.path.join(detector_dir, 'feathers', rank_file))
+                        #         if i == 0:
+                        #             df_all = df
+                        #         else:
+                        #             df_all = df_all.append(df)
                             
-                            for log_id in os.listdir(detector_dir):
-                                if 'feather' in log_id:
-                                    continue
-                                df_seq = df_all[df_all['log_id']==log_id]
-                                df_seq = df_seq.drop(columns=['log_id'])
-                                write_path = os.path.join(detector_dir, log_id, 'annotations.feather')
-                                with open(write_path, 'wb') as f:
-                                    feather.write_feather(df_seq, f)
+                        #   for log_id in os.listdir(detector_dir):
+                        #        if 'feather' in log_id:
+                        #            continue
+                        #        df_seq = df_all[df_all['log_id']==log_id]
+                        #        df_seq = df_seq.drop(columns=['log_id'])
+                        #        write_path = os.path.join(detector_dir, log_id, 'annotations.feather')
+                        #        with open(write_path, 'wb') as f:
+                        #            feather.write_feather(df_seq, f)
                             
-                            if os.path.isdir(os.path.join(detector_dir, 'feathers')):
-                                shutil.rmtree(os.path.join(detector_dir, 'feathers'))
+                        #    if os.path.isdir(os.path.join(detector_dir, 'feathers')):
+                        #       shutil.rmtree(os.path.join(detector_dir, 'feathers'))
                     
                         try:
                             seq_list = os.listdir(detector_dir)

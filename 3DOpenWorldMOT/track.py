@@ -73,7 +73,8 @@ class InitialDetProcessor():
         return detections
 
     def to_feather(self, detections, log_id, out_path):
-        detections = [d for track_dets in detections.values() for d in track_dets]
+        # detections = [d for track_dets in detections.values() for d in track_dets]
+        print(detections.keys())
         to_feather(detections, log_id, out_path, self.split, self.rank, precomp_dets=False)
         write_path = os.path.join(out_path, self.split, 'feathers', f'all_{self.rank}.feather')
         logger.info(f'wrote {write_path}')

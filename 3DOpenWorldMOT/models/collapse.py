@@ -152,7 +152,7 @@ class Collapser():
                         matched = torch.logical_and(arg_max==i, matches)
                         if torch.where(matched)[0].shape[0] and self.collaps_mode == 'accumulate':
                             print('b')
-                            collapsed_detections[k].append(accumulate(i,
+                            collapsed_detections[k].append(self.accumulate(i,
                                         city_SE3_t,
                                         det,
                                         time,
@@ -185,7 +185,7 @@ class Collapser():
                                             trajs_city_t1_other,
                                             trajs_city_t0_dets,
                                             trajs_city_t1_dets,
-                                            det))
+                                            data[time][i]))
                             if type(collapsed_detections[k][-1]) != models.tracking_utils.CollapsedDetection:
                                 print(type(collapsed_detections[k][-1]))
             else:
@@ -241,7 +241,7 @@ class Collapser():
         lwh, translation = get_rotated_center_and_lwh(vertices, rot)
         pts_density = (lwh[0] * lwh[1] * lwh[2]) / pcs_dets[i].shape[0]
         return CollapsedDetection(
-            rot, alpha, translation, lwh, None, None, time, seq, pcs_dets[i].shape[0], overlap, pts_density, det.gt_id)
+            rot, alpha, translation, lwh, det.mean_trajectory, det.canonical_points, time, seq, pcs_dets[i].shape[0], overlap, pts_density, det.gt_id)
 
 
     def accumulate(self, i, city_SE3_t, det, time, seq, overlap, pcs_other, trajs_city_t0_other, trajs_city_t1_other, pcs_dets, trajs_city_t0_dets, trajs_city_t1_dets, matched, alphas_other, alphas_dets):

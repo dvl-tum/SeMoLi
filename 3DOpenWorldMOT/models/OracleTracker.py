@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 
 
 class OfflineOracleTracker():
-    def __init__(self, every_x_frame, overlap, av2_loader, log_id, logger):
+    def __init__(self, every_x_frame, overlap, av2_loader, log_id, rank, logger):
         self.active_tracks = dict()
         self.every_x_frame = every_x_frame
         self.overlap = overlap
@@ -39,8 +39,8 @@ class OfflineOracleTracker():
 
 
 class OnlineOracleTracker(OfflineOracleTracker):
-    def __init__(self, every_x_frame, overlap, av2_loader, log_id, logger):
-        super().__init__(every_x_frame, overlap, av2_loader, log_id, logger)
+    def __init__(self, every_x_frame, overlap, av2_loader, log_id, rank, logger):
+        super().__init__(every_x_frame, overlap, av2_loader, log_id, rank, logger)
         self.inactive_tracks = dict()
         self.inactive_match = defaultdict(list)
         self.inactive_match_id = 0

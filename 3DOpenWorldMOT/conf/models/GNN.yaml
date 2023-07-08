@@ -31,6 +31,7 @@ hyperparams:
         l_1: 64
     layer_sizes_node:
         l_1: 64
+    gradient_checkpointing: ${gradient_checkpointing}
 loss_hyperparams:
     bce_loss: True
     node_loss: False
