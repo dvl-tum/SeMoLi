@@ -20,6 +20,7 @@ from torch import multiprocessing as mp
 import pickle
 import wandb
 import copy
+import torch.utils.checkpoint as checkpoint
 
 
 rgb_colors = {}
@@ -152,12 +153,23 @@ def simplediff(a, b):
 
 
 class SevInpSequential(nn.Sequential):
+
+    def __init__(self, gradient_checkpointing, layers):
+        super().__init__(*layers)
+        self.gradient_checkpointing = gradient_checkpointing
+
     def forward(self, *inputs):
         for module in self._modules.values():
             if type(inputs) == tuple:
-                inputs = module(*inputs)
+                if self.gradient_checkpointing:
+                    inputs = checkpoint.checkpoint(module, *inputs, use_reentrant=False)
+                else:
+                    inputs = module(*inputs)
             else:
-                inputs = module(inputs)
+                if self.gradient_checkpointing:
+                    inputs = checkpoint.checkpoint(module, inputs, use_reentrant=False)
+                else:
+                    module(inputs)
         return inputs
 
 
@@ -192,7 +204,8 @@ class ClusterGNN(MessagePassing):
             batch_norm=False,
             drop_out=False,
             augment=False,
-            rank=0):
+            rank=0,
+            gradient_checkpointing=False):
         super().__init__(aggr='mean')
         self.k = k
         self.k_eval = k_eval
@@ -252,7 +265,7 @@ class ClusterGNN(MessagePassing):
             in_channel_edge=_edge_dim,
             out_channel_node=node_dim,
             out_channel_edge=edge_dim))'''
-        self.layers = SevInpSequential(*layers)
+        self.layers = SevInpSequential(gradient_checkpointing, layers)
 
         self.final = nn.Linear(_edge_dim, 1)
         self.final_node = nn.Linear(_node_dim, 1)
@@ -269,6 +282,7 @@ class ClusterGNN(MessagePassing):
         self.ignore_stat_nodes = ignore_stat_nodes
         self.filter_edges = filter_edges
         self.dataset = dataset
+        self.gradient_checkpointing = gradient_checkpointing
 
         self.opts = rama_py.multicut_solver_options("PD")
         self.opts.sanitize_graph = True
@@ -574,108 +588,6 @@ class ClusterGNN(MessagePassing):
             node_score[node_score == 0] = -10
             node_score[node_score == 1] = 10
 
-        if self.do_visualize:
-            '''
-            gt_edge_score = copy.deepcopy(graph_edge_score)
-            gt_edge_score[data['point_instances'][src] == data['point_instances'][dst]] = 1
-            gt_edge_score[data['point_instances'][src] != data['point_instances'][dst]] = 0
-            gt_edge_score[data['point_instances'][src] <= 0] = 0
-            gt_edge_score[data['point_instances'][dst] <= 0] = 0
-            gt_edges = graph_edge_index[:, gt_edge_score[:, 0] == 1]
-            if self.ignore_stat_edges:
-                static = torch.logical_and(
-                    ~(data.point_instances_mov[start:end] != 0), data.point_instances[start:end] != 0)
-                mov_mask = ~torch.logical_or(
-                    static[gt_edges[0, :]-start.item()], static[gt_edges[1, :]-start.item()])
-                gt_edges = gt_edges[:, mov_mask]
-
-            gt_clusters = data.point_instances[start:end]
-            if self.ignore_stat_nodes:
-                is_object_stat = torch.logical_and(
-                    ~(data.point_instances_mov[start:end] != 0), data.point_instances[start:end] != 0)
-                gt_clusters[is_object_stat] = 0
-            gt_clusters = gt_clusters.type(torch.FloatTensor).to(self.rank).cpu().numpy().tolist()
-
-            self.visualize(
-                torch.arange(end.item()-start.item()),
-                gt_edges-start.item(),
-                pc[start:end],
-                gt_clusters,
-                data.timestamps[i,0],
-                mode='groundtruth',
-                name=name)
-
-            # visualize with all the same cluster
-            self.visualize(
-                torch.arange(end.item()-start.item()),
-                graph_edge_index-start.item(),
-                pc[start:end],
-                np.ones(end.item()-start.item()),
-                data.timestamps[i,0],
-                mode='before',
-                name=name)
-            '''
-            
-            edges_filtered = copy.deepcopy(graph_edge_index)
-            edges_filtered = edges_filtered[:, torch.logical_and((graph_edge_score > self.filter_edges).squeeze(), 
-                torch.logical_and(
-                    (graph_node_score[edges_filtered[0, :]-start.item()] > self.use_node_score).squeeze(),
-                    (graph_node_score[edges_filtered[1, :]-start.item()] > self.use_node_score).squeeze()))]
-
-            
-            self.visualize(
-                torch.arange(end.item()-start.item()),
-                edges_filtered-start.item(),
-                pc[start:end],
-                np.ones(end.item()-start.item()),
-                data.timestamps[i,0],
-                mode='filtered',
-                name=name)
-        
-            '''
-            # Visualize fails
-            tp_edges = list()
-            fp_edges = list()
-            for e in edges_filtered.T:
-                if torch.logical_and(gt_edges[0, :] == e[0], gt_edges[1, :] == e[1]).sum() + \
-                    torch.logical_and(gt_edges[1, :] == e[0], gt_edges[0, :] == e[1]).sum() > 0:
-                    tp_edges.append(e)
-                else:
-                    fp_edges.append(e)
-            if len(tp_edges):
-                tp_edges = torch.stack(tp_edges).T
-            else:
-                tp_edges = None
-            if len(fp_edges):
-                fp_edges = torch.stack(fp_edges).T
-            else:
-                fp_edges = None
-
-            fn_edges = list()
-            for e in gt_edges.T:
-                if torch.logical_and(edges_filtered[0, :] == e[0], edges_filtered[1, :] == e[1]).sum() + \
-                    torch.logical_and(edges_filtered[1, :] == e[0], edges_filtered[0, :] == e[1]).sum() < 1:
-                    fn_edges.append(e)
-            if len(fn_edges):
-                fn_edges = torch.atleast_2d(torch.stack(fn_edges)).T
-            else:
-                fn_edges = None
-            
-            for edge_set, mode in zip([tp_edges, fn_edges, fp_edges], ['tp', 'fn', 'fp']):
-                if edge_set is None:
-                    if os.path.isfile(f'../../../vis_graph/{name}/{data.timestamps[0,0]}_{mode}.png'):
-                        os.remove(f'../../../vis_graph/{name}/{data.timestamps[0,0]}_{mode}.png')
-                    continue
-                self.visualize(
-                    torch.arange(end.item()-start.item()),
-                    edge_set-start.item(),
-                    pc[start:end],
-                    np.ones(end.item()-start.item()),
-                    data.timestamps[i,0],
-                    mode=mode,
-                    name=name)
-            '''
-
         # filter out edges with very low score already
         if self.filter_edges > 0:
             graph_edge_index = graph_edge_index[:, (graph_edge_score > self.filter_edges).squeeze()]
@@ -740,17 +652,6 @@ class ClusterGNN(MessagePassing):
                     cluster_assignment_new[n] = c
 
         clusters = np.array([cluster_assignment_new[k] for k in sorted(cluster_assignment_new.keys())])
-
-        if self.do_visualize:
-            # visualize with all the with predicted cluster
-            self.visualize(
-                torch.arange(end.item()-start.item()),
-                _edge_index,
-                pc[start:end],
-                clusters,
-                data.timestamps[i,0],
-                mode='after',
-                name=name)
         
         return clusters
 
