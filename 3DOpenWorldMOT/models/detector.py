@@ -68,11 +68,6 @@ class Detector3D():
         # set new log id
         if self.log_id != log_id:
             self.new_log_id(log_id)
-        
-        if self.precomp_dets and self.do_associate:
-            found = self.to_feather()
-            if not found:
-                logger.info(f'No detections found in {log_id}')
 
         # iterate over clusters that were found and get detections with their 
         # corresponding flows, trajectories and canonical points
@@ -156,7 +151,7 @@ class Detector3D():
     def to_feather(self):
         to_feather(self.detections, self.log_id, self.out_path, self.split, self.rank, self.precomp_dets)
         self.detections = dict()
-        write_path = os.path.join(self.out_path, self.split, 'feathers', f'all_{self.rank}.feather')
+        write_path = write_path = os.path.join(self.out_path, self.split, self.log_id, 'annotations.feather') # os.path.join(self.out_path, self.split, 'feathers', f'all_{self.rank}.feather')
         logger.info(f'wrote {write_path}')
         return True
 

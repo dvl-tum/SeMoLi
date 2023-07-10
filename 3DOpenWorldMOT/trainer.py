@@ -51,11 +51,9 @@ def initialize(cfg):
     '''CREATE DIR'''
     out_path = os.path.join(cfg.out_path, 'out/')
     os.makedirs(out_path, exist_ok=True)
-    experiment_dir = cfg.job_name
-    experiment_dir = "_".join([cfg.models.model_name, cfg.data.dataset_name])
-    experiment_dir = os.path.join(out_path, experiment_dir)
+    experiment_dir = os.path.join(out_path, 'detections/')
     os.makedirs(experiment_dir, exist_ok=True)
-    checkpoints_dir = os.path.join(cfg.out_path, 'checkpoints/')
+    checkpoints_dir = os.path.join(out_path, 'checkpoints/')
     os.makedirs(checkpoints_dir, exist_ok=True)
 
     '''LOG'''
@@ -166,9 +164,11 @@ def load_model(cfg, checkpoints_dir, logger, rank=0):
         name = cfg.models.hyperparams.input_traj + "_" + str(cfg.models.hyperparams.thresh_traj) + "_" + str(cfg.models.hyperparams.min_samples_traj) + "_" + str(cfg.models.hyperparams.thresh_pos) + "_" + str(cfg.models.hyperparams.min_samples_pos) + "_" + str(cfg.models.hyperparams.flow_thresh)
         name = os.path.basename(cfg.data.trajectory_dir) + "_" + name
     
+    name = cfg.job_name + '_' + name
+
     if cfg.wandb and (not cfg.multi_gpu or rank == 0 or rank == 'cpu'):
         wandb.login(key='3b716e6ab76d92ef92724aa37089b074ef19e29c')
-        wandb.init(config=cfg, project=cfg.job_name, name=name)
+        wandb.init(config=cfg, project=cfg.category, name=name)
 
     return model, start_epoch, name, optimizer, criterion
 
@@ -268,6 +268,9 @@ def main(cfg):
 
 
 def train(rank, cfg, world_size):
+    if cfg.half_precision:
+        scaler = torch.cuda.amp.GradScaler()
+
     is_neural_net = cfg.models.model_name != 'DBSCAN' \
                 and cfg.models.model_name != 'SpectralClustering'\
                     and cfg.models.model_name != 'SimpleGraph'\
@@ -282,6 +285,10 @@ def train(rank, cfg, world_size):
     
     model, start_epoch, name, optimizer, criterion = \
         load_model(cfg, checkpoints_dir, logger, rank)
+    
+    if rank == 0 or not cfg.multi_gpu:
+        logger.info(f'Detections are stored under {experiment_dir + name}...')
+        logger.info(f'Checkpoints are stored under {str(checkpoints_dir) + name}...')
 
     cfg.data.do_process = False
     train_data, val_data, test_data = get_TrajectoryDataLoader(cfg)
@@ -354,7 +361,7 @@ def train(rank, cfg, world_size):
         logger.info("The number of test data is: %d" % len(val_loader.dataset))
 
     if cfg.multi_gpu and is_neural_net:
-        model = nn.parallel.DistributedDataParallel(model, find_unused_parameters=True)
+        model = nn.parallel.DistributedDataParallel(model)
 
     is_neural_net = cfg.models.model_name != 'DBSCAN' \
                 and cfg.models.model_name != 'SpectralClustering'\
@@ -404,8 +411,18 @@ def train(rank, cfg, world_size):
                 for i, data in tqdm(enumerate(train_loader), total=len(train_loader), smoothing=0.9):
                     data = data.to(rank)
                     optimizer.zero_grad()
-                    logits, edge_index, batch_edge = model(data)
-                    loss, log_dict, hist_node, hist_edge = criterion(logits, data, edge_index)
+                    if cfg.half_precision:
+                        with torch.cuda.amp.autocast():
+                            logits, edge_index, batch_edge = model(data)
+                            loss, log_dict, hist_node, hist_edge = criterion(logits, data, edge_index)
+                            scaler.scale(loss).backward()
+                            scaler.step(optimizer)
+                            scaler.update()
+                    else:
+                        logits, edge_index, batch_edge = model(data)
+                        loss, log_dict, hist_node, hist_edge = criterion(logits, data, edge_index)
+                        loss.backward()
+                        optimizer.step()
                     if cfg.wandb and not cfg.multi_gpu:
                         if hist_node is not None:
                             wandb.log({"train histogram node":
@@ -413,8 +430,6 @@ def train(rank, cfg, world_size):
                         if hist_edge is not None:
                             wandb.log({"train histogram edge":
                                 wandb.Histogram(np_histogram=hist_edge), "epoch": epoch})
-                    loss.backward()
-                    optimizer.step()
 
                     if 'train bce loss edge' in log_dict.keys():
                         edge_loss[0] += float(log_dict['train bce loss edge'])
@@ -493,7 +508,7 @@ def train(rank, cfg, world_size):
             # intialize detector
             if do_corr_clustering:
                 detector = Detector3D(
-                    out_path + name,
+                    experiment_dir + name,
                     split='val',
                     every_x_frame=cfg.data.every_x_frame,
                     num_interior=cfg.detection_options.num_interior,
@@ -627,26 +642,26 @@ def train(rank, cfg, world_size):
                     if do_corr_clustering:
                         # get sequence list for evaluation
                         detector_dir = os.path.join(detector.out_path, detector.split)
-                        if os.path.isdir(os.path.join(detector_dir, 'feathers')):
-                            for i, rank_file in enumerate(os.listdir(os.path.join(detector_dir, 'feathers'))):
-                                # with open(os.path.join(detector_dir, 'feathers', rank_file), 'rb') as f:
-                                df = feather.read_feather(os.path.join(detector_dir, 'feathers', rank_file))
-                                if i == 0:
-                                    df_all = df
-                                else:
-                                    df_all = df_all.append(df)
+                        # if os.path.isdir(os.path.join(detector_dir, 'feathers')):
+                        #    for i, rank_file in enumerate(os.listdir(os.path.join(detector_dir, 'feathers'))):
+                        #         # with open(os.path.join(detector_dir, 'feathers', rank_file), 'rb') as f:
+                        #         df = feather.read_feather(os.path.join(detector_dir, 'feathers', rank_file))
+                        #         if i == 0:
+                        #             df_all = df
+                        #         else:
+                        #             df_all = df_all.append(df)
                             
-                            for log_id in os.listdir(detector_dir):
-                                if 'feather' in log_id:
-                                    continue
-                                df_seq = df_all[df_all['log_id']==log_id]
-                                df_seq = df_seq.drop(columns=['log_id'])
-                                write_path = os.path.join(detector_dir, log_id, 'annotations.feather')
-                                with open(write_path, 'wb') as f:
-                                    feather.write_feather(df_seq, f)
+                        #   for log_id in os.listdir(detector_dir):
+                        #        if 'feather' in log_id:
+                        #            continue
+                        #        df_seq = df_all[df_all['log_id']==log_id]
+                        #        df_seq = df_seq.drop(columns=['log_id'])
+                        #        write_path = os.path.join(detector_dir, log_id, 'annotations.feather')
+                        #        with open(write_path, 'wb') as f:
+                        #            feather.write_feather(df_seq, f)
                             
-                            if os.path.isdir(os.path.join(detector_dir, 'feathers')):
-                                shutil.rmtree(os.path.join(detector_dir, 'feathers'))
+                        #    if os.path.isdir(os.path.join(detector_dir, 'feathers')):
+                        #       shutil.rmtree(os.path.join(detector_dir, 'feathers'))
                     
                         try:
                             seq_list = os.listdir(detector_dir)

@@ -405,10 +405,15 @@ class CollapsedDetection():
     def timestamps(self):
         return torch.tensor(self.timestamp)
 
+    def final_detection(self):
+        pts_density = (self.lwh[0] * self.lwh[1] * self.lwh[2]) / self.num_interior
+        self.final = Detection(self.rotation, self.heading, self.translation, self.lwh, self.timestamp, self.log_id, self.num_interior, pts_density=pts_density, trajectory=self.traj, gt_id=self.gt_id)
+        return self.final
+
 def store_initial_detections(detections, seq, out_path, split, tracks=False, gt_path=None):
     p = f'{out_path}/{split}/{seq}'
     os.makedirs(p, exist_ok=True)
-    
+
     if tracks:
         extracted_detections = dict()
         for t in detections:
@@ -421,7 +426,7 @@ def store_initial_detections(detections, seq, out_path, split, tracks=False, gt_
             detections = {k.item(): v for k, v in detections.items()}
         gt = load_gt(seq, gt_path)
         detections = assign_gt(detections, gt)
-    
+
     for _, t in enumerate(detections):
         for j, d in enumerate(detections[t]):
             np.savez(
@@ -436,7 +441,8 @@ def store_initial_detections(detections, seq, out_path, split, tracks=False, gt_
                 gt_id_box=d.gt_id_box,
                 track_id=d.track_id,
             )
-    print(f'Stored {tracks}.....')
+
+    print(f'Stored initial detections.....')
 
 def load_initial_detections(out_path, split, seq=None, tracks=False, every_x_frame=1, overlap=1):
     p = f'{out_path}/{split}/{seq}'
@@ -445,14 +451,15 @@ def load_initial_detections(out_path, split, seq=None, tracks=False, every_x_fra
     for d in os.listdir(p):
         dict_key = int(d.split('_')[0])
         try:
-            d = np.load(os.path.join(p, d))
+            d = np.load(os.path.join(p, d), allow_pickle=True)
         except:
             print(os.path.join(p, d))
             quit()
         if 'gt_id_box' in d.keys():
+            print('aaaa', [k for k in d.keys()], d['canonical_points'], type(d['canonical_points']))
             d = InitialDetection(
                 torch.from_numpy(d['trajectory']), 
-                torch.from_numpy(d['canonical_points']), 
+                torch.from_numpy(d['canonical_points']) if d['canonical_points'] is not None else d['canonical_points'], 
                 torch.from_numpy(d['timestamps']),
                 d['log_id'].item(),
                 d['num_interior'].item(),
@@ -619,7 +626,7 @@ def to_feather(detections, log_id, out_path, split, rank, precomp_dets=False):
                 quat[1],
                 quat[2],
                 quat[3],
-                int(det.timestamp.item()),
+                int(det.timestamp.item()) if type(det.timestamp) is not int else det.timestamp,
                 'REGULAR_VEHICLE',
                 det.gt_id,
                 det.num_interior,
@@ -640,15 +647,15 @@ def to_feather(detections, log_id, out_path, split, rank, precomp_dets=False):
     detections = dict()
 
     os.makedirs(os.path.join(out_path, split, log_id), exist_ok=True)
-    os.makedirs(os.path.join(out_path, split, 'feathers'), exist_ok=True)
-    write_path = os.path.join(out_path, split, 'feathers', f'all_{rank}.feather') 
+    # os.makedirs(os.path.join(out_path, split, 'feathers'), exist_ok=True)
+    write_path =os.path.join(out_path, split, log_id, 'annotations.feather') # os.path.join(out_path, split, 'feathers', f'all_{rank}.feather') 
 
-    if os.path.isfile(write_path):
-        df_all = feather.read_feather(write_path)
-        df_all = df_all.append(df)
-    else:
-        df_all = df
+    # if os.path.isfile(write_path):
+    #     df_all = feather.read_feather(write_path)
+    #     df = df_all.append(df)
+    # else:
+    #     df = df
 
-    feather.write_feather(df_all, write_path)
+    feather.write_feather(df, write_path)
     return True
 
