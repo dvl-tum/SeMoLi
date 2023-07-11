@@ -53,14 +53,14 @@ class InitialDetProcessor():
             self.rank,
             logger)
 
-        detections = self.dataset(self.collapsed_dets_path, self.gt_path, log_id, self.split)
+        detections = self.dataset(self.collapsed_dets_path, self.gt_path, log_id, self.split).dets
         detections = tracker.associate(detections)
         store_initial_detections(detections, log_id, self.tracked_dets_path, split, tracks=True)
         return detections
     
     def register(self, log_id, split):
-        tracks = self.dataset(self.tracked_dets_path, self.gt_path, log_id, tracks=True)
-        detections = self._registration(tracks, self.av2_loader)
+        tracks = self.dataset(self.tracked_dets_path, self.gt_path, log_id, self.split, tracks=True).dets
+        detections = self._registration(tracks, self.av2_loader, log_id).register()
         store_initial_detections(detections, log_id, self.tracked_dets_path, split, tracks=True)
         return detections
 
@@ -72,11 +72,11 @@ class InitialDetProcessor():
         store_initial_detections(detections, log_id, self.collapsed_dets_path, split, tracks=False, gt_path=self.gt_path)
         return detections
 
-    def to_feather(self, detections, log_id, out_path):
+    def to_feather(self, detections, log_id, out_path, split):
         # detections = [d for track_dets in detections.values() for d in track_dets]
-        print(detections.keys())
         to_feather(detections, log_id, out_path, self.split, self.rank, precomp_dets=False)
-        write_path = os.path.join(out_path, self.split, 'feathers', f'all_{self.rank}.feather')
+        write_path = os.path.join(out_path, split, log_id, 'annotations.feather')
+        # write_path = os.path.join(out_path, self.split, 'feathers', f'all_{self.rank}.feather')
         logger.info(f'wrote {write_path}')
 
     @staticmethod
@@ -172,13 +172,13 @@ def track(rank, cfg, world_size):
         
         if cfg.tracker_options.collaps:
             detections = detsprocessor.collaps(seq_name, split)
-            detsprocessor.to_feather(detections, seq_name, os.path.join(cfg.tracker_options.out_path_for_eval, 'collapsed'))
+            detsprocessor.to_feather(detections, seq_name, os.path.join(cfg.tracker_options.out_path_for_eval, 'collapsed'), split)
         if cfg.tracker_options.track:
             detections = detsprocessor.track(seq_name, split)
-            # detsprocessor.to_feather(detections, seq_name, os.path.join(cfg.tracker_options.out_path_for_eval, 'tracked'))
+            # detsprocessor.to_feather(detections, seq_name, os.path.join(cfg.tracker_options.out_path_for_eval, 'tracked'), split)
         if cfg.tracker_options.register:
             detections = detsprocessor.register(seq_name, split)
-            detsprocessor.to_feather(detections, seq_name, os.path.join(cfg.tracker_options.out_path_for_eval, 'registered'))
+            detsprocessor.to_feather(detections, seq_name, os.path.join(cfg.tracker_options.out_path_for_eval, 'registered'), split)
 
 
 if __name__ == "__main__":

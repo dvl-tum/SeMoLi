@@ -270,7 +270,7 @@ class Track():
 
 
 class InitialDetection():
-    def __init__(self, trajectory, canonical_points, timestamps, log_id, num_interior, overlap, gt_id, gt_id_box=None) -> None:
+    def __init__(self, trajectory, canonical_points, timestamps, log_id, num_interior, overlap, gt_id, gt_id_box=None, rot=None, alpha=None) -> None:
         self.trajectory = trajectory
         self.canonical_points = canonical_points
         self.timestamps = timestamps
@@ -282,7 +282,12 @@ class InitialDetection():
         self.length = trajectory.shape[1]
         self.track_id = 0
         
-        self.rot, self.alpha = self.get_alpha_rot_t0_to_t1(0, 1, self.trajectory)
+        if rot is not None:
+            self.rot = rot
+            self.alpha = alpha
+        else:
+            self.rot, self.alpha = self.get_alpha_rot_t0_to_t1(0, 1, self.trajectory)
+        
         self.lwh, self.translation = get_rotated_center_and_lwh(canonical_points, self.rot)
         self.mean_trajectory = torch.mean(self.trajectory, dim=0)
     
@@ -364,9 +369,9 @@ def get_lwh(object_points):
 
 
 class Detection():
-    def __init__(self, rotation, heading, translation, lwh, timestamp, log_id, num_interior, pts_density, trajectory, gt_id) -> None:
-        self.rotation = rotation
-        self.heading = heading
+    def __init__(self, rot, alpha, translation, lwh, timestamp, log_id, num_interior, pts_density, trajectory, gt_id) -> None:
+        self.rot = rot
+        self.alpha = alpha
         self.translation = translation
         self.lwh = lwh
         self.timestamp = timestamp
@@ -382,9 +387,9 @@ class Detection():
 
 
 class CollapsedDetection():
-    def __init__(self, rotation, heading, translation, lwh, traj, canonical_points, timestamp, log_id, num_interior, overlap, pts_density, gt_id) -> None:
-        self.rotation = rotation
-        self.heading = heading
+    def __init__(self, rot, alpha, translation, lwh, traj, canonical_points, timestamp, log_id, num_interior, overlap, pts_density, gt_id) -> None:
+        self.rot = rot
+        self.alpha = alpha
         self.translation = translation
         self.lwh = lwh
         self.traj = traj
@@ -407,7 +412,7 @@ class CollapsedDetection():
 
     def final_detection(self):
         pts_density = (self.lwh[0] * self.lwh[1] * self.lwh[2]) / self.num_interior
-        self.final = Detection(self.rotation, self.heading, self.translation, self.lwh, self.timestamp, self.log_id, self.num_interior, pts_density=pts_density, trajectory=self.traj, gt_id=self.gt_id)
+        self.final = Detection(self.rot, self.alpha, self.translation, self.lwh, self.timestamp, self.log_id, self.num_interior, pts_density=pts_density, trajectory=self.traj, gt_id=self.gt_id)
         return self.final
 
 def store_initial_detections(detections, seq, out_path, split, tracks=False, gt_path=None):
@@ -415,10 +420,11 @@ def store_initial_detections(detections, seq, out_path, split, tracks=False, gt_
     os.makedirs(p, exist_ok=True)
 
     if tracks:
-        extracted_detections = dict()
-        for t in detections:
-            extracted_detections[t.track_id] = t.detections
-        detections =  extracted_detections
+        if type(detections) != dict:
+            extracted_detections = dict()
+            for t in detections:
+                extracted_detections[t.track_id] = t.detections
+            detections =  extracted_detections
     else:
         if type(list(detections.keys())[0]) == int:
             detections = {k: v for k, v in detections.items()}
@@ -440,6 +446,8 @@ def store_initial_detections(detections, seq, out_path, split, tracks=False, gt_
                 gt_id=d.gt_id,
                 gt_id_box=d.gt_id_box,
                 track_id=d.track_id,
+                rot=d.rot.numpy(),
+                alpha=d.alpha.numpy()
             )
 
     print(f'Stored initial detections.....')
@@ -455,46 +463,38 @@ def load_initial_detections(out_path, split, seq=None, tracks=False, every_x_fra
         except:
             print(os.path.join(p, d))
             quit()
-        if 'gt_id_box' in d.keys():
-            print('aaaa', [k for k in d.keys()], d['canonical_points'], type(d['canonical_points']))
-            d = InitialDetection(
-                torch.from_numpy(d['trajectory']), 
-                torch.from_numpy(d['canonical_points']) if d['canonical_points'] is not None else d['canonical_points'], 
-                torch.from_numpy(d['timestamps']),
-                d['log_id'].item(),
-                d['num_interior'].item(),
-                d['overlap'].item(),
-                d['gt_id'].item(),
-                d['gt_id_box'].item(),
-            )
-        else:
-            d = InitialDetection(
-                torch.from_numpy(d['trajectory']),
-                torch.from_numpy(d['canonical_points']),
-                torch.from_numpy(d['timestamps']),
-                d['log_id'].item(),
-                d['num_interior'].item(),
-                d['overlap'].item(),
-                d['gt_id'].item(),
-                d['gt_id'].item(),
-            )
+        d = InitialDetection(
+            torch.from_numpy(d['trajectory']), 
+            torch.from_numpy(d['canonical_points']) if d['canonical_points'] is not None else d['canonical_points'], 
+            torch.atleast_2d(torch.from_numpy(d['timestamps'])),
+            d['log_id'].item(),
+            d['num_interior'].item(),
+            d['overlap'].item(),
+            d['gt_id'].item(),
+            d['gt_id_box'].item() if 'gt_id_box' in d.keys() else d['gt_id'].item(),
+            rot=torch.from_numpy(d['rot']) if 'rot' in d.keys() else None,
+            alpha=torch.from_numpy(d['alpha']) if 'alpha' in d.keys() else None
+        )
         if d.lwh[0] < 0.1 or d.lwh[1] < 0.1 or d.lwh[2] < 0.1:
             continue
         if not tracks:
-            detections[d.timestamps[0, 0].item()].append(d)
+            if not len(d.timestamps.shape):
+                detections[d.timestamps.item()].append(d)
+            else:
+                detections[d.timestamps[0, 0].item()].append(d)
         else:
             detections[dict_key].append(d)
 
-    if tracks:
-        tracks = list()
-        for track_id, dets in detections.items():
-            for i, d in enumerate(dets):
-                if i == 0:
-                    t = Track(d, track_id, every_x_frame, overlap)
-                else:
-                    t.add_detection(d)
-            tracks.append(t)
-        detections = tracks
+    #if tracks:
+    #    tracks = list()
+    #    for track_id, dets in detections.items():
+    #        for i, d in enumerate(dets):
+    #            if i == 0:
+    #                t = Track(d, track_id, every_x_frame, overlap)
+    #            else:
+    #                t.add_detection(d)
+    #        tracks.append(t)
+    #    detections = tracks
 
     return detections
 
@@ -522,7 +522,7 @@ def assign_gt(dets, gt, gt_assign_min_iou=0.25):
         # Compute IoU for each pair of detected / GT bounding box
         dets_trans = torch.stack([d.translation for d in time_dets])
         dets_lwh = torch.stack([d.lwh for d in time_dets])
-        dets_rot = torch.stack([d.rotation for d in time_dets])
+        dets_rot = torch.stack([d.rot for d in time_dets])
         det_boxes = list()
         for trans, lwh, rot in zip(dets_trans, dets_lwh, dets_rot):
             det_boxes.append(_create_box(trans, lwh, rot))
@@ -613,7 +613,7 @@ def to_feather(detections, log_id, out_path, split, rank, precomp_dets=False):
         for det in dets:
             det = det.final_detection()
             # quaternion rotation around z axis
-            quat = torch.tensor([torch.cos(det.heading/2), 0, 0, torch.sin(det.heading/2)]).numpy()
+            quat = torch.tensor([torch.cos(det.alpha/2), 0, 0, torch.sin(det.alpha/2)]).numpy()
             # REGULAR_VEHICLE = only dummy class
             values = [
                 det.translation[0].item(),
@@ -648,7 +648,7 @@ def to_feather(detections, log_id, out_path, split, rank, precomp_dets=False):
 
     os.makedirs(os.path.join(out_path, split, log_id), exist_ok=True)
     # os.makedirs(os.path.join(out_path, split, 'feathers'), exist_ok=True)
-    write_path =os.path.join(out_path, split, log_id, 'annotations.feather') # os.path.join(out_path, split, 'feathers', f'all_{rank}.feather') 
+    write_path = os.path.join(out_path, split, log_id, 'annotations.feather') # os.path.join(out_path, split, 'feathers', f'all_{rank}.feather') 
 
     # if os.path.isfile(write_path):
     #     df_all = feather.read_feather(write_path)

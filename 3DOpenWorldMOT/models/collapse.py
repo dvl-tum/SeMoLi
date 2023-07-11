@@ -115,7 +115,6 @@ class Collapser():
                             traj_t0=traj_t0, traj_t1=traj_t1)
                         lwh, translation = get_rotated_center_and_lwh(pc_city, rot)
                         traj = torch.stack([traj_t0, traj_t1])
-                        print('a')
                         collapsed_detections[k].append(CollapsedDetection(traj, pc_city, time, seq, traj.shape[1], self.overlap))
 
                 elif self.assign == 'heuristic':
@@ -151,7 +150,6 @@ class Collapser():
                     for i in range(num_det):
                         matched = torch.logical_and(arg_max==i, matches)
                         if torch.where(matched)[0].shape[0] and self.collaps_mode == 'accumulate':
-                            print('b')
                             collapsed_detections[k].append(self.accumulate(i,
                                         city_SE3_t,
                                         det,
@@ -186,13 +184,8 @@ class Collapser():
                                             trajs_city_t0_dets,
                                             trajs_city_t1_dets,
                                             data[time][i]))
-                            if type(collapsed_detections[k][-1]) != models.tracking_utils.CollapsedDetection:
-                                print(type(collapsed_detections[k][-1]))
             else:
-                if sum([type(d) == models.tracking_utils.InitialDetection for d in data[k]]) != len(data[k]):
-                    print(set([type(d) for d in data[k]]))
                 collapsed_detections[k] = [det for det in data[k]]
-        print(set([type(d) for dets in collapsed_detections for d in collapsed_detections[dets]]))
         return collapsed_detections
 
 
@@ -254,7 +247,6 @@ class Collapser():
         traj_t0.extend([trajs_city_t0_other[idx] for idx in torch.where(matched)[0]])
         traj_t1.extend([trajs_city_t1_other[idx] for idx in torch.where(matched)[0]])
         alpha.extend([alphas_other[idx] for idx in torch.where(matched)[0]])
-        print('alpha', alpha)
         pc_city = torch.cat(pc_city)
         traj_t0 = torch.cat(traj_t0)
         traj_t1 = torch.cat(traj_t1)
@@ -266,7 +258,6 @@ class Collapser():
         # get rotation, lwh and translation to crete box corners
         rot, alpha = det.get_alpha_rot_t0_to_t1(
             traj_t0=traj_t0, traj_t1=traj_t1)
-        print(alpha)
         quit()
         lwh, translation = get_rotated_center_and_lwh(pc, rot)
         traj = torch.stack([traj_t0, traj_t1])
