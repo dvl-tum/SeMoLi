@@ -14,6 +14,7 @@ defaults: # for loading the default.yaml config
 #  - hydra/output: custom  # add the support for user-defined experiment folder (where to save the experiment files)
 
 job_name: first_training # prefix name for saving the experiment file.                                              
+category: TRAIN_GNN
 update_lr_scheduler_on: "on_epoch" # ["on_epoch", "on_num_batch", "on_num_sample"]                                           
 selection_stage: ""                                                                                                   
 pretty_print: True                                                                                              

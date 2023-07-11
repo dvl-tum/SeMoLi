@@ -163,7 +163,7 @@ class TrajectoryDataset(PyGDataset):
         else:
             logger.info('Not Processing this time :) ')
     
-    def process(self, multiprocessing=False):
+    def process(self, multiprocessing=True):
         # only process what is not there yet
         already_processed = glob.glob(str(self.processed_dir)+'/*/*')
         # already_processed = list()
@@ -184,9 +184,12 @@ class TrajectoryDataset(PyGDataset):
 
         data_loader = enumerate(missing_paths)            
         if multiprocessing:
-            mp.set_start_method('forkserver')
-            with mp.Pool() as pool:
-                pool.map(self.process_sweep, data_loader, chunksize=None)
+            # mp.set_start_method('forkserver')
+            # with mp.Pool() as pool:
+            #     pool.map(self.process_sweep, data_loader, chunksize=None)
+            with Pool() as pool:
+                _eval_sequence = partial(self.process_sweep)
+                pool.map(_eval_sequence, data_loader)
         else:
             for data in data_loader:
                 self.process_sweep(data)
