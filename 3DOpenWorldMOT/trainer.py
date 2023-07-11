@@ -266,7 +266,7 @@ def main(cfg):
         wandb.finish()
         logging.shutdown()
     
-def train_one_epoch(cfg, epoch, logger, optimizer, train_loader,\
+def train_one_epoch(model, cfg, epoch, logger, optimizer, train_loader,\
                     rank, criterion, scaler, checkpoints_dir, name):
     # Adapt learning rate
     lr = max(cfg.training.optim.optimizer.params.lr * (
@@ -384,8 +384,8 @@ def train_one_epoch(cfg, epoch, logger, optimizer, train_loader,\
         torch.save(state, savepath)
 
 
-def eval_one_epoch(do_corr_clustering, rank, cfg, val_loader, experiment_dir,\
-        name, val_data, is_neural_net, logger, epoch, criterion, optimizer, checkpoints_dir):
+def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_dir,\
+        name, val_data, is_neural_net, logger, epoch, criterion, optimizer, checkpoints_dir, best_metric):
     
     node_loss = torch.zeros(2).to(rank)
     node_acc = torch.zeros(2).to(rank)
@@ -576,7 +576,6 @@ def eval_one_epoch(do_corr_clustering, rank, cfg, val_loader, experiment_dir,\
                 metric = detection_metric
 
             # store weights if neural net                
-            print(metric[0], best_metric)
             if metric[0] >= best_metric:
                 best_metric = metric[0]
                 if is_neural_net and not cfg.just_eval:
@@ -630,7 +629,9 @@ def train(rank, cfg, world_size):
         load_model(cfg, checkpoints_dir, logger, rank)
     
     if rank == 0 or not cfg.multi_gpu:
+        os.makedirs(experiment_dir + name, exist_ok=True)
         logger.info(f'Detections are stored under {experiment_dir + name}...')
+        os.makedirs(str(checkpoints_dir) + name, exist_ok=True)
         logger.info(f'Checkpoints are stored under {str(checkpoints_dir) + name}...')
 
     cfg.data.do_process = False
@@ -720,6 +721,7 @@ def train(rank, cfg, world_size):
             
             if is_neural_net:
                 train_one_epoch(
+                    model,
                     cfg,
                     epoch,
                     logger,
@@ -740,11 +742,29 @@ def train(rank, cfg, world_size):
             # do corr clustering in last epoch always
             do_corr_clustering = do_corr_clustering or epoch == cfg.training.epochs - 1
 
-            eval_one_epoch(do_corr_clustering, rank, cfg, val_loader, experiment_dir,\
-                name, val_data, is_neural_net, logger, epoch, criterion, optimizer, checkpoints_dir)
+            eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_dir,\
+                name, val_data, is_neural_net, logger, epoch, criterion, optimizer, checkpoints_dir, best_metric)
 
         if not is_neural_net or cfg.just_eval:
             break
+    
+    # FINAL EVALUATION WITH BEST WEIGHTS
+    if is_neural_net:
+        logger.info('**** FINAL EVALUATION ****')
+        best_model_path = str(checkpoints_dir) + name + '/best_model.pth'
+        checkpoint = torch.load(best_model_path)
+        chkpt_new = dict()
+        for k, v in checkpoint['model_state_dict'].items():
+            if 'module' in k:
+                chkpt_new[k[7:]] = v
+            else:
+                chkpt_new[k] = v
+        checkpoint['model_state_dict'] = chkpt_new
+        start_epoch = checkpoint['epoch'] if not cfg.just_eval else start_epoch
+        model.load_state_dict(checkpoint['model_state_dict'])
+
+        eval_one_epoch(model, True, rank, cfg, val_loader, experiment_dir,\
+                name, val_data, is_neural_net, logger, epoch, criterion, optimizer, checkpoints_dir, best_metric)
 
 
 if __name__ == '__main__':
