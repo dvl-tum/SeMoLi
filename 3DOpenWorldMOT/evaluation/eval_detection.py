@@ -674,8 +674,8 @@ if __name__ == '__main__':
             remove_non_move_strategy='per_frame',
             remove_non_move_thresh=1.0,
             classes_to_eval='all',
-            debug=True,
-            visualize=True,
+            debug=False,
+            visualize=False,
             name=name,
             min_points=min_points,
             max_points=max_points,
@@ -683,7 +683,7 @@ if __name__ == '__main__':
             print_detail=False,
             filter_class=c,
             eval_only_machted=False,
-            filter_moving_before=True)
+            filter_moving_before=False)
         
         print(detection_metric, '\n')
         quit()

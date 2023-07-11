@@ -23,15 +23,16 @@ class OfflineOracleTracker():
                 time = timestamp
             # associate
             active_tracks = self.associate_timestamp(
+                i,
                 dets,
                 timestamp=time,
                 last=len(detections)==i+1)
 
         return active_tracks
 
-    def associate_timestamp(self, detections, timestamp, last):
+    def associate_timestamp(self, i, detections, timestamp, last):
         for det in detections:
-            if det.gt_id_box not in self.active_tracks:
+            if det.gt_id_box not in self.active_tracks or i==1:
                 self.active_tracks[det.gt_id_box] = Track(det, det.gt_id_box, self.every_x_frame, self.overlap)
             else:
                 self.active_tracks[det.gt_id_box].add_detection(det)
@@ -45,9 +46,9 @@ class OnlineOracleTracker(OfflineOracleTracker):
         self.inactive_match = defaultdict(list)
         self.inactive_match_id = 0
 
-    def associate_timestamp(self, detections, timestamp, last):
+    def associate_timestamp(self, i, detections, timestamp, last):
         # increase inactive count
-        for idx in range(len(self.inactive_tracks)):
+        for idx in self.inactive_tracks.keys():
             t0 = torch.where(
                 self.ordered_timestamps==self.inactive_tracks[
                     idx].detections[-1].timestamps[0, 0])[0][0].item()
@@ -79,36 +80,51 @@ class OnlineOracleTracker(OfflineOracleTracker):
         
         # add detections to active / inactive tracks
         self.active_tracks.update(inactive_tracks_to_use)
-        active_tracks = list()
+        active_tracks = dict()
         for det in detections:
             det_in_act = det.gt_id_box in self.active_tracks
             det_in_dead = det.gt_id_box in inactive_tracks_not_to_use
+            det_in_inact = det.gt_id_box in inactive_tracks_to_use
             det_in_match = det.gt_id_box in self.inactive_match
             # if gt not in active or dead
-            if not det_in_act and not det_in_dead:
+            if (not det_in_act and not det_in_dead and not det_in_inact) or i == 1:
                 active_tracks[det.gt_id_box] = Track(det, det.gt_id_box, self.every_x_frame, self.overlap)
             # if gt not in active but in dead
             elif not det_in_act and det_in_dead:
                 # if not in det match
                 if not det_in_match:
                     self.inactive_match[det.gt_id_box].append(self.inactive_match_id)
+                    self.inactive_match_id += 1
                     active_tracks[self.inactive_match[det.gt_id_box][-1]] = Track(det, det.gt_id_box, self.every_x_frame, self.overlap)
                 # if in det match add another match
                 elif det_in_match and self.inactive_match[det.gt_id_box][-1] in inactive_tracks_not_to_use:
                     self.inactive_match[det.gt_id_box].append(self.inactive_match_id)
+                    self.inactive_match_id += 1
                     active_tracks[self.inactive_match[det.gt_id_box][-1]] = Track(det, det.gt_id_box, self.every_x_frame, self.overlap)
                 # if match in active
                 elif self.inactive_match[det.gt_id_box][-1] in self.active_tracks:
-                    active_tracks[self.inactive_match[det.gt_id_box][-1]] = Track(det, det.gt_id_box, self.every_x_frame, self.overlap)
+                    active_tracks[self.inactive_match[det.gt_id_box][-1]] = self.active_tracks[self.inactive_match[det.gt_id_box][-1]]
+                    active_tracks[self.inactive_match[det.gt_id_box][-1]].add_detection(det)
+            elif det_in_inact:
+                active_tracks[det.gt_id_box] = inactive_tracks_to_use[det.gt_id_box]
+                active_tracks[det.gt_id_box].add_detection(det)
+                inactive_tracks_to_use.pop(det.gt_id_box)
+            elif det.gt_id_box in self.inactive_match and self.inactive_match[det.gt_id_box][-1] in inactive_tracks_to_use:
+                active_tracks[self.inactive_match[det.gt_id_box][-1]] = \
+                        inactive_tracks_to_use[self.inactive_match[det.gt_id_box][-1]]
+                active_tracks[self.inactive_match[det.gt_id_box][-1]].add_detection(det)
+                inactive_tracks_to_use.pop(self.inactive_match[det.gt_id_box][-1])
             else:
-                active_tracks[det.gt_id_box] = self.active_tracks[self.inactive_match[det.gt_id_box][-1]]
+                # active_tracks[det.gt_id_box] = self.active_tracks[self.inactive_match[det.gt_id_box][-1]]
+                active_tracks[det.gt_id_box] = self.active_tracks[det.gt_id_box]
                 active_tracks[det.gt_id_box].add_detection(det)
         
         # add unused active tracks to inactive
+        self.inactive_tracks = inactive_tracks_not_to_use
+        self.inactive_tracks.update(inactive_tracks_to_use)
         for k in self.active_tracks:
             if k not in active_tracks.keys():
-                inactive_tracks_not_to_use[k] = self.active_tracks[k]
-        self.inactive_tracks = inactive_tracks_not_to_use
+                self.inactive_tracks[k] = self.active_tracks[k]
 
         # re-initialize active tracks
         self.active_tracks = active_tracks

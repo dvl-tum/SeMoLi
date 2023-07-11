@@ -420,10 +420,11 @@ def store_initial_detections(detections, seq, out_path, split, tracks=False, gt_
     os.makedirs(p, exist_ok=True)
 
     if tracks:
-        extracted_detections = dict()
-        for t in detections:
-            extracted_detections[t.track_id] = t.detections
-        detections =  extracted_detections
+        if type(detections) != dict:
+            extracted_detections = dict()
+            for t in detections:
+                extracted_detections[t.track_id] = t.detections
+            detections =  extracted_detections
     else:
         if type(list(detections.keys())[0]) == int:
             detections = {k: v for k, v in detections.items()}
@@ -465,7 +466,7 @@ def load_initial_detections(out_path, split, seq=None, tracks=False, every_x_fra
         d = InitialDetection(
             torch.from_numpy(d['trajectory']), 
             torch.from_numpy(d['canonical_points']) if d['canonical_points'] is not None else d['canonical_points'], 
-            torch.from_numpy(d['timestamps']),
+            torch.atleast_2d(torch.from_numpy(d['timestamps'])),
             d['log_id'].item(),
             d['num_interior'].item(),
             d['overlap'].item(),
@@ -477,21 +478,23 @@ def load_initial_detections(out_path, split, seq=None, tracks=False, every_x_fra
         if d.lwh[0] < 0.1 or d.lwh[1] < 0.1 or d.lwh[2] < 0.1:
             continue
         if not tracks:
-            print(d.timestamps)
-            detections[d.timestamps[0, 0].item()].append(d)
+            if not len(d.timestamps.shape):
+                detections[d.timestamps.item()].append(d)
+            else:
+                detections[d.timestamps[0, 0].item()].append(d)
         else:
             detections[dict_key].append(d)
 
-    if tracks:
-        tracks = list()
-        for track_id, dets in detections.items():
-            for i, d in enumerate(dets):
-                if i == 0:
-                    t = Track(d, track_id, every_x_frame, overlap)
-                else:
-                    t.add_detection(d)
-            tracks.append(t)
-        detections = tracks
+    #if tracks:
+    #    tracks = list()
+    #    for track_id, dets in detections.items():
+    #        for i, d in enumerate(dets):
+    #            if i == 0:
+    #                t = Track(d, track_id, every_x_frame, overlap)
+    #            else:
+    #                t.add_detection(d)
+    #        tracks.append(t)
+    #    detections = tracks
 
     return detections
 
