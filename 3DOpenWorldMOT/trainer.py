@@ -749,7 +749,7 @@ def train(rank, cfg, world_size):
             break
     
     # FINAL EVALUATION WITH BEST WEIGHTS
-    if is_neural_net:
+    if is_neural_net and not cfg.just_eval:
         logger.info('**** FINAL EVALUATION ****')
         best_model_path = str(checkpoints_dir) + name + '/best_model.pth'
         checkpoint = torch.load(best_model_path)
