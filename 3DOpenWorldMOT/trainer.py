@@ -240,8 +240,8 @@ def main(cfg):
             cfg.models.loss_hyperparams.node_loss = False #params_list[iter]['node_loss']
             # cfg.models.hyperparams.layer_sizes_edge = params_list[iter]['layer_sizes_edge']
             # cfg.models.hyperparams.layer_sizes_node = params_list[iter]['layer_sizes_node']
-            cfg.training.epochs = 30
-        
+            cfg.training.epochs = 15
+            cfg.data.percentage_data = 0.2 
             print(f"Current params: {params_list[iter]}")
 
         OmegaConf.set_struct(cfg, False)  # This allows getattr and hasattr methods to function correctly
@@ -315,6 +315,7 @@ def train_one_epoch(model, cfg, epoch, logger, optimizer, train_loader,\
             loss, log_dict, hist_node, hist_edge = criterion(logits, data, edge_index)
             loss.backward()
             optimizer.step()
+        
         if cfg.wandb and not cfg.multi_gpu:
             if hist_node is not None:
                 wandb.log({"train histogram node":
@@ -322,6 +323,15 @@ def train_one_epoch(model, cfg, epoch, logger, optimizer, train_loader,\
             if hist_edge is not None:
                 wandb.log({"train histogram edge":
                     wandb.Histogram(np_histogram=hist_edge), "epoch": epoch})
+        if rank == 0 and cfg.wandb:
+            if 'train bce loss edge' in log_dict.keys():
+                wandb.log({'train bce loss edge': log_dict['train bce loss edge'], "epoch": epoch})
+            if 'train bce loss node' in log_dict.keys():
+                wandb.log({'train bce loss node': log_dict['train bce loss node'], "epoch": epoch})
+            if 'train accuracy edge' in log_dict.keys():
+                wandb.log({'train accuracy edge': log_dict['train accuracy edge'], "epoch": epoch})
+            if 'train accuracy node' in log_dict.keys():
+                wandb.log({'train accuracy node': log_dict['train accuracy node'], "epoch": epoch})
 
         if 'train bce loss edge' in log_dict.keys():
             edge_loss[0] += float(log_dict['train bce loss edge'])
@@ -350,23 +360,27 @@ def train_one_epoch(model, cfg, epoch, logger, optimizer, train_loader,\
         dist.all_reduce(edge_loss, op=dist.ReduceOp.SUM)
         dist.all_reduce(edge_acc,   op=dist.ReduceOp.SUM)
         dist.all_reduce(node_acc, op=dist.ReduceOp.SUM)
-
+    print(node_loss, edge_loss)
     node_loss = float(node_loss[0] / node_loss[1])
     edge_loss = float(edge_loss[0] / edge_loss[1])
     edge_acc = float(edge_acc[0] / edge_acc[1])
     node_acc = float(node_acc[0] / node_acc[1])
-
+    print(node_loss, edge_loss)
     if rank == 0 or rank == 'cpu' or not cfg.multi_gpu:
         logger.info(f'train bce loss edge: {edge_loss}')
-        logger.info(f'train bce loss node: {node_loss}')
+        if 'train bce loss node' in log_dict.keys():
+            logger.info(f'train bce loss node: {node_loss}')
         logger.info(f'train accuracy edge: {edge_acc}')
-        logger.info(f'train accuracy node: {node_acc}')
+        if 'train accuracy node' in log_dict.keys():
+            logger.info(f'train accuracy node: {node_acc}')
 
         if cfg.wandb:
             wandb.log({'train bce loss edge': edge_loss, "epoch": epoch})
-            wandb.log({'train bce loss node': node_loss, "epoch": epoch})
+            if 'train bce loss node' in log_dict.keys():
+                wandb.log({'train bce loss node': node_loss, "epoch": epoch})
             wandb.log({'train accuracy edge': edge_acc, "epoch": epoch})
-            wandb.log({'train accuracy node': node_acc, "epoch": epoch})
+            if 'train accuracy node' in log_dict.keys():
+                wandb.log({'train accuracy node': node_acc, "epoch": epoch})
             if not cfg.multi_gpu:
                 wandb.log({'train num node pos/neg ratio': wandb.Histogram(
                     np_histogram=np.histogram(num_node_pos.cpu().numpy()/num_node_neg.cpu().numpy(), bins=30, range=(0., 3.))), "epoch": epoch})
@@ -518,15 +532,19 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
                 logger.info(f'nmi: {nmis}')
             if is_neural_net:
                 logger.info(f'eval bce loss edge: {edge_loss}')
-                logger.info(f'eval bce loss node: {node_loss}')
+                if 'train bce loss node' in log_dict.keys():
+                    logger.info(f'eval bce loss node: {node_loss}')
                 logger.info(f'eval accuracy edge: {edge_acc}')
-                logger.info(f'eval accuracy node: {node_acc}')
+                if 'eval accuracy node' in log_dict.keys():
+                    logger.info(f'eval accuracy node: {node_acc}')
 
             if cfg.wandb and is_neural_net:
                 wandb.log({'eval bce loss edge': edge_loss, "epoch": epoch})
-                wandb.log({'eval bce loss node': node_loss, "epoch": epoch})
+                if 'train bce loss node' in log_dict.keys():
+                    wandb.log({'eval bce loss node': node_loss, "epoch": epoch})
                 wandb.log({'eval accuracy edge': edge_acc, "epoch": epoch})
-                wandb.log({'eval accuracy node': node_acc, "epoch": epoch})
+                if 'eval accuracy node' in log_dict.keys():
+                    wandb.log({'eval accuracy node': node_acc, "epoch": epoch})
                 if not cfg.multi_gpu:
                     wandb.log({'eval num node pos/neg ratio': wandb.Histogram(
                         np_histogram=np.histogram(num_node_pos.cpu().numpy()/num_node_neg.cpu().numpy(), bins=30, range=(0., 3.))), "epoch": epoch})
@@ -615,7 +633,8 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
 def train(rank, cfg, world_size):
     if cfg.half_precision:
         scaler = torch.cuda.amp.GradScaler()
-
+    else:
+        scaler = None
     is_neural_net = cfg.models.model_name != 'DBSCAN' \
                 and cfg.models.model_name != 'SpectralClustering'\
                     and cfg.models.model_name != 'SimpleGraph'\
@@ -708,7 +727,7 @@ def train(rank, cfg, world_size):
         logger.info("The number of test data is: %d" % len(val_loader.dataset))
 
     if cfg.multi_gpu and is_neural_net:
-        model = nn.parallel.DistributedDataParallel(model)
+        model = nn.parallel.DistributedDataParallel(model, find_unused_parameters=True)
 
     is_neural_net = cfg.models.model_name != 'DBSCAN' \
                 and cfg.models.model_name != 'SpectralClustering'\
@@ -735,7 +754,7 @@ def train(rank, cfg, world_size):
                     scaler,
                     checkpoints_dir,
                     name)
-            
+        
         # evaluate
         if epoch % cfg.training.eval_every_x == 0:
             # do corr clustering every eval_corr_every_x epochs if epoch not 0
@@ -770,13 +789,13 @@ def train(rank, cfg, world_size):
         logger.info('**** FINAL EVALUATION ****')
         best_model_path = str(checkpoints_dir) + name + '/best_model.pth'
         checkpoint = torch.load(best_model_path)
-        chkpt_new = dict()
-        for k, v in checkpoint['model_state_dict'].items():
-            if 'module' in k:
-                chkpt_new[k[7:]] = v
-            else:
-                chkpt_new[k] = v
-        checkpoint['model_state_dict'] = chkpt_new
+        # chkpt_new = dict()
+        # for k, v in checkpoint['model_state_dict'].items():
+        #     if 'module' in k:
+        #          chkpt_new[k[7:]] = v
+        #     else:
+        #         chkpt_new[k] = v
+        # checkpoint['model_state_dict'] = chkpt_new
         start_epoch = checkpoint['epoch'] if not cfg.just_eval else start_epoch
         model.load_state_dict(checkpoint['model_state_dict'])
 
