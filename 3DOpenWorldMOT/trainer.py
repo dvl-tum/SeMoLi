@@ -183,14 +183,14 @@ def sample_params():
     for _  in range(30):
         focal_loss = random.choice([True, False])
         params = {
-            'lr': 10 ** random.uniform(-4, -1),
-            'weight_decay': 10 ** random.uniform(-10, -5),
+            'lr': 10 ** random.choice([-4, -3.5, -3, -2.5, -2, -1.5, -1]),
+            'weight_decay': 10 ** random.choice([-10, -9.5, -9, -8.5, -8, -7.5, -7, -6.5, -6, -5.5, -5]),
             'focal_loss_node': focal_loss,
             'focal_loss_edge': focal_loss,
-            'alpha_node': random.uniform(0, 1),
-            'alpha_edge': random.uniform(0, 1),
-            'gamma_node': random.uniform(1, 4),
-            'gamma_edge': random.uniform(1, 4),
+            'alpha_node': random.choice([0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]),
+            'alpha_edge': random.choice([0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]),
+            'gamma_node': random.choice([1, 1.5, 2, 2.5, 3, 3.5, 4]),
+            'gamma_edge': random.choice([1, 1.5, 2, 2.5, 3, 3.5, 4]),
             'node_loss': random.choice([True, False]),
         }
         dims = sample_dims()
@@ -287,7 +287,6 @@ def train_one_epoch(model, cfg, epoch, logger, optimizer, train_loader,\
     '''
 
     # iterate over dataset
-    num_batches = len(train_loader)
     model = model.train()
     logger.info('---- EPOCH %03d TRAINING ----' % (epoch + 1))
     node_loss = torch.zeros(2).to(rank)
@@ -300,7 +299,8 @@ def train_one_epoch(model, cfg, epoch, logger, optimizer, train_loader,\
         num_edge_pos = torch.zeros(len(train_loader)).to(rank)
         num_edge_neg = torch.zeros(len(train_loader)).to(rank)
 
-    for i, data in tqdm(enumerate(train_loader), total=len(train_loader), smoothing=0.9):
+    # for i, data in tqdm(enumerate(train_loader), total=len(train_loader), smoothing=0.9):
+    for i, data in enumerate(train_loader):
         data = data.to(rank)
         optimizer.zero_grad()
         if cfg.half_precision:
@@ -382,6 +382,8 @@ def train_one_epoch(model, cfg, epoch, logger, optimizer, train_loader,\
             'optimizer_state_dict': optimizer.state_dict(),
         }
         torch.save(state, savepath)
+    
+    return model, optimizer, loss
 
 
 def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_dir,\
@@ -415,7 +417,8 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
             model = model.eval()
         logger.info('---- EPOCH %03d EVALUATION ----' % (epoch + 1))
         # Iterate over validation set
-        for i, (data) in tqdm(enumerate(val_loader), total=len(val_loader), smoothing=0.9):
+        # for i, (data) in tqdm(enumerate(val_loader), total=len(val_loader), smoothing=0.9):
+        for i, (data) in enumerate(val_loader):
 
             # compute clusters
             logits, all_clusters, edge_index, _ = model(data, eval=True, name=name, corr_clustering=do_corr_clustering)
@@ -493,8 +496,6 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
                         num_edge_neg[i] += float(
                             log_dict['edge num edge neg'])
 
-        if is_neural_net:
-            model = model.train()
         if cfg.multi_gpu:
             if do_corr_clustering:
                 dist.all_reduce(nmis, op=dist.ReduceOp.SUM)
@@ -607,6 +608,8 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
                 logger.info(f'Best {cfg.metric} metric: {best_metric}, acc: {edge_acc}, cluster metric: {cluster_metric}, detection metric: {for_logs}')
             else:
                 logger.info(f'Best {cfg.metric} metric: {best_metric}, acc: {edge_acc}')
+    
+    return model, optimizer, criterion
 
 
 def train(rank, cfg, world_size):
@@ -720,7 +723,7 @@ def train(rank, cfg, world_size):
                  epoch + 1, cfg.training.epochs))
             
             if is_neural_net:
-                train_one_epoch(
+                model, optimizer, criterion, scaler = train_one_epoch(
                     model,
                     cfg,
                     epoch,
@@ -742,8 +745,22 @@ def train(rank, cfg, world_size):
             # do corr clustering in last epoch always
             do_corr_clustering = do_corr_clustering or epoch == cfg.training.epochs - 1
 
-            eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_dir,\
-                name, val_data, is_neural_net, logger, epoch, criterion, optimizer, checkpoints_dir, best_metric)
+            model, optimizer, criterion = eval_one_epoch(
+                model,
+                do_corr_clustering,
+                rank,
+                cfg,
+                val_loader,
+                experiment_dir,
+                name,
+                val_data,
+                is_neural_net, 
+                logger,
+                epoch,
+                criterion,
+                optimizer,
+                checkpoints_dir,
+                best_metric)
 
         if not is_neural_net or cfg.just_eval:
             break
