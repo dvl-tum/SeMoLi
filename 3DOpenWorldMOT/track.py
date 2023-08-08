@@ -134,7 +134,8 @@ def track(rank, cfg, world_size):
     dataset = MOT3DTrackDataset(
         os.path.join(cfg.tracker_options.track_data_path, 'initial_dets'),
         cfg.data.data_dir,
-        cfg.tracker_options.split)
+        cfg.tracker_options.split,
+        cfg.data.debug)
     
     if not cfg.multi_gpu:
         dataloader = DataLoader(

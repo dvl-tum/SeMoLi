@@ -96,6 +96,7 @@ def get_feather_files(
         split_dir = paths
         split = os.path.basename(paths)
         split_dir = os.path.dirname(os.path.dirname(paths)) + '_filtered'
+        split_dir = os.path.dirname(paths) + '_filtered'
 
         file = 'filtered_version.feather'
         file = 'remove_non_drive_' + file if remove_non_drive else file
@@ -108,7 +109,7 @@ def get_feather_files(
 
         path_filtered = os.path.join(split_dir, file)
         path_filtered = '/dvlresearch/jenny/Waymo_Converted_filtered_val/val_1.0_per_frame_remove_non_move_remove_far_filtered_version.feather'
-        path_filtered = "/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/Waymo_Converted_filtered_val/val_1.0_per_frame_remove_non_move_remove_far_filtered_version.feather"
+        # path_filtered = "/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/Waymo_Converted_filtered_val/val_1.0_per_frame_remove_non_move_remove_far_filtered_version.feather"
     if not is_gt or not os.path.isfile(path_filtered):
         df = None
         for i, path in enumerate(os.listdir(paths)):
@@ -120,7 +121,7 @@ def get_feather_files(
             data = feather.read_feather(
                 os.path.join(paths, path, 'annotations.feather'))
 
-            if 'argo' in paths or not is_gt:
+            if 'Argo' in paths or not is_gt:
                 def convert2int(x): return class_dict[x]
                 data['category'] = data['category'].apply(convert2int)
             else:
@@ -164,7 +165,7 @@ def get_feather_files(
         # iterate over sequences
         num_seqs = df['log_id'].unique().shape[0]
         data_loader = [
-            [log_id, num_seqs, remove_non_move, remove_non_move_strategy, loader, remove_non_move_thresh, remove_non_drive, path, remove_far, df] for log_id in df['log_id'].unique()]
+            [log_id, num_seqs, remove_non_move, remove_non_move_strategy, loader, remove_non_move_thresh, remove_non_drive, paths, remove_far, df] for log_id in df['log_id'].unique()]
 
         data_loader = enumerate(data_loader)
 
@@ -243,7 +244,7 @@ def filter_seq(data, width=25):
             log_id=seq, lidar_timestamp_ns=int(t))
 
         # remove labels that are non in dirvable area
-        if remove_non_drive and 'argo' in path:
+        if remove_non_drive and 'Argo' in path:
             if seq not in map_dict.keys():
                 log_map_dirpath = Path(gt_folder) / seq / "map"
                 map_dict[seq] = ArgoverseStaticMap.from_map_dir(
@@ -301,8 +302,7 @@ def filter_seq(data, width=25):
                         # get flow
                         translation = obj_traj_ego_traj - obj_ref_ego_traj
                         dist = np.linalg.norm(translation)
-
-                        if 'argo' in path:
+                        if 'Argo' in path:
                             diff_time = (
                                 timestamps[i+1]-t) / np.power(10, 9)
                         else:
@@ -315,7 +315,6 @@ def filter_seq(data, width=25):
                     else:
                         vels.append(None)
                         bool_labels.append(False)
-
                 # filter labels
                 # labels = [l for i, l in enumerate(
                 #     labels) if bool_labels[i]]
@@ -354,7 +353,6 @@ def visualize_whole(df, gf, name, base_dir='../../../'):
     split_dir = Path('/workspace/Waymo_Converted_val/val')
     loader = AV2SensorDataLoader(data_dir=split_dir, labels_dir=split_dir)
     for seq in df['log_id'].unique():
-        print(f'storing to {base_dir}Visualization_Whole_DETS/{seq}')
 
         ddf = df[df['log_id'] == seq]
         gdf = gf[gf['log_id'] == seq]
@@ -647,12 +645,13 @@ if __name__ == '__main__':
     tracker_dir = 'collapsed/val'
     tracker_dir = 'out/trajectories2_nooracle_64_64_3.5900203994472646e-07_0.06176295901709523_16000_16000__NS_MG_32_2.0_LN_/val'
     # tracker_dir = 'collapsed_heuristic_mean/val'
-    tracker_dir = '/workspace/result/out/all_egocomp_margin0.6_width25_nooracle_64_64_3.5900203994472646e-07_0.06176295901709523_16000_16000__NS_MG_32_2.0_LN_/val'
+    # tracker_dir = '/workspace/result/out/all_egocomp_margin0.6_width25_nooracle_64_64_3.5900203994472646e-07_0.06176295901709523_16000_16000__NS_MG_32_2.0_LN_/val'
     print(tracker_dir)
     gt_folder = 'data/waymo_converted'
     gt_folder = '/dvlresearch/jenny/Waymo_Converted_GT'
     gt_folder = '/dvlresearch/jenny/debug_Waymo_Converted_val/Waymo_Converted'
     gt_folder = '/workspace/Waymo_Converted_val'
+    gt_folder = '../../../../datasets/Argoverse2'
     seq_list = os.listdir(tracker_dir)
     min_points = -1
     max_points = 1000000

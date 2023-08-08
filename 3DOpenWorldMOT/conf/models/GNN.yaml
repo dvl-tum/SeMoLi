@@ -8,7 +8,6 @@ hyperparams:
     k: 8
     k_eval: 32
     r: 5.0
-    graph_construction: pos
     edge_attr: diffpostraj
     node_attr: traj
     min_samples: ${detection_options.num_interior}

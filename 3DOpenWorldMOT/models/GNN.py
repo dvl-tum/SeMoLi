@@ -455,18 +455,19 @@ class ClusterGNN(MessagePassing):
             point_normals = None
 
         node_attr = self.initial_node_attributes(traj, pc, self.node_attr, point_normals, data['timestamps'], data['batch'])
-        graph_attr = self.initial_node_attributes(traj, pc, self.graph_construction)
+        # graph_attr = self.initial_node_attributes(traj, pc, self.graph_construction)
+        graph_attr = node_attr
 
         # get edges using knn graph (for computational feasibility)
         k = self.k if not eval else self.k_eval
         if self.graph == 'knn':
-            if self.my_graph:
+            if self.my_graph and len(graph_attr.shape) != 2:
                 edge_index = self.get_graph(
                     graph_attr, self.r, max_num_neighbors=k, batch_idx=batch_idx, type='knn', batch=data['batch'])
             else:
                 edge_index = knn_graph(x=graph_attr, k=k, batch=data['batch'])
         elif self.graph == 'radius':
-            if self.my_graph:
+            if self.my_graph and len(graph_attr.shape) != 2:
                 edge_index = self.get_graph(
                     graph_attr, self.r, max_num_neighbors=k, batch_idx=batch_idx, type='radius', batch=data['batch'])
             else:

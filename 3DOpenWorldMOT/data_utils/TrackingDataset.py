@@ -15,11 +15,17 @@ from models.tracking_utils import load_initial_detections, load_gt
  
 
 class MOT3DTrackDataset:
-    def __init__(self, dataset_path, gt_path, split):
+    def __init__(self, dataset_path, gt_path, split, debug):
         self.dataset_path = dataset_path
         self.split = split
         self.gt_path = gt_path
-        self.data = os.listdir(os.path.join(dataset_path, split))
+        if not debug:
+            self.data = os.listdir(os.path.join(dataset_path, split))
+        else:
+            if split == 'val':
+                self.seqs = ['16473613811052081539']
+            else:
+                self.seqs = ['2400780041057579262']
 
     def __getitem__(self, idx):
         seq_name = self.data[idx]
