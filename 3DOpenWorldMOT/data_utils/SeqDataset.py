@@ -21,6 +21,7 @@ class MOT3DSeqDataset:
         self.dataset_path = dataset_path
         self.split = split
         self.gt_path = gt_path
+        self.tracks = tracks
         self._load_detections(tracks, self.dataset_path, self.split, self.seq_name)
 
     def _add_extra_det_features(self):
@@ -31,15 +32,20 @@ class MOT3DSeqDataset:
         timestamps2frame = {int(t[:-8]): frame for frame, t in enumerate(
             sorted(os.listdir(osp.join(self.gt_path, self.seq_name, 'sensors', 'lidar'))))}
         
-        # get frames from sorted timestamps for detections
-        for _, dets in self.dets.items():
-            for det in dets:
-                det.frame = timestamps2frame[det.timestamps[0, 0].item()]
+        if not self.tracks:
+            # get frames from sorted timestamps for detections
+            for _, dets in self.dets.items():
+                for det in dets:
+                    det.frame = timestamps2frame[det.timestamps[0, 0].item()]
 
-        # get frames from sorted timestamps for ground truth
-        if not 'test' in self.dataset_path:
-            frames = [timestamps2frame[t] for t in self.gts['timestamp_ns']]
-            self.gts['frames'] = frames
+            # get frames from sorted timestamps for ground truth
+            if not 'test' in self.dataset_path:
+                frames = [timestamps2frame[t] for t in self.gts['timestamp_ns']]
+                self.gts['frames'] = frames
+        else:
+            for track in self.dets:
+                for det in track:
+                    det.frame = timestamps2frame[det.timestamps[0, 0].item()]
 
     def _load_detections(self, tracks, load_path, split, log_id):
         """
@@ -47,12 +53,12 @@ class MOT3DSeqDataset:
         """
         # Read the dfs
         self.dets = load_initial_detections(load_path, split, log_id, tracks=tracks, every_x_frame=1, overlap=1)
-        if not 'test' in self.dataset_path:
+        if not 'test' in self.dataset_path and not self.tracks:
             self.gts = load_gt(self.seq_name, self.gt_path)
 
         # Add extra measurements
         self._add_extra_det_features()
-    
+
     def _assign_gt(self):
         """
         Assigns a GT identity to every detection in self.det_df, based on the ground truth boxes in self.gt_df.
@@ -89,7 +95,7 @@ class MOT3DSeqDataset:
                     self.dets[idx_dt].gt_id_box = frame_gt.iloc[idx_gt]['id'].values
                 for idx_dt in unassigned_detect_ixs:
                     self.dets[idx_dt].gt_id_box = -1
-    
+
     @staticmethod
     def _create_box(xyz, lwh, rot):
         '''

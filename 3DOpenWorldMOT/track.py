@@ -1,4 +1,5 @@
-
+import warnings
+warnings.filterwarnings("ignore")
 import hydra
 from omegaconf import OmegaConf
 from models import _tracker_factory, _registration_factory, _collaps_factory
@@ -62,15 +63,18 @@ class InitialDetProcessor():
         tracks = self.dataset(self.tracked_dets_path, self.gt_path, log_id, self.split, tracks=True).dets
         detections = self._registration(tracks, self.av2_loader, log_id).register()
         store_initial_detections(detections, log_id, self.tracked_dets_path, split, tracks=True)
+        detections = {k: [t.detections[i] for i in range(len(t.detections))] for k, t in detections.items()}
         return detections
 
     def collaps(self, log_id, split):
         detections = self.dataset(self.initial_dets_path, self.gt_path, log_id, self.split).dets
         self.collaps = self._collaps(self.av2_loader)
         detections = self.collaps.collaps(detections, log_id, self.gt_path)
-        print(set([type(d) for dets in detections for d in detections[dets]]))
         store_initial_detections(detections, log_id, self.collapsed_dets_path, split, tracks=False, gt_path=self.gt_path)
         return detections
+    
+    def get_initial_dets(self, log_id, split):
+        return self.dataset(self.initial_dets_path, self.gt_path, log_id, self.split).dets
 
     def to_feather(self, detections, log_id, out_path, split):
         # detections = [d for track_dets in detections.values() for d in track_dets]
@@ -104,23 +108,33 @@ def main(cfg):
     else:
         track(1, cfg, world_size=1)
     
-    if cfg.tracker_options.collaps:
+    if cfg.tracker_options.convert_initial:
+        logger.info('Evaluating initial bounding boxes...')
         InitialDetProcessor.eval(
             cfg,
-            os.path.join(cfg.tracker_options.out_path_for_eval, 'collapsed'),
-            os.listdir(os.path.join(cfg.tracker_options.out_path_for_eval, 'collapsed')),
+            os.path.join(cfg.tracker_options.out_path_for_eval, 'initial', cfg.tracker_options.split),
+            os.listdir(os.path.join(cfg.tracker_options.out_path_for_eval, 'initial', cfg.tracker_options.split)),
+            'Initial')
+        #if cfg.tracker_options.collaps:
+        logger.info('Evaluating collapsed bounding boxes...')
+        InitialDetProcessor.eval(
+            cfg,
+            os.path.join(cfg.tracker_options.out_path_for_eval, 'collapsed', cfg.tracker_options.split),
+            os.listdir(os.path.join(cfg.tracker_options.out_path_for_eval, 'collapsed', cfg.tracker_options.split)),
             'Collapsed')
-    # if cfg.tracker_options.track:
-    #     InitialDetProcessor.eval(
-    #         cfg,
-    #         os.path.join(cfg.tracker_options.out_path_for_eval, 'tracked'),
-    #         os.listdir(os.path.join(cfg.tracker_options.out_path_for_eval, 'tracked')),
-    #         'Tracked')
-    if cfg.tracker_options.register:
+    if cfg.tracker_options.track:
+        logger.info('Evaluating tracked bounding boxes...')
         InitialDetProcessor.eval(
             cfg,
-            os.path.join(cfg.tracker_options.out_path_for_eval,
-            'registered'), os.listdir(os.path.join(cfg.tracker_options.out_path_for_eval, 'registered')),
+            os.path.join(cfg.tracker_options.out_path_for_eval, 'tracked', cfg.tracker_options.split),
+            os.listdir(os.path.join(cfg.tracker_options.out_path_for_eval, 'tracked', cfg.tracker_options.split)),
+            'Tracked')
+    if cfg.tracker_options.register:
+        logger.info('Evaluating registered bounding boxes...')
+        InitialDetProcessor.eval(
+            cfg,
+            os.path.join(cfg.tracker_options.out_path_for_eval, 'registered', cfg.tracker_options.split), 
+            os.listdir(os.path.join(cfg.tracker_options.out_path_for_eval, 'registered', cfg.tracker_options.split)),
             'Registered')
 
 
@@ -159,8 +173,8 @@ def track(rank, cfg, world_size):
             tracker_params=cfg.tracker_options,
             registration_type=cfg.tracker_options.registration_type,
             collaps_type=cfg.tracker_options.collaps_type,
-            every_x_frame=1,
-            overlap=25, 
+            every_x_frame=cfg.tracker_options.every_x_frame,
+            overlap=cfg.tracker_options.overlap, 
             av2_loader=loader,
             rank=0,
             track_data_path=cfg.tracker_options.track_data_path,
@@ -170,14 +184,22 @@ def track(rank, cfg, world_size):
             registered_dets_path=cfg.tracker_options.registered_dets,
             gt_path=f'{gt_path}_{split}/Waymo_Converted/{split}',
             split=split)
-        
+
+        if cfg.tracker_options.convert_initial:
+            logger.info('Converting initial...')
+            detections = detsprocessor.get_initial_dets(seq_name, split)
+            detsprocessor.to_feather(detections, seq_name, os.path.join(cfg.tracker_options.out_path_for_eval, 'initial'), split)
         if cfg.tracker_options.collaps:
+            logger.info('Collapsing...')
             detections = detsprocessor.collaps(seq_name, split)
             detsprocessor.to_feather(detections, seq_name, os.path.join(cfg.tracker_options.out_path_for_eval, 'collapsed'), split)
         if cfg.tracker_options.track:
+            logger.info('Tracking...')
             detections = detsprocessor.track(seq_name, split)
-            # detsprocessor.to_feather(detections, seq_name, os.path.join(cfg.tracker_options.out_path_for_eval, 'tracked'), split)
+            detections = {k: v.detections for k, v in detections.items()}
+            detsprocessor.to_feather(detections, seq_name, os.path.join(cfg.tracker_options.out_path_for_eval, 'tracked'), split)
         if cfg.tracker_options.register:
+            logger.info('Registration...')
             detections = detsprocessor.register(seq_name, split)
             detsprocessor.to_feather(detections, seq_name, os.path.join(cfg.tracker_options.out_path_for_eval, 'registered'), split)
 

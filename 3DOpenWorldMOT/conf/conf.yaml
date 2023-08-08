@@ -24,8 +24,8 @@ out_path: 'out'
 just_eval: False     
 metric: acc
 multi_gpu: False
-half_precision: True
-gradient_checkpointing: True
+half_precision: False
+gradient_checkpointing: False
 
 tracker_options: # Extra options for the tracker
   a_threshold: 2.0
@@ -33,10 +33,12 @@ tracker_options: # Extra options for the tracker
   matching: 'greedy'
   alpha: 0.95
   overlap: 5
+  every_x_frame: ${data.every_x_frame}
   track_data_path: '/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/tracks/tracks'
   split: val
   collaps: True
   track: True
+  convert_initial: True
   register: True
   initial_dets: 'initial_dets'
   collapsed_dets: 'collapsed_dets'

@@ -42,11 +42,11 @@ def initialize(cfg):
     '''HYPER PARAMETER'''
     #print(cfg.training.gpu)
     #os.environ["CUDA_VISIBLE_DEVICES"] = cfg.training.gpu
-    torch.manual_seed(0)
+    torch.manual_seed(1)
     # torch.use_deterministic_algorithms(True)
     torch.backends.cudnn.deterministic = True
-    np.random.seed(0)
-    random.seed(0)
+    np.random.seed(1)
+    random.seed(1)
 
     '''CREATE DIR'''
     out_path = os.path.join(cfg.out_path, 'out/')
@@ -72,7 +72,8 @@ def initialize(cfg):
 def load_model(cfg, checkpoints_dir, logger, rank=0):
     '''MODEL LOADING'''
     model = _model_factory[cfg.models.model_name](rank=rank, **cfg.models.hyperparams)
-    print(model)
+    if rank == 0:
+        logger.info(model)
     criterion = _loss_factory[cfg.models.model_name]
     start_epoch = 0
     optimizer = None
@@ -111,8 +112,8 @@ def load_model(cfg, checkpoints_dir, logger, rank=0):
             name = 'oracleedge' + "_" + name if cfg.models.hyperparams.oracle_edge else name
             name = 'oraclenode' + "_" + name if cfg.models.hyperparams.oracle_node else name
             name = os.path.basename(cfg.data.trajectory_dir) + "_" + name
-            
-            logger.info(f'Using this name: {name}')
+            if rank == 0: 
+                logger.info(f'Using this name: {name}')
             os.makedirs(checkpoints_dir + name, exist_ok=True)
 
             try:
@@ -128,13 +129,16 @@ def load_model(cfg, checkpoints_dir, logger, rank=0):
                 model.load_state_dict(checkpoint['model_state_dict'])
                 met = checkpoint['best_metric']
                 metric_mode = checkpoint['metric_mode']
-                logger.info(f'Use pretrained model with {metric_mode}: {met}')
+                if rank == 0:
+                    logger.info(f'Use pretrained model with {metric_mode}: {met}')
             except:
                 if cfg.models.weight_path != '':
-                    logger.info(f'Did not find pretrained model with {cfg.models.weight_path}')
+                    if rank == 0:
+                        logger.info(f'Did not find pretrained model with {cfg.models.weight_path}')
                     quit()
                 else:
-                    logger.info('No existing model, starting training from scratch...')
+                    if rank == 0:
+                        logger.info('No existing model, starting training from scratch...')
 
             if cfg.training.optim.optimizer.o_class == 'Adam':
                 optimizer = torch.optim.Adam(
@@ -164,7 +168,7 @@ def load_model(cfg, checkpoints_dir, logger, rank=0):
         name = cfg.models.hyperparams.input_traj + "_" + str(cfg.models.hyperparams.thresh_traj) + "_" + str(cfg.models.hyperparams.min_samples_traj) + "_" + str(cfg.models.hyperparams.thresh_pos) + "_" + str(cfg.models.hyperparams.min_samples_pos) + "_" + str(cfg.models.hyperparams.flow_thresh)
         name = os.path.basename(cfg.data.trajectory_dir) + "_" + name
     
-    name = cfg.job_name + '_' + str(cfg.data.percentage_data) + '_' + name
+    name = cfg.job_name + '_' + str(cfg.data.percentage_data_train) + '_' + str(cfg.data.percentage_data_val) + '_' + name
 
     if cfg.wandb and (not cfg.multi_gpu or rank == 0 or rank == 'cpu'):
         wandb.login(key='3b716e6ab76d92ef92724aa37089b074ef19e29c')
@@ -241,7 +245,8 @@ def main(cfg):
             # cfg.models.hyperparams.layer_sizes_edge = params_list[iter]['layer_sizes_edge']
             # cfg.models.hyperparams.layer_sizes_node = params_list[iter]['layer_sizes_node']
             cfg.training.epochs = 15
-            cfg.data.percentage_data = 0.2 
+            cfg.data.percentage_data_train = 0.1 
+            cfg.data.percentage_data_val = 0.1
             print(f"Current params: {params_list[iter]}")
 
         OmegaConf.set_struct(cfg, False)  # This allows getattr and hasattr methods to function correctly
@@ -253,16 +258,22 @@ def main(cfg):
         # needed for preprocessing
         logger.info("start loading training data ...")
         train_data, val_data, test_data = get_TrajectoryDataLoader(cfg)
-
+        
         if cfg.multi_gpu:
             world_size = torch.cuda.device_count()
             in_args = (cfg, world_size)
             mp.spawn(train, args=in_args, nprocs=world_size, join=True)
+            # if not cfg.training.hypersearch:
+            #     mp.spawn(final_evaluation, args=in_args, nprocs=world_size, join=True)
         elif torch.cuda.is_available():
             train(0, cfg, world_size=1)
+            if not cfg.training.hypersearch:
+                final_evaluation(0, cfg, world_size=1)
         else:
             train('cpu', cfg, world_size=1)
-        
+            if not cfg.training.hypersearch:
+                final_evaluation('cpu', cfg, world_size=1)
+
         wandb.finish()
         logging.shutdown()
     
@@ -272,7 +283,8 @@ def train_one_epoch(model, cfg, epoch, logger, optimizer, train_loader,\
     lr = max(cfg.training.optim.optimizer.params.lr * (
         cfg.lr_scheduler.params.gamma ** (
             epoch // cfg.lr_scheduler.params.step_size)), cfg.lr_scheduler.params.clip)
-    logger.info('Learning rate:%f' % lr)
+    if rank == 0:
+        logger.info('Learning rate:%f' % lr)
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
 
@@ -288,19 +300,22 @@ def train_one_epoch(model, cfg, epoch, logger, optimizer, train_loader,\
 
     # iterate over dataset
     model = model.train()
-    logger.info('---- EPOCH %03d TRAINING ----' % (epoch + 1))
+    if rank == 0:
+        logger.info('---- EPOCH %03d TRAINING ----' % (epoch + 1))
     node_loss = torch.zeros(2).to(rank)
-    node_acc = torch.zeros(2).to(rank)
+    node_acc = torch.zeros(6).to(rank)
+    per_class_node_acc = torch.zeros(40).to(rank)
     edge_loss = torch.zeros(2).to(rank)
-    edge_acc = torch.zeros(2).to(rank)
-    if not cfg.multi_gpu:
-        num_node_pos = torch.zeros(len(train_loader)).to(rank)
-        num_node_neg = torch.zeros(len(train_loader)).to(rank)
-        num_edge_pos = torch.zeros(len(train_loader)).to(rank)
-        num_edge_neg = torch.zeros(len(train_loader)).to(rank)
-
-    # for i, data in tqdm(enumerate(train_loader), total=len(train_loader), smoothing=0.9):
-    for i, data in enumerate(train_loader):
+    edge_acc = torch.zeros(6).to(rank)
+    per_class_edge_acc = torch.zeros(40).to(rank)
+    num_node_pos = torch.zeros(len(train_loader)).to(rank)
+    num_node_neg = torch.zeros(len(train_loader)).to(rank)
+    num_edge_pos = torch.zeros(len(train_loader)).to(rank)
+    num_edge_neg = torch.zeros(len(train_loader)).to(rank)
+    
+    collaps_dict = dict()
+    for batch, data in tqdm(enumerate(train_loader), total=len(train_loader), smoothing=0.9):
+    # for batch, data in enumerate(train_loader):
         data = data.to(rank)
         optimizer.zero_grad()
         if cfg.half_precision:
@@ -308,13 +323,35 @@ def train_one_epoch(model, cfg, epoch, logger, optimizer, train_loader,\
                 logits, edge_index, batch_edge = model(data)
                 loss, log_dict, hist_node, hist_edge = criterion(logits, data, edge_index)
                 scaler.scale(loss).backward()
+                for name, param in model.named_parameters():
+                    if torch.isnan(param.grad).any():
+                        logger.info('Having nan in gradients....')
+                        return None, None, None, None
                 scaler.step(optimizer)
                 scaler.update()
         else:
             logits, edge_index, batch_edge = model(data)
             loss, log_dict, hist_node, hist_edge = criterion(logits, data, edge_index)
             loss.backward()
+            for p_name, param in model.named_parameters():
+                try:
+                    if torch.isnan(param.grad).any():
+                        logger.info(f'Having nan in gradients {p_name}....')
+                        logger.info(data)
+                        logger.info(data['path'])
+                        # for start, end in zip(data._slice_dict['pc_list'][:-1], data._slice_dict['pc_list'][1:]):
+                        #     logger.info(data['pc_list'][start:end])
+                        #     logger.info(data['traj'][start:end])
+                        logger.info(data._slice_dict['pc_list'])
+                        return None, None, None, None
+                except:
+                    print(p_name)
+                    quit()
             optimizer.step()
+
+        if torch.isnan(logits[0]).any():
+            logger.info(f'Having nan in logits {logits}....')
+            return None, None, None, None
         
         if cfg.wandb and not cfg.multi_gpu:
             if hist_node is not None:
@@ -323,64 +360,104 @@ def train_one_epoch(model, cfg, epoch, logger, optimizer, train_loader,\
             if hist_edge is not None:
                 wandb.log({"train histogram edge":
                     wandb.Histogram(np_histogram=hist_edge), "epoch": epoch})
-        if rank == 0 and cfg.wandb:
-            if 'train bce loss edge' in log_dict.keys():
-                wandb.log({'train bce loss edge': log_dict['train bce loss edge'], "epoch": epoch})
-            if 'train bce loss node' in log_dict.keys():
-                wandb.log({'train bce loss node': log_dict['train bce loss node'], "epoch": epoch})
-            if 'train accuracy edge' in log_dict.keys():
-                wandb.log({'train accuracy edge': log_dict['train accuracy edge'], "epoch": epoch})
-            if 'train accuracy node' in log_dict.keys():
-                wandb.log({'train accuracy node': log_dict['train accuracy node'], "epoch": epoch})
-
-        if 'train bce loss edge' in log_dict.keys():
-            edge_loss[0] += float(log_dict['train bce loss edge'])
-            edge_loss[1] += 1
-        if 'train bce loss node' in log_dict.keys():
-            node_loss[0] += float(log_dict['train bce loss node'])
-            node_loss[1] += 1
-        if 'train accuracy edge' in log_dict.keys():
-            edge_acc[0] += float(log_dict['train accuracy edge'])
-            edge_acc[1] += 1
-        if 'train accuracy node' in log_dict.keys():
-            node_acc[0] += float(log_dict['train accuracy node'])
-            node_acc[1] += 1
-        if not cfg.multi_gpu:
-            if 'train num node pos' in log_dict.keys():
-                num_node_pos[i] = float(log_dict['train num node pos'])
-            if 'train num node neg' in log_dict.keys():
-                num_node_neg[i] = float(log_dict['train num node neg'])
-            if 'train num edge pos' in log_dict.keys():
-                num_edge_pos[i] = float(log_dict['train num edge pos'])
-            if 'train num edge neg' in log_dict.keys():
-                num_edge_neg[i] = float(log_dict['train num edge neg'])
         
+        if rank == 0 and cfg.wandb:
+            for k, v in log_dict.items():
+                if 'num' in k:
+                    wandb.log({f'{k}': v, "epoch": epoch})
+                else:
+                    for i in range(int(v.shape[0]/2)):
+                        if v[2*i+1]:
+                            wandb.log({f'{k} {i}': v[2*i], "epoch": epoch})
+        
+        if 'train bce loss edge' in log_dict.keys():
+            edge_loss += log_dict['train bce loss edge']
+        if 'train bce loss node' in log_dict.keys():
+            node_loss += log_dict['train bce loss node']
+        if 'train accuracy edge' in log_dict.keys():
+            edge_acc += log_dict['train accuracy edge']
+        if 'train accuracy edges connected to class' in log_dict.keys():
+            per_class_edge_acc += log_dict['train accuracy edges connected to class']
+        if 'train accuracy node' in log_dict.keys():
+            node_acc = log_dict['train accuracy node']
+        if 'train accuracy nodes of class' in log_dict.keys():
+            per_class_node_acc += log_dict['train accuracy nodes of class']
+        if 'train num node pos' in log_dict.keys():
+            num_node_pos[batch] = float(log_dict['train num node pos'])
+        if 'train num node neg' in log_dict.keys():
+            num_node_neg[batch] = float(log_dict['train num node neg'])
+        if 'train num edge pos' in log_dict.keys():
+            num_edge_pos[batch] = float(log_dict['train num edge pos'])
+        if 'train num edge neg' in log_dict.keys():
+            num_edge_neg[batch] = float(log_dict['train num edge neg'])
+    
+    _num_node_pos = torch.tensor([num_node_pos.sum(), num_node_pos.shape[0]]).to(rank)
+    _num_node_neg = torch.tensor([num_node_neg.sum(), num_node_neg.shape[0]]).to(rank)
+    _num_edge_pos = torch.tensor([num_edge_pos.sum(), num_edge_pos.shape[0]]).to(rank)
+    _num_edge_neg = torch.tensor([num_edge_neg.sum(), num_edge_neg.shape[0]]).to(rank)
+
     if cfg.multi_gpu:
         dist.all_reduce(node_loss, op=dist.ReduceOp.SUM)
         dist.all_reduce(edge_loss, op=dist.ReduceOp.SUM)
-        dist.all_reduce(edge_acc,   op=dist.ReduceOp.SUM)
+        dist.all_reduce(edge_acc, op=dist.ReduceOp.SUM)
+        dist.all_reduce(per_class_edge_acc, op=dist.ReduceOp.SUM)
         dist.all_reduce(node_acc, op=dist.ReduceOp.SUM)
-    print(node_loss, edge_loss)
-    node_loss = float(node_loss[0] / node_loss[1])
-    edge_loss = float(edge_loss[0] / edge_loss[1])
-    edge_acc = float(edge_acc[0] / edge_acc[1])
-    node_acc = float(node_acc[0] / node_acc[1])
-    print(node_loss, edge_loss)
+        dist.all_reduce(per_class_node_acc, op=dist.ReduceOp.SUM)
+        dist.all_reduce(_num_node_pos, op=dist.ReduceOp.SUM)
+        dist.all_reduce(_num_node_neg, op=dist.ReduceOp.SUM)
+        dist.all_reduce(_num_edge_pos, op=dist.ReduceOp.SUM)
+        dist.all_reduce(_num_edge_neg, op=dist.ReduceOp.SUM)
+        
+    _num_node_neg = torch.round(_num_node_neg[0]/_num_node_neg[1])
+    _num_node_pos = torch.round(_num_node_pos[0]/_num_node_pos[1])
+    _num_edge_neg = torch.round(_num_edge_neg[0]/_num_edge_neg[1])
+    _num_edge_pos = torch.round(_num_edge_pos[0]/_num_edge_pos[1])
+
+    node_loss = round(float(node_loss[0] / node_loss[1]), 2)
+    edge_loss = round(float(edge_loss[0] / edge_loss[1]), 2)
+    edge_acc = {k: round(float(edge_acc[2*i] / edge_acc[2*i+1]), 2) \
+            for i, k in enumerate(['all', 'neg', 'pos']) if edge_acc[2*i+1] != 0}
+    per_class_edge_acc = {i: round(float(per_class_edge_acc[2*i] / per_class_edge_acc[2*i+1]), 2) \
+            for i in range(int(per_class_edge_acc.shape[0]/2)) if per_class_edge_acc[2*i+1] != 0}
+    node_acc = {k: round(float(node_acc[2*i] / node_acc[2*i+1]), 2) \
+            for i, k in enumerate(['all', 'neg', 'pos']) if node_acc[2*i+1] != 0}
+    per_class_node_acc = {i: round(float(per_class_node_acc[2*i] / per_class_node_acc[2*i+1]), 2) \
+            for i in range(int(per_class_node_acc.shape[0]/2)) if per_class_node_acc[2*i+1] != 0}
+
     if rank == 0 or rank == 'cpu' or not cfg.multi_gpu:
-        logger.info(f'train bce loss edge: {edge_loss}')
+        if 'train bce loss edge' in log_dict.keys():
+            logger.info(f'train bce loss edge per epoch: {edge_loss}')
+            if cfg.wandb:
+                wandb.log({'train bce loss edge per epoch': edge_loss, "epoch": epoch})
         if 'train bce loss node' in log_dict.keys():
-            logger.info(f'train bce loss node: {node_loss}')
-        logger.info(f'train accuracy edge: {edge_acc}')
+            logger.info(f'train bce loss node per epoch: {node_loss}')
+            if cfg.wandb:
+                wandb.log({'train bce loss node per epoch': node_loss, "epoch": epoch})
+        if 'train accuracy edge' in log_dict.keys():
+            logger.info(f'train accuracy edge per epoch (all / neg / pos): {set(edge_acc.values())}')
+            if cfg.wandb:
+                for k, v in edge_acc.items():
+                    wandb.log({f'train accuracy {k} edge per epoch': v, "epoch": epoch})
+        if 'train accuracy edges connected to class' in log_dict.keys():
+            logger.info(f'train accuracy edges per epoch connected to class: {per_class_edge_acc}')
+            if cfg.wandb:
+                for k, v in per_class_edge_acc.items():
+                    wandb.log({f'train accuracy connected to class {k} edge per epoch': v, "epoch": epoch})
         if 'train accuracy node' in log_dict.keys():
-            logger.info(f'train accuracy node: {node_acc}')
+            logger.info(f'train accuracy node per epoch (all / neg / pos): {set(node_acc.values())}')
+            if cfg.wandb:
+                for k, v in node_acc.items():
+                    wandb.log({f'train accuracy {k} node per epoch': v, "epoch": epoch})
+        if 'train accuracy nodes of class' in log_dict.keys():
+            logger.info(f'train accuracy node per epoch per class: {per_class_node_acc}')
+            if cfg.wandb:
+                for k, v in per_class_node_acc.items():
+                    wandb.log({f'train accuracy of class {k} node per epoch': v, "epoch": epoch})
+       
+        logger.info(f"train num neg / pos nodes on average per batch {_num_node_neg} / {_num_node_pos}")
+        logger.info(f"train num neg / pos edges on average per batch {_num_edge_neg} / {_num_edge_pos}")
 
         if cfg.wandb:
-            wandb.log({'train bce loss edge': edge_loss, "epoch": epoch})
-            if 'train bce loss node' in log_dict.keys():
-                wandb.log({'train bce loss node': node_loss, "epoch": epoch})
-            wandb.log({'train accuracy edge': edge_acc, "epoch": epoch})
-            if 'train accuracy node' in log_dict.keys():
-                wandb.log({'train accuracy node': node_acc, "epoch": epoch})
             if not cfg.multi_gpu:
                 wandb.log({'train num node pos/neg ratio': wandb.Histogram(
                     np_histogram=np.histogram(num_node_pos.cpu().numpy()/num_node_neg.cpu().numpy(), bins=30, range=(0., 3.))), "epoch": epoch})
@@ -397,28 +474,29 @@ def train_one_epoch(model, cfg, epoch, logger, optimizer, train_loader,\
         }
         torch.save(state, savepath)
     
-    return model, optimizer, loss
+    return model, optimizer, criterion, scaler
 
 
 def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_dir,\
         name, val_data, is_neural_net, logger, epoch, criterion, optimizer, checkpoints_dir, best_metric):
     
     node_loss = torch.zeros(2).to(rank)
-    node_acc = torch.zeros(2).to(rank)
+    node_acc = torch.zeros(6).to(rank)
     edge_loss = torch.zeros(2).to(rank)
-    edge_acc = torch.zeros(2).to(rank)
+    edge_acc = torch.zeros(6).to(rank)
+    per_class_edge_acc = torch.zeros(40).to(rank)
+    per_class_node_acc = torch.zeros(40).to(rank)
     nmis = torch.zeros(2).to(rank)
-    if not cfg.multi_gpu:
-        num_node_pos = torch.zeros(len(val_loader)).to(rank)
-        num_node_neg = torch.zeros(len(val_loader)).to(rank)
-        num_edge_pos = torch.zeros(len(val_loader)).to(rank)
-        num_edge_neg = torch.zeros(len(val_loader)).to(rank)
-
+    num_node_pos = torch.zeros(len(val_loader)).to(rank)
+    num_node_neg = torch.zeros(len(val_loader)).to(rank)
+    num_edge_pos = torch.zeros(len(val_loader)).to(rank)
+    num_edge_neg = torch.zeros(len(val_loader)).to(rank)
+    collaps_dict = dict()
     # intialize detector
     if do_corr_clustering:
         detector = Detector3D(
             experiment_dir + name,
-            split='val',
+            split='train' if 'train' in cfg.data.evaluation_split else 'val',
             every_x_frame=cfg.data.every_x_frame,
             num_interior=cfg.detection_options.num_interior,
             overlap=cfg.detection_options.overlap,
@@ -429,13 +507,19 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
     with torch.no_grad():
         if is_neural_net:
             model = model.eval()
-        logger.info('---- EPOCH %03d EVALUATION ----' % (epoch + 1))
+        if rank == 0:
+            logger.info('---- EPOCH %03d EVALUATION ----' % (epoch + 1))
+            logger.info(f'Doing correlation clustering {do_corr_clustering}')
         # Iterate over validation set
-        # for i, (data) in tqdm(enumerate(val_loader), total=len(val_loader), smoothing=0.9):
-        for i, (data) in enumerate(val_loader):
+        for batch, (data) in tqdm(enumerate(val_loader), total=len(val_loader), smoothing=0.9):
+        # for batch, (data) in enumerate(val_loader):
 
             # compute clusters
             logits, all_clusters, edge_index, _ = model(data, eval=True, name=name, corr_clustering=do_corr_clustering)
+            
+            if logits is not None and torch.isnan(logits[0]).any():
+                logger.info(f'Having nan in eval logits {logits}....')
+                return None, None, None, None
 
             _nmis = list()
             batch_idx = data._slice_dict['pc_list']
@@ -443,7 +527,7 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
                 for g, clusters in enumerate(all_clusters):
                     # continue if we didnt find clusters
                     if not len(clusters):
-                        if i+1 == len(val_loader) and g+1 == len(all_clusters):
+                        if batch+1 == len(val_loader) and g+1 == len(all_clusters):
                             found = detector.to_feather()
                             if not found:
                                 logger.info(f'No detections found in {data.log_id[g]}')
@@ -462,7 +546,7 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
                         data.timestamps[g].unsqueeze(0),
                         data.log_id[g],
                         data['point_instances'][batch_idx[g]:batch_idx[g+1]],
-                        last= i+1 == len(val_loader) and g+1 == len(all_clusters))
+                        last= batch+1 == len(val_loader) and g+1 == len(all_clusters))
 
             if is_neural_net and logits[0] is not None:
                 loss, log_dict, hist_node, hist_edge = criterion(logits, data, edge_index, rank, mode='eval')
@@ -473,13 +557,55 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
                     if hist_edge is not None:
                         wandb.log({"eval histogram edge":
                             wandb.Histogram(np_histogram=hist_edge), "epoch": epoch})
+            
+            if rank == 0 and cfg.wandb:
+                for k, v in log_dict.items():
+                    if 'num' in k:
+                        wandb.log({f'{k}': v, "epoch": epoch})
+                    else:    
+                        for i in range(int(v.shape[0]/2)):
+                            if v[2*i+1]:
+                                wandb.log({f'{k} {i}': v[2*i], "epoch": epoch})
+            
+            if 'eval bce loss edge' in log_dict.keys():
+                edge_loss += log_dict['eval bce loss edge']
+            if 'eval bce loss node' in log_dict.keys():
+                node_loss += log_dict['eval bce loss node']
+            if 'eval accuracy edge' in log_dict.keys():
+                edge_acc += log_dict['eval accuracy edge']
+            if 'eval accuracy edges connected to class':
+                per_class_edge_acc += log_dict['eval accuracy edges connected to class']
+            if 'eval accuracy node' in log_dict.keys():
+                node_acc = log_dict['eval accuracy node']
+            if 'eval accuracy nodes of class' in log_dict.keys():
+                per_class_node_acc += log_dict['eval accuracy nodes of class']
+            if 'eval num node pos' in log_dict.keys():
+                num_node_pos[batch] = float(log_dict['eval num node pos'])
+            if 'eval num node neg' in log_dict.keys():
+                num_node_neg[batch] = float(log_dict['eval num node neg'])
+            if 'eval num edge pos' in log_dict.keys():
+                num_edge_pos[batch] = float(log_dict['eval num edge pos'])
+            if 'eval num edge neg' in log_dict.keys():
+                num_edge_neg[batch] = float(log_dict['eval num edge neg'])
 
+            '''
+            if rank == 0 and cfg.wandb:
+                if 'eval bce loss edge' in log_dict.keys():
+                    wandb.log({'eval bce loss edge': log_dict['eval bce loss edge'], "epoch": epoch})
+                if 'eval bce loss node' in log_dict.keys():
+                    wandb.log({'eval bce loss node': log_dict['eval bce loss node'], "epoch": epoch})
+                if 'eval accuracy edge' in log_dict.keys():
+                    wandb.log({'eval accuracy edge': log_dict['eval accuracy edge'], "epoch": epoch})
+                if 'eval accuracy node' in log_dict.keys():
+                    wandb.log({'eval accuracy node': log_dict['eval accuracy node'], "epoch": epoch})
+            '''
             if do_corr_clustering:
                 nmi = sum(_nmis) / len(_nmis)
                 nmis[0] += float(nmi)
                 nmis[1] += 1
-
+            
             if is_neural_net and logits[0] is not None:
+                '''
                 if 'eval bce loss edge' in log_dict.keys():
                     edge_loss[0] += float(
                         log_dict['eval bce loss edge'])
@@ -496,20 +622,25 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
                     node_acc[0] += float(
                         log_dict['eval accuracy node'])
                     node_acc[1] += 1
+                '''
                 if not cfg.multi_gpu:
                     if 'edge num node pos' in log_dict.keys():
-                        num_node_pos[i] += float(
+                        num_node_pos[batch] += float(
                             log_dict['edge num node pos'])
                     if 'edge num node neg' in log_dict.keys():
-                        num_node_neg[i] += float(
+                        num_node_neg[batch] += float(
                             log_dict['edge num node neg'])
                     if 'edge num edge pos' in log_dict.keys():
-                        num_edge_pos[i] += float(
+                        num_edge_pos[batch] += float(
                             log_dict['edge num edge pos'])
                     if 'edge num edge neg' in log_dict.keys():
-                        num_edge_neg[i] += float(
+                        num_edge_neg[batch] += float(
                             log_dict['edge num edge neg'])
-
+            _num_node_pos = torch.tensor([num_node_pos.sum(), num_node_pos.shape[0]]).to(rank)
+            _num_node_neg = torch.tensor([num_node_neg.sum(), num_node_neg.shape[0]]).to(rank)
+            _num_edge_pos = torch.tensor([num_edge_pos.sum(), num_edge_pos.shape[0]]).to(rank)
+            _num_edge_neg = torch.tensor([num_edge_neg.sum(), num_edge_neg.shape[0]]).to(rank)
+        
         if cfg.multi_gpu:
             if do_corr_clustering:
                 dist.all_reduce(nmis, op=dist.ReduceOp.SUM)
@@ -517,34 +648,71 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
                 dist.all_reduce(node_loss, op=dist.ReduceOp.SUM)
                 dist.all_reduce(edge_loss, op=dist.ReduceOp.SUM)
                 dist.all_reduce(edge_acc, op=dist.ReduceOp.SUM)
+                dist.all_reduce(per_class_edge_acc, op=dist.ReduceOp.SUM)
                 dist.all_reduce(node_acc, op=dist.ReduceOp.SUM)
+                dist.all_reduce(per_class_node_acc, op=dist.ReduceOp.SUM)
+                dist.all_reduce(_num_node_pos, op=dist.ReduceOp.SUM)
+                dist.all_reduce(_num_node_neg, op=dist.ReduceOp.SUM)
+                dist.all_reduce(_num_edge_pos, op=dist.ReduceOp.SUM)
+                dist.all_reduce(_num_edge_neg, op=dist.ReduceOp.SUM)
 
-        if do_corr_clustering:
-            nmis = float(nmis[0] / nmis[1])
         if is_neural_net:
-            node_loss = float(node_loss[0] / node_loss[1])
-            edge_loss = float(edge_loss[0] / edge_loss[1])
-            edge_acc = float(edge_acc[0] / edge_acc[1])
-            node_acc = float(node_acc[0] / node_acc[1])
-
+            _num_node_neg = torch.round(_num_node_neg[0]/_num_node_neg[1])
+            _num_node_pos = torch.round(_num_node_pos[0]/_num_node_pos[1])
+            _num_edge_neg = torch.round(_num_edge_neg[0]/_num_edge_neg[1])
+            _num_edge_pos = torch.round(_num_edge_pos[0]/_num_edge_pos[1])
+            node_loss = round(float(node_loss[0] / node_loss[1]), 2)
+            edge_loss = round(float(edge_loss[0] / edge_loss[1]), 2)
+            edge_acc = {k: round(float(edge_acc[2*i] / edge_acc[2*i+1]), 2) \
+                    for i, k in enumerate(['all', 'neg', 'pos']) if edge_acc[2*i+1] != 0}
+            per_class_edge_acc = {i: round(float(per_class_edge_acc[2*i] / per_class_edge_acc[2*i+1]), 2) \
+                    for i in range(int(per_class_edge_acc.shape[0]/2)) if per_class_edge_acc[2*i+1] != 0}
+            node_acc = {k: round(float(node_acc[2*i] / node_acc[2*i+1]), 2) \
+                    for i, k in enumerate(['all', 'neg', 'pos']) if node_acc[2*i+1] != 0}
+            per_class_node_acc = {i: round(float(per_class_node_acc[2*i] / per_class_node_acc[2*i+1]), 2) \
+                    for i in range(int(per_class_node_acc.shape[0]/2)) if per_class_node_acc[2*i+1] != 0}
+        
+        if do_corr_clustering:
+            nmis = round(float(nmis[0] / nmis[1]), 2)
+        
         if rank == 0 or rank == 'cpu' or not cfg.multi_gpu:
             if do_corr_clustering:
                 logger.info(f'nmi: {nmis}')
+            
             if is_neural_net:
-                logger.info(f'eval bce loss edge: {edge_loss}')
-                if 'train bce loss node' in log_dict.keys():
-                    logger.info(f'eval bce loss node: {node_loss}')
-                logger.info(f'eval accuracy edge: {edge_acc}')
+                if 'eval bce loss edge' in log_dict.keys():
+                    logger.info(f'eval bce loss edge per epoch: {edge_loss}')
+                    if cfg.wandb:
+                        wandb.log({'eval bce loss edge per epoch': edge_loss, "epoch": epoch})
+                if 'eval bce loss node' in log_dict.keys():
+                    logger.info(f'eval bce loss node per epoch: {node_loss}')
+                    if cfg.wandb:
+                        wandb.log({'eval bce loss node per epoch': node_loss, "epoch": epoch})
+                if 'eval accuracy edge' in log_dict.keys():
+                    logger.info(f'eval accuracy edge per epoch (all / neg / pos): {set(edge_acc.values())}')
+                    if cfg.wandb:
+                        for k, v in edge_acc.items():
+                            wandb.log({f'eval accuracy {k} edge per epoch': v, "epoch": epoch})
+                if 'eval accuracy edges connected to class' in log_dict.keys():
+                    logger.info(f'eval accuracy edges per epoch connected to class: {per_class_edge_acc}')
+                    if cfg.wandb:
+                        for k, v in per_class_edge_acc.items():
+                            wandb.log({f'eval accuracy class {k} edge per epoch': v, "epoch": epoch})
                 if 'eval accuracy node' in log_dict.keys():
-                    logger.info(f'eval accuracy node: {node_acc}')
-
-            if cfg.wandb and is_neural_net:
-                wandb.log({'eval bce loss edge': edge_loss, "epoch": epoch})
-                if 'train bce loss node' in log_dict.keys():
-                    wandb.log({'eval bce loss node': node_loss, "epoch": epoch})
-                wandb.log({'eval accuracy edge': edge_acc, "epoch": epoch})
-                if 'eval accuracy node' in log_dict.keys():
-                    wandb.log({'eval accuracy node': node_acc, "epoch": epoch})
+                    logger.info(f'eval accuracy node per epoch (all / neg / pos): {set(node_acc.values())}')
+                    if cfg.wandb:
+                        for k, v in node_acc.items():
+                            wandb.log({f'eval accuracy {k} node per epoch': v, "epoch": epoch})
+                if 'eval accuracy nodes of class' in log_dict.keys():
+                    logger.info(f'eval accuracy of nodes per epoch per class: {per_class_node_acc}')
+                    if cfg.wandb:
+                        for k, v in per_class_node_acc.items():
+                            wandb.log({f'eval accuracy class {k} node per epoch': v, "epoch": epoch})
+                
+                logger.info(f"eval num neg / pos nodes on average per batch {_num_node_neg} / {_num_node_pos}")
+                logger.info(f"eval num neg / pos edges on average per batch {_num_edge_neg} / {_num_edge_pos}")
+            
+            if cfg.wandb:
                 if not cfg.multi_gpu:
                     wandb.log({'eval num node pos/neg ratio': wandb.Histogram(
                         np_histogram=np.histogram(num_node_pos.cpu().numpy()/num_node_neg.cpu().numpy(), bins=30, range=(0., 3.))), "epoch": epoch})
@@ -563,6 +731,7 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
                 # average NMI
                 cluster_metric = [nmis]
                 logger.info(f'NMI: {cluster_metric[0]}')
+                logger.info(f'Evaluating detection performance...')
                 # evaluate detection
                 _, detection_metric = eval_detection.eval_detection(
                     gt_folder=os.path.join(os.getcwd(), cfg.data.data_dir),
@@ -588,7 +757,7 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
             if not is_neural_net and cfg.metric == 'acc':
                 metric = detection_metric
             elif cfg.metric == 'acc':
-                metric = [edge_acc]
+                metric = [edge_acc['all']]
             elif cfg.metric == 'cluster':
                 metric = cluster_metric
             else:
@@ -603,7 +772,7 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
                     if do_corr_clustering:
                         state = {
                             'epoch': epoch,
-                            'ACC': edge_acc,
+                            'ACC': edge_acc['all'],
                             'best_metric': best_metric,
                             'metric_mode': cfg.metric,
                             'NMI': cluster_metric[0],
@@ -643,6 +812,8 @@ def train(rank, cfg, world_size):
     if cfg.multi_gpu and rank != 'cpu':
         os.environ['MASTER_ADDR'] = 'localhost'
         os.environ['MASTER_PORT'] = '12355'
+        os.environ['WORLD_SIZE'] = f'{world_size}'
+        os.environ['RANK'] = f'{rank}'
         torch.cuda.set_device(rank)
         dist.init_process_group('nccl', rank=rank, world_size=world_size)
     logger, experiment_dir, checkpoints_dir, out_path = initialize(cfg)
@@ -657,8 +828,8 @@ def train(rank, cfg, world_size):
         logger.info(f'Checkpoints are stored under {str(checkpoints_dir) + name}...')
 
     cfg.data.do_process = False
-    train_data, val_data, test_data = get_TrajectoryDataLoader(cfg)
-
+    train_data, val_data, test_data = get_TrajectoryDataLoader(cfg, name=experiment_dir + name)
+    
     # get dataloaders 
     if train_data is not None:
         if not cfg.multi_gpu:
@@ -673,7 +844,8 @@ def train(rank, cfg, world_size):
                     num_replicas=torch.cuda.device_count(),
                     drop_last=False,
                     rank=rank, 
-                    shuffle=True)
+                    shuffle=True,
+                    seed=5)
             train_loader = PyGDataLoader(
                 train_data,
                 batch_size=cfg.training.batch_size,
@@ -721,13 +893,13 @@ def train(rank, cfg, world_size):
     else:
         test_loader = None
 
-    if train_loader is not None:
+    if train_loader is not None and rank == 0:
         logger.info("The number of training data is: %d" % len(train_loader.dataset))
-    if val_loader is not None:
+    if val_loader is not None and rank == 0:
         logger.info("The number of test data is: %d" % len(val_loader.dataset))
 
     if cfg.multi_gpu and is_neural_net:
-        model = nn.parallel.DistributedDataParallel(model, find_unused_parameters=True)
+        model = nn.parallel.DistributedDataParallel(model, find_unused_parameters=False)
 
     is_neural_net = cfg.models.model_name != 'DBSCAN' \
                 and cfg.models.model_name != 'SpectralClustering'\
@@ -738,8 +910,9 @@ def train(rank, cfg, world_size):
     for epoch in range(start_epoch, cfg.training.epochs):
         if not cfg.just_eval:
             '''Train on chopped scenes'''
-            logger.info('**** Epoch (%d/%s) ****' % (
-                 epoch + 1, cfg.training.epochs))
+            if rank == 0:
+                logger.info('**** Epoch (%d/%s) ****' % (
+                     epoch + 1, cfg.training.epochs))
             
             if is_neural_net:
                 model, optimizer, criterion, scaler = train_one_epoch(
@@ -754,6 +927,9 @@ def train(rank, cfg, world_size):
                     scaler,
                     checkpoints_dir,
                     name)
+            if model is None:
+                logger.info("Terminating training due to nan values...")
+                return
         
         # evaluate
         if epoch % cfg.training.eval_every_x == 0:
@@ -762,7 +938,7 @@ def train(rank, cfg, world_size):
             # do corr clustering if only eval
             do_corr_clustering = do_corr_clustering or cfg.just_eval
             # do corr clustering in last epoch always
-            do_corr_clustering = do_corr_clustering or epoch == cfg.training.epochs - 1
+            # do_corr_clustering = do_corr_clustering or epoch == cfg.training.epochs - 1
 
             model, optimizer, criterion = eval_one_epoch(
                 model,
@@ -783,24 +959,97 @@ def train(rank, cfg, world_size):
 
         if not is_neural_net or cfg.just_eval:
             break
+   
+    # final_evaluation
+    final_evaluation(
+            model,
+                do_corr_clustering,
+                rank,
+                cfg,
+                val_loader,
+                experiment_dir,
+                name,
+                val_data,
+                is_neural_net,
+                logger,
+                epoch,
+                criterion,
+                optimizer,
+                checkpoints_dir,
+                best_metric)
+
+#def final_evaluation(rank, cfg, world_size):
+def final_evaluation(model,
+                do_corr_clustering,
+                rank,
+                cfg,
+                val_loader,
+                experiment_dir,
+                name,
+                val_data,
+                is_neural_net,
+                logger,
+                epoch,
+                criterion,
+                optimizer,
+                checkpoints_dir,
+                best_metric):
+    '''
+    if cfg.multi_gpu and rank != 'cpu':
+        os.environ['MASTER_ADDR'] = 'localhost'
+        os.environ['MASTER_PORT'] = '12355'
+        torch.cuda.set_device(rank)
+        dist.init_process_group('nccl', rank=rank, world_size=world_size)
+    logger, experiment_dir, checkpoints_dir, out_path = initialize(cfg)
+
+    model, start_epoch, name, optimizer, criterion = \
+        load_model(cfg, checkpoints_dir, logger, rank)
     
+    train_data, val_data, test_data = get_TrajectoryDataLoader(cfg)
+
+    if val_data is not None:
+        if not cfg.multi_gpu:
+            val_loader = PyGDataLoader(
+                val_data,
+                batch_size=cfg.training.batch_size_val)
+        else:
+            val_sampler = DistributedTestSampler(
+                    val_data,
+                    num_replicas=torch.cuda.device_count(),
+                    rank=rank,
+                    shuffle=False,
+                    drop_last=False)
+            val_loader = PyGDataLoader(
+                val_data,
+                batch_size=cfg.training.batch_size_val,
+                sampler=val_sampler)
+
+    else:
+        val_loader = None
+
+    is_neural_net = cfg.models.model_name != 'DBSCAN' \
+                and cfg.models.model_name != 'SpectralClustering'\
+                    and cfg.models.model_name != 'SimpleGraph'\
+                    and cfg.models.model_name != 'DBSCAN_Intersection'
+    '''
     # FINAL EVALUATION WITH BEST WEIGHTS
-    if is_neural_net and not cfg.just_eval:
-        logger.info('**** FINAL EVALUATION ****')
+    if is_neural_net:
+        if rank == 0:
+            logger.info('**** FINAL EVALUATION ****')
         best_model_path = str(checkpoints_dir) + name + '/best_model.pth'
         checkpoint = torch.load(best_model_path)
-        # chkpt_new = dict()
-        # for k, v in checkpoint['model_state_dict'].items():
-        #     if 'module' in k:
-        #          chkpt_new[k[7:]] = v
-        #     else:
-        #         chkpt_new[k] = v
-        # checkpoint['model_state_dict'] = chkpt_new
+        chkpt_new = dict()
+        for k, v in checkpoint['model_state_dict'].items():
+            if 'module' in k:
+                 chkpt_new[k[7:]] = v
+            else:
+                chkpt_new[k] = v
+        checkpoint['model_state_dict'] = chkpt_new
         start_epoch = checkpoint['epoch'] if not cfg.just_eval else start_epoch
-        model.load_state_dict(checkpoint['model_state_dict'])
+        # model.load_state_dict(checkpoint['model_state_dict'])
 
-        eval_one_epoch(model, True, rank, cfg, val_loader, experiment_dir,\
-                name, val_data, is_neural_net, logger, epoch, criterion, optimizer, checkpoints_dir, best_metric)
+    eval_one_epoch(model, True, rank, cfg, val_loader, experiment_dir,\
+            name, val_data, is_neural_net, logger, epoch, criterion, optimizer, checkpoints_dir, best_metric)
 
 
 if __name__ == '__main__':

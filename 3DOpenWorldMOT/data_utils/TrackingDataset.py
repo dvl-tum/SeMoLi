@@ -23,9 +23,9 @@ class MOT3DTrackDataset:
             self.data = os.listdir(os.path.join(dataset_path, split))
         else:
             if split == 'val':
-                self.seqs = ['16473613811052081539']
+                self.data = ['16473613811052081539']
             else:
-                self.seqs = ['2400780041057579262']
+                self.data = ['2400780041057579262']
 
     def __getitem__(self, idx):
         seq_name = self.data[idx]

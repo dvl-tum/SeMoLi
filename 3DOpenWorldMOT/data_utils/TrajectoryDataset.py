@@ -50,7 +50,8 @@ class TrajectoryDataset(PyGDataset):
             do_process=True,
             percentage_data=1,
             evaluation_split='train_gnn',
-            filtered_file_path=None):
+            filtered_file_path=None,
+            name=None):
         
         if 'gt' in _processed_dir:
             self.trajectory_dir = Path(os.path.join(trajectory_dir, split))
@@ -78,9 +79,9 @@ class TrajectoryDataset(PyGDataset):
         
         # for debugging
         if debug:
-            if split == 'val' and 'argo' in self.data_dir:
+            if split == 'val' and 'Argo' in self.data_dir:
                 self.seqs = ['04994d08-156c-3018-9717-ba0e29be8153']
-            elif split == 'train' and 'argo' in self.data_dir:
+            elif split == 'train' and 'Argo' in self.data_dir:
                 self.seqs = ['00a6ffc1-6ce9-3bc3-a060-6006e9893a1a']
             elif split == 'val':
                 self.seqs = ['16473613811052081539']
@@ -91,8 +92,15 @@ class TrajectoryDataset(PyGDataset):
                 path=os.path.join(data_dir, split),
                 mode='train' if 'detector' not in evaluation_split else 'evaluation',
                 percentage=self.percentage_data)
+        
+        if 'detector' in evaluation_split:
+            split = 'train' if 'train' in evaluation_split else 'val'
+            self.already_evaluated = list()
+            # self.already_evaluated = [os.path.basename(os.path.dirname(p)) for p in glob.glob(f'{name}/{split}/*/*')]
+        else:
+            self.already_evaluated = list()
 
-        self.class_dict = ARGOVERSE_CLASSES if 'argo' in self.data_dir else WAYMO_CLASSES
+        self.class_dict = ARGOVERSE_CLASSES if 'Argo' in self.data_dir else WAYMO_CLASSES
         super().__init__()
         
     @property
@@ -120,13 +128,13 @@ class TrajectoryDataset(PyGDataset):
     @property
     def processed_paths(self):
         if not self.do_process:
-            seqs = [seq for seq in self.seqs if seq in os.listdir(self.processed_dir)]
+            seqs = [seq for seq in self.seqs if seq in os.listdir(self.processed_dir) and seq not in self.already_evaluated] # [:16]
             return [os.path.join(self.processed_dir, seq, flow_file)\
                     for seq in seqs\
                         for i, flow_file in enumerate(sorted(os.listdir(osp.join(self.processed_dir, seq))))\
                             if i % self.every_x_frame == 0]
         else:
-            seqs = [seq for seq in self.seqs if seq in os.listdir(self.trajectory_dir)]
+            seqs = [seq for seq in self.seqs if seq in os.listdir(self.trajectory_dir) and seq not in self.already_evaluated]
             return [os.path.join(self.processed_dir, seq, flow_file[:-3] + 'pt')\
                     for seq in seqs\
                         for i, flow_file in enumerate(sorted(os.listdir(osp.join(self.trajectory_dir, seq))))\
@@ -160,8 +168,6 @@ class TrajectoryDataset(PyGDataset):
             os.makedirs(self.processed_dir, exist_ok=True)
             self.process()
             logger.info('Done!')
-        else:
-            logger.info('Not Processing this time :) ')
     
     def process(self, multiprocessing=True):
         # only process what is not there yet
@@ -225,7 +231,7 @@ class TrajectoryDataset(PyGDataset):
         # get mask to filter point cloud
         mask = np.ones(lidar_points_ego.shape[0], dtype=bool)
 
-        if 'argo' not in self._processed_dir:            
+        if 'Argo' not in self._processed_dir:            
             mask = np.logical_and(mask, sweep_df['laser_id'].isin(laser_id))
             mask = np.logical_and(mask, sweep_df['index'].isin(index))
 
@@ -233,7 +239,7 @@ class TrajectoryDataset(PyGDataset):
             mask = np.logical_and(mask, sweep_df['non_ground_pts_rc'])
 
         # remove non drivable area points (non RoI points)
-        if remove_non_dirvable and 'argo' in self._processed_dir:
+        if remove_non_dirvable and 'Argo' in self._processed_dir:
             mask = np.logical_and(mask, sweep_df['driveable_area_pts'])
         
         # Remove points above certain height.
@@ -291,11 +297,14 @@ class TrajectoryDataset(PyGDataset):
         if self.split != 'test':
             labels = self.loader.get_labels_at_lidar_timestamp(
                 log_id=seq, lidar_timestamp_ns=int(timestamps[0]))
-            filtered_file_path = f'{self.filtered_file_path}/Waymo_Converted_filtered_{self.split}/{self.split}_1.0_per_frame_remove_non_move_remove_far_filtered_version.feather'
+            if 'Waymo' in self.data_dir:
+                filtered_file_path = f'{self.filtered_file_path}/Waymo_Converted_filtered_{self.split}/{self.split}_1.0_per_frame_remove_non_move_remove_far_filtered_version.feather'
+            else:
+                filtered_file_path = f'{self.filtered_file_path}/Argoverse2_filtered/{self.split}_1.0_per_frame_remove_non_move_remove_far_filtered_version.feather'
             labels_mov = self.loader.get_labels_at_lidar_timestamp_all(
                 filtered_file_path, log_id=seq, lidar_timestamp_ns=int(timestamps[0]), get_moving=True)
             
-            if self.margin and 'argo' in self.data_dir:
+            if self.margin and 'Argo' in self.data_dir:
                 for label in labels:
                     self.add_margin(label)
 
@@ -318,7 +327,7 @@ class TrajectoryDataset(PyGDataset):
             for label in labels:
                 interior = point_cloud_handling.compute_interior_points_mask(
                         pc_list, label.vertices_m)
-                int_label = self.class_dict[label.category] if 'argo' in self.data_dir else int(label.category)
+                int_label = self.class_dict[label.category] if 'Argo' in self.data_dir else int(label.category)
                 interior = interior.astype(int) * int_label
                 masks.append(interior)
 
@@ -351,7 +360,7 @@ class TrajectoryDataset(PyGDataset):
             for label in labels_mov:
                 interior = point_cloud_handling.compute_interior_points_mask(
                         pc_list, label.vertices_m)
-                int_label = self.class_dict[label.category] if 'argo' in self.data_dir else int(label.category)
+                int_label = self.class_dict[label.category] if 'Argo' in self.data_dir else int(label.category)
                 interior = interior.astype(int) * int_label
                 masks.append(interior)
 
@@ -411,7 +420,7 @@ class TrajectoryDataset(PyGDataset):
 
         diff_time = timestamps[1] - timestamps[0]
         # bring from nano / mili seconds to seconds
-        if 'argo' in self.data_dir:
+        if 'Argo' in self.data_dir:
             diff_time = diff_time / torch.pow(torch.tensor(10), 9.0) 
         else:
             diff_time = diff_time / torch.pow(torch.tensor(10), 6.0)
@@ -467,15 +476,14 @@ class TrajectoryDataset(PyGDataset):
 
         data['batch'] = torch.ones(data['pc_list'].shape[0])*idx
         data['timestamps'] = data['timestamps'].unsqueeze(0)
-        
+        data['path'] = path        
         return data
 
 
-def get_TrajectoryDataLoader(cfg, train=True, val=True, test=False):
+def get_TrajectoryDataLoader(cfg, name=None, train=True, val=True, test=False):
     # get datasets
     if train and not cfg.just_eval:
-        logger.info('TRAIN')
-        train_data = TrajectoryDataset(cfg.data.data_dir + f'_train/' + os.path.basename(cfg.data.data_dir),
+        train_data = TrajectoryDataset(cfg.data.data_dir + f'_train/' + os.path.basename(cfg.data.data_dir) if 'Argo' not in cfg.data.data_dir else cfg.data.data_dir,
             'train',
             cfg.data.trajectory_dir + '_train',
             cfg.data.use_all_points,
@@ -485,17 +493,16 @@ def get_TrajectoryDataLoader(cfg, train=True, val=True, test=False):
             cfg.data.debug,
             do_process=cfg.data.do_process,
             _processed_dir=cfg.data.processed_dir + '_train',
-            percentage_data=cfg.data.percentage_data,
+            percentage_data=cfg.data.percentage_data_train,
             filtered_file_path=cfg.data.filtered_file_path)
     else:
         train_data = None
     if val:
-        logger.info("VAL")
         if cfg.data.evaluation_split == 'val_gnn' or cfg.data.evaluation_split == 'val_detector':
             split = 'val'
         else:
             split = 'train'
-        val_data = TrajectoryDataset(cfg.data.data_dir + f'_{split}/' + os.path.basename(cfg.data.data_dir),
+        val_data = TrajectoryDataset(cfg.data.data_dir + f'_{split}/' + os.path.basename(cfg.data.data_dir) if 'Argo' not in cfg.data.data_dir else cfg.data.data_dir,
                 split,
                 cfg.data.trajectory_dir + f'_{split}',
                 cfg.data.use_all_points_eval,
@@ -506,15 +513,15 @@ def get_TrajectoryDataLoader(cfg, train=True, val=True, test=False):
                 every_x_frame=cfg.data.every_x_frame,
                 do_process=cfg.data.do_process,
                 _processed_dir=cfg.data.processed_dir + f'_{split}', 
-                percentage_data=cfg.data.percentage_data,
+                percentage_data=cfg.data.percentage_data_val,
                 evaluation_split=cfg.data.evaluation_split,
-                filtered_file_path=cfg.data.filtered_file_path)
+                filtered_file_path=cfg.data.filtered_file_path,
+                name=name)
     else:
         val_data = None
     if test:
-        logger.info("TEST")
         split = 'test'
-        test_data = TrajectoryDataset(cfg.data.data_dir + f'_{split}',
+        test_data = TrajectoryDataset(cfg.data.data_dir + f'_{split}/' + os.path.basename(cfg.data.data_dir) if 'Argo' not in cfg.data.data_dir else cfg.data.data_dir,
                 split,
                 cfg.data.trajectory_dir + f'_{split}',
                 cfg.data.use_all_points_eval,
