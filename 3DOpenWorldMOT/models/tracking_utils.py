@@ -1,3 +1,4 @@
+import shutil
 import torch
 import os
 from collections import defaultdict
@@ -155,6 +156,7 @@ class Track():
         self.overlap = overlap
         self.final = list()
         self.dead = False
+
     
     def add_detection(self, detection):
         self.detections.append(detection)
@@ -279,7 +281,7 @@ class InitialDetection():
         self.overlap = overlap
         self.gt_id = gt_id
         self.gt_id_box = gt_id
-        self.length = trajectory.shape[1]
+        self.length = trajectory.shape[0]
         self.track_id = 0
         
         if rot is not None:
@@ -289,8 +291,11 @@ class InitialDetection():
             self.rot, self.alpha = self.get_alpha_rot_t0_to_t1(0, 1, self.trajectory)
         
         self.lwh, self.translation = get_rotated_center_and_lwh(canonical_points, self.rot)
-        self.mean_trajectory = torch.mean(self.trajectory, dim=0)
-    
+        if len(self.trajectory.shape) > 2:
+            self.mean_trajectory = torch.mean(self.trajectory, dim=0)
+        else:
+            self.mean_trajectory = self.trajectory
+
     @property
     def rotation(self):
         return self.rot
@@ -417,14 +422,15 @@ class CollapsedDetection():
 
 def store_initial_detections(detections, seq, out_path, split, tracks=False, gt_path=None):
     p = f'{out_path}/{split}/{seq}'
-    os.makedirs(p, exist_ok=True)
-
+    if os.path.isdir(p):
+        shutil.rmtree(p)
+    os.makedirs(p)
+    
     if tracks:
-        if type(detections) != dict:
-            extracted_detections = dict()
-            for t in detections:
-                extracted_detections[t.track_id] = t.detections
-            detections =  extracted_detections
+        extracted_detections = dict()
+        for k, t in detections.items():
+            extracted_detections[k] = t.detections
+        detections =  extracted_detections
     else:
         if type(list(detections.keys())[0]) == int:
             detections = {k: v for k, v in detections.items()}
@@ -432,7 +438,6 @@ def store_initial_detections(detections, seq, out_path, split, tracks=False, gt_
             detections = {k.item(): v for k, v in detections.items()}
         gt = load_gt(seq, gt_path)
         detections = assign_gt(detections, gt)
-
     for _, t in enumerate(detections):
         for j, d in enumerate(detections[t]):
             np.savez(
@@ -454,10 +459,15 @@ def store_initial_detections(detections, seq, out_path, split, tracks=False, gt_
 
 def load_initial_detections(out_path, split, seq=None, tracks=False, every_x_frame=1, overlap=1):
     p = f'{out_path}/{split}/{seq}'
-
+    
     detections = defaultdict(list)
+    if tracks:
+        detections = defaultdict(dict)
     for d in os.listdir(p):
         dict_key = int(d.split('_')[0])
+
+        if tracks:
+            sorter = int(d.split('_')[1].split('.')[0])
         try:
             d = np.load(os.path.join(p, d), allow_pickle=True)
         except:
@@ -483,18 +493,19 @@ def load_initial_detections(out_path, split, seq=None, tracks=False, every_x_fra
             else:
                 detections[d.timestamps[0, 0].item()].append(d)
         else:
-            detections[dict_key].append(d)
+            detections[dict_key][sorter] = d
 
-    #if tracks:
-    #    tracks = list()
-    #    for track_id, dets in detections.items():
-    #        for i, d in enumerate(dets):
-    #            if i == 0:
-    #                t = Track(d, track_id, every_x_frame, overlap)
-    #            else:
-    #                t.add_detection(d)
-    #        tracks.append(t)
-    #    detections = tracks
+    if tracks:
+       tracks = list()
+       for track_id, dets in detections.items():
+           for i, k in enumerate(sorted(list(dets.keys()))):
+               d = dets[k]
+               if i == 0:
+                   t = Track(d, track_id, every_x_frame, overlap)
+               else:
+                   t.add_detection(d)
+           tracks.append(t)
+       detections = tracks
 
     return detections
 
@@ -606,7 +617,6 @@ def to_feather(detections, log_id, out_path, split, rank, precomp_dets=False):
     track_vals = list()
     if precomp_dets:
         store_initial_detections(detections, seq=log_id)
-
     # per timestamp detections
     for i, timestamp in enumerate(sorted(detections.keys())):
         dets = detections[timestamp]
@@ -633,7 +643,6 @@ def to_feather(detections, log_id, out_path, split, rank, precomp_dets=False):
                 det.pts_density,
                 det.log_id] + det.trajectory.numpy().tolist()
             track_vals.append(values)
-                
     track_vals = np.asarray(track_vals)
 
     if track_vals.shape[0] == 0:
@@ -642,7 +651,6 @@ def to_feather(detections, log_id, out_path, split, rank, precomp_dets=False):
     df = pd.DataFrame(
         data=track_vals,
         columns=column_names_dets)
-    
     df = df.astype(column_dtypes_dets)
     detections = dict()
 

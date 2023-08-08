@@ -302,7 +302,7 @@ def filter_seq(data, width=25):
                         translation = obj_traj_ego_traj - obj_ref_ego_traj
                         dist = np.linalg.norm(translation)
 
-                        if 'argo' in path:
+                        if 'Argo' in path:
                             diff_time = (
                                 timestamps[i+1]-t) / np.power(10, 9)
                         else:
@@ -619,7 +619,7 @@ def eval_detection(
             print(metrics.loc[classes_to_eval])
             metric = metrics.loc[classes_to_eval].values
 
-        break
+        # break
   
     return metrics, metric
 
@@ -648,6 +648,11 @@ if __name__ == '__main__':
     tracker_dir = 'out/trajectories2_nooracle_64_64_3.5900203994472646e-07_0.06176295901709523_16000_16000__NS_MG_32_2.0_LN_/val'
     # tracker_dir = 'collapsed_heuristic_mean/val'
     tracker_dir = '/workspace/result/out/all_egocomp_margin0.6_width25_nooracle_64_64_3.5900203994472646e-07_0.06176295901709523_16000_16000__NS_MG_32_2.0_LN_/val'
+    tracker_dir = '/workspace/result/out/all_egocomp_margin0.6_width25_oraclenode_oracleedge_64_64_3.5900203994472646e-07_0.06176295901709523_16000_16000__NS_MG_32_2.0_LN_/val/'
+    tracker_dir = '/workspace/result/out/detections/GNN_RealData_ValTrainOLD_all_egocomp_margin0.6_width25_oraclenode_64_64_3.5900203994472646e-07_0.06176295901709523_16000_16000__NS_MG_32_2.0_LN_/val/'
+    tracker_dir = 'out/detections/val'
+    tracker_dir = 'out/detections/GNN_GT_FLOW_FLOW_ONLY_EVAL/val/'
+
     print(tracker_dir)
     gt_folder = 'data/waymo_converted'
     gt_folder = '/dvlresearch/jenny/Waymo_Converted_GT'
@@ -658,7 +663,10 @@ if __name__ == '__main__':
     max_points = 1000000
     # for m in [-1]: # [-1, 0, 5, 10, 15, 20, 25]:
     m = -1
-    for c in [None]: #class_dict.keys():
+    c = None
+    for t in ['GNN_GT_FLOW_ORACLE_EDGE_FLOW_ONLY_EVAL']: # os.listdir('out/detections/'): #class_dict.keys():
+        tracker_dir = f'out/detections/{t}/val'
+        print(tracker_dir)
         # seq = '16473613811052081539'
         # seq_list = [seq]
         print(f'Class: {c}')
@@ -686,4 +694,4 @@ if __name__ == '__main__':
             filter_moving_before=False)
         
         print(detection_metric, '\n')
-        quit()
+        print()

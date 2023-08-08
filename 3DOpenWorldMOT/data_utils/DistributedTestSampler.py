@@ -1,3 +1,4 @@
+import random
 import math
 from typing import TypeVar, Optional, Iterator
 
@@ -89,11 +90,12 @@ class DistributedTestSampler(Sampler[T_co]):
 
         # If the dataset length is evenly divisible by # of replicas, then there
         # is no need to drop any data, since the dataset will be split equally.
-        self.num_log_ids = math.ceil(len(self.per_log_id) / self.num_replicas)  # type: ignore[arg-type]
+        self.num_log_ids = math.floor(len(self.per_log_id) / self.num_replicas)  # type: ignore[arg-type]
 
         # get per replica paths and their length
         self.per_replica_list = list()
         log_ids = list(self.per_log_id.keys())
+        random.shuffle(log_ids)
         max_len = list()
         for i in range(self.num_replicas):
             replica_list = list()
@@ -101,6 +103,10 @@ class DistributedTestSampler(Sampler[T_co]):
                 replica_list.extend(self.per_log_id[log_id])
             self.per_replica_list.append(replica_list)
             max_len.append(len(replica_list))
+        per_log_id_keys = list(self.per_log_id.keys())
+        for i, j in enumerate(range((i+1)*self.num_log_ids, len(per_log_id_keys))):
+            self.per_replica_list[i].extend(self.per_log_id[per_log_id_keys[j]])
+            max_len[i] = len(self.per_replica_list[i])
         
         # get maximum length replica paths and expected total size of datset with padding
         self.num_samples = max(max_len)
@@ -109,7 +115,7 @@ class DistributedTestSampler(Sampler[T_co]):
     def __iter__(self) -> Iterator[T_co]:
         # add extra samples to make it evenly divisible --> padding
         for i in range(self.num_replicas):
-            if len(self.per_replica_list[i]) < self.num_samples:
+            while len(self.per_replica_list[i]) < self.num_samples:
                 padding_size = self.num_samples - len(self.per_replica_list[i])
                 self.per_replica_list[i] += self.per_replica_list[i][-padding_size:]
             assert len(self.per_replica_list[i]) == self.num_samples

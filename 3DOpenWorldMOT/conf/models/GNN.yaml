@@ -8,8 +8,8 @@ hyperparams:
     k: 8
     k_eval: 32
     r: 5.0
-    graph_construction: pos
     edge_attr: diffpostraj
+    graph_construction: pos
     node_attr: traj
     min_samples: ${detection_options.num_interior}
     use_node_score: True
@@ -29,8 +29,10 @@ hyperparams:
     augment: False
     layer_sizes_edge: 
         l_1: 64
+        l_2: 64
     layer_sizes_node:
         l_1: 64
+        l_2: 64
     gradient_checkpointing: ${gradient_checkpointing}
 loss_hyperparams:
     bce_loss: True

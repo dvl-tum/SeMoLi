@@ -48,11 +48,11 @@ class Detector3D():
             self.active_tracks = list()
             self.inactive_tracks = list()
             found = self.to_feather()
-            if not found:
-                logger.info(f'No detections found in {log_id}')
+            # if not found:
+            #     logger.info(f'No detections found in {log_id}')
 
         self.log_id = log_id
-        logger.info(f"New log id {log_id}...")
+        # logger.info(f"New log id {log_id}...")
     
     def get_detections(self, points, traj, clusters, timestamps, log_id,
                        gt_instance_ids, last=False):
@@ -61,8 +61,8 @@ class Detector3D():
         if timestamps.cpu()[0, 0] in self.detections.keys():
             if last:
                 found = self.to_feather()
-                if not found:
-                    logger.info(f'No detections found in {log_id}')
+                # if not found:
+                #     logger.info(f'No detections found in {log_id}')
             return
 
         # set new log id
@@ -112,8 +112,8 @@ class Detector3D():
 
         if last:
             found = self.to_feather()
-            if not found:
-                logger.info(f'No detections found in {log_id}')
+            # if not found:
+            #     logger.info(f'No detections found in {log_id}')
             
         return detections
 
@@ -151,7 +151,7 @@ class Detector3D():
     def to_feather(self):
         to_feather(self.detections, self.log_id, self.out_path, self.split, self.rank, self.precomp_dets)
         self.detections = dict()
-        write_path = os.path.join(self.out_path, self.split, self.log_id, 'annotations.feather') # os.path.join(self.out_path, self.split, 'feathers', f'all_{self.rank}.feather')
-        logger.info(f'wrote {write_path}')
+        # write_path = os.path.join(self.out_path, self.split, self.log_id, 'annotations.feather') # os.path.join(self.out_path, self.split, 'feathers', f'all_{self.rank}.feather')
+        # logger.info(f'wrote {write_path}')
         return True
 

@@ -37,11 +37,7 @@ class Collapser():
         """
         timestamp_list = sorted([int(p[:-8]) for p in os.listdir(os.path.join(gt_dir, seq, 'sensors', 'lidar'))])
         collapsed_detections = defaultdict(list)
-        _count = 0
         for k in sorted(data.keys()):
-            if _count % 50 == 0:
-                print(f'{_count}/{len(data)}')
-            _count += 1
             k_idx = timestamp_list.index(k)
             # go only until time = overlap - 2 cos we always need time + 1 for flow
             timestamps = timestamp_list[max(0, k_idx-(self.overlap-2)):k_idx+1]
@@ -184,8 +180,13 @@ class Collapser():
                                             trajs_city_t0_dets,
                                             trajs_city_t1_dets,
                                             data[time][i]))
+                        else:
+                            collapsed_detections[k].append(CollapsedDetection(det.rot, det.alpha, det.translation, det.lwh, det.mean_trajectory, det.canonical_points, det.timestamps[0, 0], det.log_id, det.length, det.overlap, (det.lwh[0] * det.lwh[1] * det.lwh[2]) / det.num_interior, det.gt_id))
+                            # collapsed_detections[k].append(data[time][i])
             else:
-                collapsed_detections[k] = [det for det in data[k]]
+                # collapsed_detections[k] = [det for det in data[k]]
+                for det in data[k]:
+                    collapsed_detections[k].append(CollapsedDetection(det.rot, det.alpha, det.translation, det.lwh, det.mean_trajectory, det.canonical_points, det.timestamps[0, 0], det.log_id, det.length, det.overlap, (det.lwh[0] * det.lwh[1] * det.lwh[2]) / det.num_interior, det.gt_id))
         return collapsed_detections
 
 
