@@ -622,6 +622,11 @@ def to_feather(detections, log_id, out_path, split, rank, precomp_dets=False):
         dets = detections[timestamp]
         for det in dets:
             det = det.final_detection()
+            
+            # only keep bounding boxes with lwh > 0
+            if det.lwh[0] < 0.1 or det.lwh[1] < 0.1 or det.lwh[2] < 0.1:
+                continue
+
             # quaternion rotation around z axis
             quat = torch.tensor([torch.cos(det.alpha/2), 0, 0, torch.sin(det.alpha/2)]).numpy()
             # REGULAR_VEHICLE = only dummy class

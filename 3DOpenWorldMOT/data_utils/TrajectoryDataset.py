@@ -360,7 +360,8 @@ class TrajectoryDataset(PyGDataset):
             for label in labels_mov:
                 interior = point_cloud_handling.compute_interior_points_mask(
                         pc_list, label.vertices_m)
-                int_label = self.class_dict[label.category] if 'Argo' in self.data_dir else int(label.category)
+                int_label = int(label.category)
+                # int_label = self.class_dict[label.category] if 'Argo' in self.data_dir else int(label.category)
                 interior = interior.astype(int) * int_label
                 masks.append(interior)
 

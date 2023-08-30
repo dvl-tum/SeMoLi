@@ -522,6 +522,7 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
                 return None, None, None, None
 
             _nmis = list()
+            log_dict = dict()
             batch_idx = data._slice_dict['pc_list']
             if do_corr_clustering:
                 for g, clusters in enumerate(all_clusters):
@@ -573,7 +574,7 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
                 node_loss += log_dict['eval bce loss node']
             if 'eval accuracy edge' in log_dict.keys():
                 edge_acc += log_dict['eval accuracy edge']
-            if 'eval accuracy edges connected to class':
+            if 'eval accuracy edges connected to class' in log_dict.keys():
                 per_class_edge_acc += log_dict['eval accuracy edges connected to class']
             if 'eval accuracy node' in log_dict.keys():
                 node_acc = log_dict['eval accuracy node']
@@ -720,6 +721,7 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
                         np_histogram=np.histogram(num_edge_pos.cpu().numpy()/num_edge_neg.cpu().numpy(), bins=30, range=(0., 3.))), "epoch": epoch})
 
             if do_corr_clustering:
+                logger.info(f"Loading detections from {os.path.join(detector.out_path, detector.split)}...")
                 # get sequence list for evaluation
                 detector_dir = os.path.join(detector.out_path, detector.split)
                 try:
