@@ -21,7 +21,7 @@ from functools import partial
 import pytorch3d.ops.points_normals as points_normals
 from pyarrow import feather
 import av2.utils.io as io_utils
-from .splits import get_seq_list
+from .splits import get_seq_list, get_seq_list_fixed_val
 from torch import multiprocessing as mp
 
 
@@ -39,6 +39,7 @@ class TrajectoryDataset(PyGDataset):
             data_dir,
             split,
             trajectory_dir,
+            edge_dir,
             use_all_points,
             num_points,
             remove_static,
@@ -49,7 +50,7 @@ class TrajectoryDataset(PyGDataset):
             _processed_dir=False,
             do_process=True,
             percentage_data=1,
-            evaluation_split='train_gnn',
+            detection_set='train_gnn',
             filtered_file_path=None,
             name=None):
         
@@ -76,7 +77,8 @@ class TrajectoryDataset(PyGDataset):
         self.do_process =  do_process
         self.percentage_data = percentage_data
         self.filtered_file_path = filtered_file_path
-        
+        self.edge_dir = edge_dir
+
         # for debugging
         if debug:
             if split == 'val' and 'Argo' in self.data_dir:
@@ -88,13 +90,14 @@ class TrajectoryDataset(PyGDataset):
             else:
                 self.seqs = ['2400780041057579262']
         else:
-            self.seqs = get_seq_list(
+            # self.seqs = get_seq_list(
+            self.seqs = get_seq_list_fixed_val(
                 path=os.path.join(data_dir, split),
-                mode='train' if 'detector' not in evaluation_split else 'evaluation',
+                detection_set=detection_set,
                 percentage=self.percentage_data)
         
-        if 'detector' in evaluation_split:
-            split = 'train' if 'train' in evaluation_split else 'val'
+        if 'detector' in detection_set:
+            split = 'train' if 'train' in detection_set else 'val'
             self.already_evaluated = list()
             # self.already_evaluated = [os.path.basename(os.path.dirname(p)) for p in glob.glob(f'{name}/{split}/*/*')]
         else:
@@ -446,11 +449,20 @@ class TrajectoryDataset(PyGDataset):
             data['point_instances_mov'] = data['point_instances_mov'].squeeze()[mean_traj]
             data['point_categories_mov'] = data['point_categories_mov'].squeeze()[mean_traj]
         
+        if 'edge_index' in data.keys:
+            nodes = torch.where(mean_traj)[0]
+            data['edge_index'] = data['edge_index'][torch.logical_and(
+                data['edge_index'][0, :].isin(nodes),
+                data['edge_index'][1, :].isin(nodes))]
         return data
 
     def get(self, idx): 
         path = self._processed_paths[idx]
         data = torch.load(path)
+        
+        name = path.split('_')[-1]
+        if os.path.isfile(f'{self.edge_dir}/{name}'):
+            data['edge_index'] = torch.load(f'{self.edge_dir}/{name}')['edge_index']
 
         if self.remove_static and self.static_thresh > 0:
             data = self._remove_static(data)
@@ -477,7 +489,8 @@ class TrajectoryDataset(PyGDataset):
 
         data['batch'] = torch.ones(data['pc_list'].shape[0])*idx
         data['timestamps'] = data['timestamps'].unsqueeze(0)
-        data['path'] = path        
+        data['path'] = path
+        
         return data
 
 
@@ -487,6 +500,7 @@ def get_TrajectoryDataLoader(cfg, name=None, train=True, val=True, test=False):
         train_data = TrajectoryDataset(cfg.data.data_dir + f'_train/' + os.path.basename(cfg.data.data_dir) if 'Argo' not in cfg.data.data_dir else cfg.data.data_dir,
             'train',
             cfg.data.trajectory_dir + '_train',
+            cfg.data.trajectory_dir + '_{cfg.models.hyperparams.graph_construction}_train',
             cfg.data.use_all_points,
             cfg.data.num_points,
             cfg.data.remove_static,
@@ -499,13 +513,14 @@ def get_TrajectoryDataLoader(cfg, name=None, train=True, val=True, test=False):
     else:
         train_data = None
     if val:
-        if cfg.data.evaluation_split == 'val_gnn' or cfg.data.evaluation_split == 'val_detector':
+        if cfg.data.detection_set == 'evaluation':
             split = 'val'
         else:
             split = 'train'
         val_data = TrajectoryDataset(cfg.data.data_dir + f'_{split}/' + os.path.basename(cfg.data.data_dir) if 'Argo' not in cfg.data.data_dir else cfg.data.data_dir,
                 split,
                 cfg.data.trajectory_dir + f'_{split}',
+                cfg.data.trajectory_dir + '_{cfg.models.hyperparams.graph_construction}_{split}',
                 cfg.data.use_all_points_eval,
                 cfg.data.num_points_eval,
                 cfg.data.remove_static,
@@ -515,7 +530,7 @@ def get_TrajectoryDataLoader(cfg, name=None, train=True, val=True, test=False):
                 do_process=cfg.data.do_process,
                 _processed_dir=cfg.data.processed_dir + f'_{split}', 
                 percentage_data=cfg.data.percentage_data_val,
-                evaluation_split=cfg.data.evaluation_split,
+                detection_set=cfg.data.detection_set,
                 filtered_file_path=cfg.data.filtered_file_path,
                 name=name)
     else:

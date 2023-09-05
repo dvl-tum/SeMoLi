@@ -26,4 +26,4 @@ traj_channels: 75
 percentage_data_train: 0.5
 percentage_data_val: 0.1
 filtered_file_path: '/dvlresearch/jenny/'
-evaluation_split: 'val_gnn' # 'val_gnn' 'train_gnn' 'val_detector', 'train_detector'
+detection_set: 'val_gnn' # 'val_gnn' 'train_gnn' 'val_detector', 'train_detector'

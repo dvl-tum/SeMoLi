@@ -370,8 +370,10 @@ class ClusterGNN(MessagePassing):
         # we simply need to sum them up to "emulate" concatenation:
         if _type == 'pos':
             node_attr = x2
-        elif _type == 'traj':
+        elif _type == 'traj' or _type == 'mean_traj_over_time':
             node_attr = x1
+            if _type == 'traj':
+                node_attr = node_attr.view(node_attr.shape[0], -1)
         elif _type == 'traj_pos':
             node_attr = torch.stack([x2, x1])
         elif _type == 'postraj' or _type =='mean_dist_over_time':
@@ -404,14 +406,35 @@ class ClusterGNN(MessagePassing):
         for start, end in zip(batch_idx[:-1], batch_idx[1:]):
             # iterate over frames in batch
             X = node_attr[start:end]
+            
+            '''
+            # get indices up to max_num_neighbors per node --> knn neighbors
+            num_neighbors = min(int(max_num_neighbors*1.5), dist.shape[0])
+            idxs_0 = torch.tile(torch.arange(dist.shape[0]).unsqueeze(1).to(self.rank), (1, num_neighbors)).flatten()
+            dist = torch.nn.PairwiseDistance(X[:, 0, :])
+            idxs_1 = dist.topk(k=num_neighbors, dim=1, largest=False).indices.flatten()
+            X_time_0 = X[idxs_0]
+            X_time_1 = X[idxs_1]
+            '''
 
             # get distances between nodes
-            if self.graph_construction == 'pos' or self.graph_construction == 'min_mean_max_vel':
+            if self.graph_construction == 'traj' or self.graph_construction == 'pos' or self.graph_construction == 'min_mean_max_vel' or self.graph_construction == 'postraj':
                 dist = torch.from_numpy(sklearn.metrics.pairwise_distances(X.cpu().numpy(), metric=metric)).to(self.rank)
-            else:                
+            
+            else:
+                '''
+                # get indices up to max_num_neighbors per node --> knn neighbors
+                num_neighbors = min(int(max_num_neighbors*1.5), dist.shape[0])
+                idxs_0 = torch.tile(torch.arange(dist.shape[0]).unsqueeze(1).to(self.rank), (1, num_neighbors)).flatten()
+                dist = torch.from_numpy(sklearn.metrics.pairwise_distances(X[:, 0, :].cpu().numpy(), metric=metric)).to(self.rank)
+                idxs_1 = dist.topk(k=num_neighbors, dim=1, largest=False).indices.flatten()
+                X_time_0 = X[idxs_0]
+                X_time_1 = X[idxs_1]
+                
                 # following two lines are faster but cuda oom
-                # dist = torch.cdist(X_time, X_time)
-                # dist = dist.mean(dim=0)
+                dist = torch.cdist(X_time_0, X_time_1)
+                dist = dist.mean(dim=0)
+                '''
                 dist = torch.zeros(X.shape[0], X.shape[0]).to(self.rank)
                 for t in range(X.shape[1]):
                     dist += torch.cdist(X[:, t, :].unsqueeze(0),X[:, t, :].unsqueeze(0)).squeeze()
@@ -460,7 +483,7 @@ class ClusterGNN(MessagePassing):
             point_normals = data['pc_normals']
         else:
             point_normals = None
-
+        
         node_attr = self.initial_node_attributes(traj, pc, self.node_attr, point_normals, data['timestamps'], data['batch'])
         if self.node_attr == self.graph_construction:
             graph_attr = node_attr
@@ -469,19 +492,35 @@ class ClusterGNN(MessagePassing):
         
         # get edges using knn graph (for computational feasibility)
         k = self.k if not eval else self.k_eval
-        if self.graph == 'knn':
-            if self.my_graph and len(graph_attr.shape) != 2:
-                edge_index = self.get_graph(
-                    graph_attr, self.r, max_num_neighbors=k, batch_idx=batch_idx, type='knn', batch=data['batch'])
-            else:
-                edge_index = knn_graph(x=graph_attr, k=k, batch=data['batch'])
-        elif self.graph == 'radius':
-            if self.my_graph and len(graph_attr.shape) != 2:
-                edge_index = self.get_graph(
-                    graph_attr, self.r, max_num_neighbors=k, batch_idx=batch_idx, type='radius', batch=data['batch'])
-            else:
-                edge_index = radius_graph(graph_attr, self.r, data['batch'], max_num_neighbors=k)
+        if 'edge_index' not in data.keys:
+            if self.graph == 'knn':
+                if self.my_graph and len(graph_attr.shape) != 2:
+                    edge_index = self.get_graph(
+                        graph_attr, self.r, max_num_neighbors=k, batch_idx=batch_idx, type='knn', batch=data['batch'])
+                else:
+                    edge_index = knn_graph(x=graph_attr, k=k, batch=data['batch'])
+            elif self.graph == 'radius':
+                if self.my_graph and len(graph_attr.shape) != 2:
+                    edge_index = self.get_graph(
+                        graph_attr, self.r, max_num_neighbors=k, batch_idx=batch_idx, type='radius', batch=data['batch'])
+                else:
+                    edge_index = radius_graph(graph_attr, self.r, data['batch'], max_num_neighbors=k)
+        else:
+            edge_index = data['edge_index']
 
+        from torch_geometric.data import Data as PyGData
+        import os
+        # DataBatch(pc_list=[40615, 3], traj=[40615, 25, 3], timestamps=[4, 25], point_categories_mov=[40615], point_instances_mov=[40615], point_categories=[40615], point_instances=[40615], log_id=[4], batch=[40615], path=[4], ptr=[5])
+        for i, (start, end) in enumerate(zip(batch_idx[:-1], batch_idx[1:])):
+            d = copy.deepcopy(data)
+            d = PyGData(
+                    edge_index[:, torch.logical_and(
+                        edge_index[0, :] >= start,
+                        edge_index[1, :] < end)])
+            name = data['path'][i].split('_')[-1]
+            p = f'/workspace/result/all_egocomp_margin0.6_width25_{self.graph_construction}/{name}'
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            torch.save(d, p)
         # add negative edges to edge_index
         if not eval and self.augment:
             point_instances = data.point_instances.unsqueeze(
@@ -525,7 +564,7 @@ class ClusterGNN(MessagePassing):
 
         edge_attr = edge_attr.float()
         node_attr = node_attr.float()
-
+        
         node_attr, edge_index, edge_attr = self.layers(node_attr, edge_index, edge_attr)
 
         src, dst = edge_index
@@ -543,7 +582,14 @@ class ClusterGNN(MessagePassing):
         if torch.any(torch.isnan(score)):
             print('Having nan during forward pass...')
             return [torch.nan, torch.nan], edge_index, None
-
+        '''
+        pc_vis = pc[:batch_idx[1]]
+        edge_mask = torch.logical_or(
+            torch.logical_and(edge_index[0] >= batch_idx[0], edge_index[1] < batch_idx[1]),
+            torch.logical_and(edge_index[1] >= batch_idx[0], edge_index[0] < batch_idx[1]))
+        self.visualize(torch.arange(pc_vis.shape[0]), edge_index[:, edge_mask], pc_vis, torch.ones(pc_vis.shape[0]), '00000', mode='before', name='General')
+        quit() 
+        '''
         if eval and corr_clustering:
             _score = self.sigmoid(score)
             if self.use_node_score:
@@ -710,11 +756,12 @@ class ClusterGNN(MessagePassing):
         G.add_edges_from(edge_indices.T.cpu().numpy())
 
         colors = [(0.999, 0.999, 0.999)] * nodes.shape[0]
-        col_dict = dict()
+        '''
         for i, (c, node_list) in enumerate(clusters.items()):
             for node in node_list:
                 colors[node] = rgb_colors[i]
             col_dict[c] = rgb_colors[i]
+        '''
 
         # save graph
         labels = {n.item(): str(n.item()) for n in nodes}
@@ -725,7 +772,7 @@ class ClusterGNN(MessagePassing):
         plt.axis("off")
         plt.savefig(f'../../../vis_graph/{name}/{timestamp}_{mode}.png', bbox_inches='tight', dpi=300)
         plt.close()
-    
+         
     def __repr__(self):
         # We treat the extra repr like the sub-module, one item per line
         extra_lines = []
@@ -822,7 +869,7 @@ class GNNLoss(nn.Module):
 
             # sample edges
             point_instances = point_instances.to(self.rank)
-
+            
             # if ignoring predictions for static edges in loss, get static edge filter
             if self.ignore_stat_edges:
                 point_instances_stat = torch.logical_or(
@@ -837,7 +884,7 @@ class GNNLoss(nn.Module):
                 edge_logits = edge_logits[~point_instances_stat]
                 point_instances = point_instances[~point_instances_stat].float()
                 point_categories = point_categories[~point_instances_stat]
-
+            
             num_edge_pos, num_edge_neg = point_instances.sum(), (point_instances==0).sum()
 
             # compute loss
@@ -891,7 +938,7 @@ class GNNLoss(nn.Module):
                 log_dict[f'{mode} accuracy edge'][5] = 1
 
             # per class accuracy:
-            log_dict[f'{mode} accuracy edges connected to class'] = torch.zeros(40).to(self.rank)
+            log_dict[f'{mode} accuracy edges connected to class'] = torch.zeros(65).to(self.rank)
             for c in torch.unique(point_categories):
                 if correct[point_categories==c].shape[0]:
                     log_dict[f'{mode} accuracy edges connected to class'][2*c] = torch.sum(
@@ -965,7 +1012,7 @@ class GNNLoss(nn.Module):
                 log_dict[f'{mode} accuracy node'][5] = 1
             
             # per class
-            log_dict[f'{mode} accuracy nodes of class'] = torch.zeros(40).to(self.rank)
+            log_dict[f'{mode} accuracy nodes of class'] = torch.zeros(65).to(self.rank)
             for c in torch.unique(object_class):
                 if correct[object_class==c].shape[0]:
                     log_dict[f'{mode} accuracy nodes of class'][2*c] = torch.sum(

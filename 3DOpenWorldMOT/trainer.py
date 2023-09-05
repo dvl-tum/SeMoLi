@@ -51,7 +51,7 @@ def initialize(cfg):
     '''CREATE DIR'''
     out_path = os.path.join(cfg.out_path, 'out/')
     os.makedirs(out_path, exist_ok=True)
-    experiment_dir = os.path.join(out_path, f'detections_{cfg.data.evaluation_split}/')
+    experiment_dir = os.path.join(out_path, f'detections_{cfg.data.detection_set}/')
     os.makedirs(experiment_dir, exist_ok=True)
     checkpoints_dir = os.path.join(out_path, 'checkpoints/')
     os.makedirs(checkpoints_dir, exist_ok=True)
@@ -170,9 +170,9 @@ def load_model(cfg, checkpoints_dir, logger, rank=0):
     
     name = cfg.job_name + '_' + str(cfg.data.percentage_data_train) + '_' + str(cfg.data.percentage_data_val) + '_' + name
 
-    if cfg.wandb and (not cfg.multi_gpu or rank == 0 or rank == 'cpu'):
+    if cfg.wandb: # and (not cfg.multi_gpu or rank == 0 or rank == 'cpu'):
         wandb.login(key='3b716e6ab76d92ef92724aa37089b074ef19e29c')
-        wandb.init(config=cfg, project=cfg.category, name=name)
+        wandb.init(config=cfg, project=cfg.category, group=cfg.job_name, name=name + '_' + str(rank))
 
     return model, start_epoch, name, optimizer, criterion
 
@@ -191,11 +191,12 @@ def sample_params():
             'weight_decay': 10 ** random.choice([-10, -9.5, -9, -8.5, -8, -7.5, -7, -6.5, -6, -5.5, -5]),
             'focal_loss_node': focal_loss,
             'focal_loss_edge': focal_loss,
-            'alpha_node': random.choice([0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]),
-            'alpha_edge': random.choice([0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]),
+            'alpha_node': random.choice([0.7, 0.8, 0.9]),
+            'alpha_edge': random.choice([0.7, 0.8, 0.9]),
             'gamma_node': random.choice([1, 1.5, 2, 2.5, 3, 3.5, 4]),
             'gamma_edge': random.choice([1, 1.5, 2, 2.5, 3, 3.5, 4]),
             'node_loss': random.choice([True, False]),
+            'graph_construction': random.choice(['min_mean_max_vel', 'pos', 'postraj', 'traj', 'mean_dist_over_time'])
         }
         dims = sample_dims()
         params['layer_sizes_edge'] = dims
@@ -245,6 +246,7 @@ def main(cfg):
             # cfg.models.hyperparams.layer_sizes_edge = params_list[iter]['layer_sizes_edge']
             # cfg.models.hyperparams.layer_sizes_node = params_list[iter]['layer_sizes_node']
             cfg.training.epochs = 15
+            cfg.models.loss_hyperparams.graph_construction = params_list[iter]['graph_construction']
             cfg.data.percentage_data_train = 0.1 
             cfg.data.percentage_data_val = 0.1
             print(f"Current params: {params_list[iter]}")
@@ -274,11 +276,11 @@ def main(cfg):
             if not cfg.training.hypersearch:
                 final_evaluation('cpu', cfg, world_size=1)
 
-        wandb.finish()
+        # wandb.finish()
         logging.shutdown()
     
 def train_one_epoch(model, cfg, epoch, logger, optimizer, train_loader,\
-                    rank, criterion, scaler, checkpoints_dir, name):
+                    rank, criterion, scaler, checkpoints_dir, name, log_during=True, log_after=False):
     # Adapt learning rate
     lr = max(cfg.training.optim.optimizer.params.lr * (
         cfg.lr_scheduler.params.gamma ** (
@@ -304,10 +306,10 @@ def train_one_epoch(model, cfg, epoch, logger, optimizer, train_loader,\
         logger.info('---- EPOCH %03d TRAINING ----' % (epoch + 1))
     node_loss = torch.zeros(2).to(rank)
     node_acc = torch.zeros(6).to(rank)
-    per_class_node_acc = torch.zeros(40).to(rank)
+    per_class_node_acc = torch.zeros(65).to(rank)
     edge_loss = torch.zeros(2).to(rank)
     edge_acc = torch.zeros(6).to(rank)
-    per_class_edge_acc = torch.zeros(40).to(rank)
+    per_class_edge_acc = torch.zeros(65).to(rank)
     num_node_pos = torch.zeros(len(train_loader)).to(rank)
     num_node_neg = torch.zeros(len(train_loader)).to(rank)
     num_edge_pos = torch.zeros(len(train_loader)).to(rank)
@@ -361,14 +363,20 @@ def train_one_epoch(model, cfg, epoch, logger, optimizer, train_loader,\
                 wandb.log({"train histogram edge":
                     wandb.Histogram(np_histogram=hist_edge), "epoch": epoch})
         
-        if rank == 0 and cfg.wandb:
-            for k, v in log_dict.items():
-                if 'num' in k:
-                    wandb.log({f'{k}': v, "epoch": epoch})
-                else:
-                    for i in range(int(v.shape[0]/2)):
-                        if v[2*i+1]:
-                            wandb.log({f'{k} {i}': v[2*i], "epoch": epoch})
+        if log_during:
+            if cfg.wandb:
+                for k, v in log_dict.items():
+                    if 'num' in k:
+                        wandb.log({f'{k}': v, "epoch": epoch})
+                    elif not 'class' in k:
+                        _type = ['all', 'neg', 'pos']
+                        for i in range(int(v.shape[0]/2)):
+                            if v[2*i+1]:
+                                wandb.log({f'{k} {_type[i]}': v[2*i], "epoch": epoch})
+                    else:
+                        for i in range(int(v.shape[0]/2)):
+                            if v[2*i+1]:
+                                wandb.log({f'{k} {i}': v[2*i], "epoch": epoch})
         
         if 'train bce loss edge' in log_dict.keys():
             edge_loss += log_dict['train bce loss edge']
@@ -427,33 +435,32 @@ def train_one_epoch(model, cfg, epoch, logger, optimizer, train_loader,\
     if rank == 0 or rank == 'cpu' or not cfg.multi_gpu:
         if 'train bce loss edge' in log_dict.keys():
             logger.info(f'train bce loss edge per epoch: {edge_loss}')
-            if cfg.wandb:
+            if cfg.wandb and log_after:
                 wandb.log({'train bce loss edge per epoch': edge_loss, "epoch": epoch})
         if 'train bce loss node' in log_dict.keys():
             logger.info(f'train bce loss node per epoch: {node_loss}')
-            if cfg.wandb:
+            if cfg.wandb and log_after:
                 wandb.log({'train bce loss node per epoch': node_loss, "epoch": epoch})
         if 'train accuracy edge' in log_dict.keys():
             logger.info(f'train accuracy edge per epoch (all / neg / pos): {set(edge_acc.values())}')
-            if cfg.wandb:
+            if cfg.wandb and log_after:
                 for k, v in edge_acc.items():
                     wandb.log({f'train accuracy {k} edge per epoch': v, "epoch": epoch})
         if 'train accuracy edges connected to class' in log_dict.keys():
             logger.info(f'train accuracy edges per epoch connected to class: {per_class_edge_acc}')
-            if cfg.wandb:
+            if cfg.wandb and log_after:
                 for k, v in per_class_edge_acc.items():
                     wandb.log({f'train accuracy connected to class {k} edge per epoch': v, "epoch": epoch})
         if 'train accuracy node' in log_dict.keys():
             logger.info(f'train accuracy node per epoch (all / neg / pos): {set(node_acc.values())}')
-            if cfg.wandb:
+            if cfg.wandb and log_after:
                 for k, v in node_acc.items():
                     wandb.log({f'train accuracy {k} node per epoch': v, "epoch": epoch})
         if 'train accuracy nodes of class' in log_dict.keys():
             logger.info(f'train accuracy node per epoch per class: {per_class_node_acc}')
-            if cfg.wandb:
+            if cfg.wandb and log_after:
                 for k, v in per_class_node_acc.items():
                     wandb.log({f'train accuracy of class {k} node per epoch': v, "epoch": epoch})
-       
         logger.info(f"train num neg / pos nodes on average per batch {_num_node_neg} / {_num_node_pos}")
         logger.info(f"train num neg / pos edges on average per batch {_num_edge_neg} / {_num_edge_pos}")
 
@@ -478,14 +485,14 @@ def train_one_epoch(model, cfg, epoch, logger, optimizer, train_loader,\
 
 
 def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_dir,\
-        name, val_data, is_neural_net, logger, epoch, criterion, optimizer, checkpoints_dir, best_metric):
+        name, val_data, is_neural_net, logger, epoch, criterion, optimizer, checkpoints_dir, best_metric, log_during=True, log_after=False):
     
     node_loss = torch.zeros(2).to(rank)
     node_acc = torch.zeros(6).to(rank)
     edge_loss = torch.zeros(2).to(rank)
     edge_acc = torch.zeros(6).to(rank)
-    per_class_edge_acc = torch.zeros(40).to(rank)
-    per_class_node_acc = torch.zeros(40).to(rank)
+    per_class_edge_acc = torch.zeros(65).to(rank)
+    per_class_node_acc = torch.zeros(65).to(rank)
     nmis = torch.zeros(2).to(rank)
     num_node_pos = torch.zeros(len(val_loader)).to(rank)
     num_node_neg = torch.zeros(len(val_loader)).to(rank)
@@ -496,7 +503,7 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
     if do_corr_clustering:
         detector = Detector3D(
             experiment_dir + name,
-            split='train' if 'train' in cfg.data.evaluation_split else 'val',
+            split=cfg.data.detection_set,
             every_x_frame=cfg.data.every_x_frame,
             num_interior=cfg.detection_options.num_interior,
             overlap=cfg.detection_options.overlap,
@@ -558,16 +565,21 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
                     if hist_edge is not None:
                         wandb.log({"eval histogram edge":
                             wandb.Histogram(np_histogram=hist_edge), "epoch": epoch})
-            
-            if rank == 0 and cfg.wandb:
-                for k, v in log_dict.items():
-                    if 'num' in k:
-                        wandb.log({f'{k}': v, "epoch": epoch})
-                    else:    
-                        for i in range(int(v.shape[0]/2)):
-                            if v[2*i+1]:
-                                wandb.log({f'{k} {i}': v[2*i], "epoch": epoch})
-            
+            if log_during: 
+                if cfg.wandb:
+                    for k, v in log_dict.items():
+                        if 'num' in k:
+                            wandb.log({f'{k}': v, "epoch": epoch})
+                        elif not 'class' in k:
+                            _type = ['all', 'neg', 'pos']
+                            for i in range(int(v.shape[0]/2)):
+                                if v[2*i+1]:
+                                    wandb.log({f'{k} {_type[i]}': v[2*i], "epoch": epoch})
+                        else:
+                            for i in range(int(v.shape[0]/2)):
+                                if v[2*i+1]:
+                                    wandb.log({f'{k} {i}': v[2*i], "epoch": epoch})
+
             if 'eval bce loss edge' in log_dict.keys():
                 edge_loss += log_dict['eval bce loss edge']
             if 'eval bce loss node' in log_dict.keys():
@@ -683,33 +695,33 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
             if is_neural_net:
                 if 'eval bce loss edge' in log_dict.keys():
                     logger.info(f'eval bce loss edge per epoch: {edge_loss}')
-                    if cfg.wandb:
+                    if cfg.wandb and log_after:
                         wandb.log({'eval bce loss edge per epoch': edge_loss, "epoch": epoch})
                 if 'eval bce loss node' in log_dict.keys():
                     logger.info(f'eval bce loss node per epoch: {node_loss}')
-                    if cfg.wandb:
+                    if cfg.wandb and log_after:
                         wandb.log({'eval bce loss node per epoch': node_loss, "epoch": epoch})
                 if 'eval accuracy edge' in log_dict.keys():
                     logger.info(f'eval accuracy edge per epoch (all / neg / pos): {set(edge_acc.values())}')
-                    if cfg.wandb:
+                    if cfg.wandb and log_after:
                         for k, v in edge_acc.items():
                             wandb.log({f'eval accuracy {k} edge per epoch': v, "epoch": epoch})
                 if 'eval accuracy edges connected to class' in log_dict.keys():
                     logger.info(f'eval accuracy edges per epoch connected to class: {per_class_edge_acc}')
-                    if cfg.wandb:
+                    if cfg.wandb and log_after:
                         for k, v in per_class_edge_acc.items():
                             wandb.log({f'eval accuracy class {k} edge per epoch': v, "epoch": epoch})
                 if 'eval accuracy node' in log_dict.keys():
                     logger.info(f'eval accuracy node per epoch (all / neg / pos): {set(node_acc.values())}')
-                    if cfg.wandb:
+                    if cfg.wandb and log_after:
                         for k, v in node_acc.items():
                             wandb.log({f'eval accuracy {k} node per epoch': v, "epoch": epoch})
                 if 'eval accuracy nodes of class' in log_dict.keys():
                     logger.info(f'eval accuracy of nodes per epoch per class: {per_class_node_acc}')
-                    if cfg.wandb:
+                    if cfg.wandb and log_after:
                         for k, v in per_class_node_acc.items():
                             wandb.log({f'eval accuracy class {k} node per epoch': v, "epoch": epoch})
-                
+
                 logger.info(f"eval num neg / pos nodes on average per batch {_num_node_neg} / {_num_node_pos}")
                 logger.info(f"eval num neg / pos edges on average per batch {_num_edge_neg} / {_num_edge_pos}")
             
@@ -747,10 +759,11 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
                     classes_to_eval='all',
                     debug=cfg.data.debug,
                     name=name)
-            
+
                 # log metrics
                 for_logs = {met: m for met, m in zip(['AP', 'ATE', 'ASE', 'AOE' ,'CDS'], detection_metric)}
-            
+                logger.info(f'Detection metrics {for_logs}...')
+
                 if cfg.wandb:
                     for met, m in for_logs.items():
                         wandb.log({met: m, "epoch": epoch})
@@ -960,6 +973,7 @@ def train(rank, cfg, world_size):
                 best_metric)
 
         if not is_neural_net or cfg.just_eval:
+            wandb.finish()
             break
    
     # final_evaluation
@@ -979,6 +993,8 @@ def train(rank, cfg, world_size):
                 optimizer,
                 checkpoints_dir,
                 best_metric)
+    wandb.finish()
+
 
 #def final_evaluation(rank, cfg, world_size):
 def final_evaluation(model,
