@@ -17,6 +17,7 @@ from data_utils.TrajectoryDataset import get_TrajectoryDataLoader
 from data_utils.DistributedTestSampler import DistributedTestSampler
 from TrackEvalOpenWorld.scripts.run_av2_ow import evaluate_av2_ow_MOT
 import wandb
+import pandas as pd
 
 # FOR DETECTION EVALUATION
 from evaluation import eval_detection
@@ -742,6 +743,19 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
                     seq_list = list()
             
             if do_corr_clustering:
+                # combine output of different ranks
+                out = os.path.join(experiment_dir + name, 'combined', _rank, detector.split)
+                for _rank in os.listdir(experiment_dir + name):
+                    rank_path = os.path.join(experiment_dir + name, _rank, detector.split)
+                    for log_id in os.listdir(rank_path):
+                        df = feather.read_feather(os.path.join(rank_path, log_id, 'annotations.feather'))
+                        write_path = os.path.join(out, log_id, 'annotations.feather')
+                        if os.path.isfile(write_path):
+                            df = df.append(feather.read_feather(write_path))
+                        else:
+                            os.makedirs(os.path.join(out, log_id), exist_ok=True)
+                        feather.write_feather(df, write_path)
+
                 # average NMI
                 cluster_metric = [nmis]
                 logger.info(f'NMI: {cluster_metric[0]}')
@@ -874,12 +888,18 @@ def train(rank, cfg, world_size):
                 val_data,
                 batch_size=cfg.training.batch_size_val)
         else:
-            val_sampler = DistributedTestSampler(
+            '''val_sampler = DistributedTestSampler(
                     val_data,
                     num_replicas=torch.cuda.device_count(),
                     rank=rank,
                     shuffle=False,
-                    drop_last=False)
+                    drop_last=False)'''
+            val_sampler = DistributedSampler(
+                    val_data,
+                    num_replicas=torch.cuda.device_count(),
+                    drop_last=False,
+                    rank=rank, 
+                    shuffle=False)
             val_loader = PyGDataLoader(
                 val_data,
                 batch_size=cfg.training.batch_size_val,
@@ -897,10 +917,16 @@ def train(rank, cfg, world_size):
                 test_data,
                 batch_size=cfg.training.batch_size_val)
         else:
-            test_sampler = DistributedTestSampler(
+            '''test_sampler = DistributedTestSampler(
                     test_data,
                     num_replicas=torch.cuda.device_count(),
-                    rank=rank)
+                    rank=rank)'''
+            test_sampler = DistributedSampler(
+                    test_data,
+                    num_replicas=torch.cuda.device_count(),
+                    drop_last=False,
+                    rank=rank, 
+                    shuffle=False)
             test_loader = PyGDataLoader(
                 test_data,
                 batch_size=cfg.training.batch_size_val,
