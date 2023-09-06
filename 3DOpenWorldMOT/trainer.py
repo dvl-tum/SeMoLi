@@ -951,7 +951,7 @@ def train(rank, cfg, world_size):
             # do corr clustering every eval_corr_every_x epochs if epoch not 0
             do_corr_clustering = epoch % cfg.training.eval_corr_every_x == 0 and epoch != 0
             # do corr clustering if only eval
-            do_corr_clustering = do_corr_clustering or cfg.just_eval
+            do_corr_clustering = do_corr_clustering # or cfg.just_eval
             # do corr clustering in last epoch always
             # do_corr_clustering = do_corr_clustering or epoch == cfg.training.epochs - 1
 
@@ -974,7 +974,7 @@ def train(rank, cfg, world_size):
 
         if not is_neural_net or cfg.just_eval:
             wandb.finish()
-            break
+            return
    
     # final_evaluation
     final_evaluation(
