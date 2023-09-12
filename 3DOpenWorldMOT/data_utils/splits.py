@@ -24,9 +24,16 @@ def get_seq_list(path, detection_set='train_gnn',percentage=1.0):
     return seqs
 
 def get_seq_list_fixed_val(path, detection_set='train_gnn',percentage=1.0):
+    save_path = f'/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/data_utils/new_seq_splits_Waymo_Converted_fixed_val/{percentage}_{detection_set}.txt'
+    if os.path.isfile(save_path):
+        with open(save_path, 'r') as f:
+            seqs = f.read()
+            seqs = seqs.split('\n')
+        return seqs
+
     # start by listing all sequences
     seqs = os.listdir(path)
-
+    
     # for evaluation take all validation sequences
     if detection_set == 'val_evaluation' or detection_set == 'val_test':
         return seqs
@@ -46,7 +53,8 @@ def get_seq_list_fixed_val(path, detection_set='train_gnn',percentage=1.0):
         seqs = seqs[:int(len(seqs)*percentage)]
     elif 'detector' in detection_set:
         seqs = seqs[int(len(seqs)*percentage):]
-
+    print(sorted(seqs), len(seqs))
+    quit()
     return seqs
  
 

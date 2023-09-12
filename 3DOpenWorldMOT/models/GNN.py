@@ -1,3 +1,5 @@
+from torch_geometric.data import Data as PyGData
+import os
 import torch
 from torch_geometric.nn.conv.message_passing import MessagePassing
 from torch_geometric.nn import knn_graph, radius_graph
@@ -372,8 +374,8 @@ class ClusterGNN(MessagePassing):
             node_attr = x2
         elif _type == 'traj' or _type == 'mean_traj_over_time':
             node_attr = x1
-            if _type == 'traj':
-                node_attr = node_attr.view(node_attr.shape[0], -1)
+            if _type == 'mean_traj_over_time':
+                node_attr = node_attr.view(x1.shape[0], -1, 3)
         elif _type == 'traj_pos':
             node_attr = torch.stack([x2, x1])
         elif _type == 'postraj' or _type =='mean_dist_over_time':
@@ -400,13 +402,41 @@ class ClusterGNN(MessagePassing):
 
         return node_attr
     
-    def get_graph(self, node_attr, r=5, max_num_neighbors=16, batch_idx=None, type='radius', metric='euclidean', batch=None):
+    def get_graph(self, node_attr, r=5, max_num_neighbors=16, batch_idx=None, type='radius', metric='euclidean', batch=None, data=None):
         # my graph
         _idxs_0, _idxs_1 = list(), list()
-        for start, end in zip(batch_idx[:-1], batch_idx[1:]):
+        for ith, (start, end) in enumerate(zip(batch_idx[:-1], batch_idx[1:])):
             # iterate over frames in batch
             X = node_attr[start:end]
+            # check edge_idx
+            name = data['path'][ith].split('_')[-1]
+            p = f'/workspace/result/all_egocomp_margin0.6_width25_{self.graph_construction}/{name}' 
+            recompute = True
+            if os.path.isfile(p):
+                edge_idx = torch.load(p, map_location='cpu')['x'].to(self.rank)
+                try:
+                    # print(f'got it {p}')
+                    has_len = len(edge_idx)
+                    data['edge_index'] = edge_idx
+                    if edge_idx.min() != 0:
+                        edge_idx = edge_idx - edge_idx.min()
+                        d = PyGData(edge_idx)
+                        torch.save(d, p)
+                    idxs_0 = edge_idx[0, :]
+                    idxs_1 = edge_idx[1, :]
+                    
+                    idxs_0 += start
+                    idxs_1 += start
+                    _idxs_0.append(idxs_0)
+                    _idxs_1.append(idxs_1)
+                    
+                    recompute = False
+                except:
+                    recompute = True
             
+            if not recompute:
+                continue
+
             '''
             # get indices up to max_num_neighbors per node --> knn neighbors
             num_neighbors = min(int(max_num_neighbors*1.5), dist.shape[0])
@@ -455,6 +485,10 @@ class ClusterGNN(MessagePassing):
                 idx = torch.where(dist<r)[0]
                 idxs_0, idxs_1 = idxs_0[idx], idxs_1[idx]
             
+            if not os.path.isfile(p):
+                d = PyGData(torch.vstack([idxs_0, idxs_1]))
+                os.makedirs(os.path.dirname(p), exist_ok=True)
+                torch.save(d, p)
             idxs_0 += start
             idxs_1 += start            
             _idxs_0.append(idxs_0)
@@ -496,31 +530,37 @@ class ClusterGNN(MessagePassing):
             if self.graph == 'knn':
                 if self.my_graph and len(graph_attr.shape) != 2:
                     edge_index = self.get_graph(
-                        graph_attr, self.r, max_num_neighbors=k, batch_idx=batch_idx, type='knn', batch=data['batch'])
+                        graph_attr, self.r, max_num_neighbors=k, batch_idx=batch_idx, type='knn', batch=data['batch'], data=data)
                 else:
                     edge_index = knn_graph(x=graph_attr, k=k, batch=data['batch'])
             elif self.graph == 'radius':
                 if self.my_graph and len(graph_attr.shape) != 2:
                     edge_index = self.get_graph(
-                        graph_attr, self.r, max_num_neighbors=k, batch_idx=batch_idx, type='radius', batch=data['batch'])
+                        graph_attr, self.r, max_num_neighbors=k, batch_idx=batch_idx, type='radius', batch=data['batch'], data=data)
                 else:
                     edge_index = radius_graph(graph_attr, self.r, data['batch'], max_num_neighbors=k)
+            
+            if self.my_graph and len(graph_attr.shape) == 2:
+                from torch_geometric.data import Data as PyGData
+                import os
+                # DataBatch(pc_list=[40615, 3], traj=[40615, 25, 3], timestamps=[4, 25], point_categories_mov=[40615], point_instances_mov=[40615], point_categories=[40615], point_instances=[40615], log_id=[4], batch=[40615], path=[4], ptr=[5])
+                for i, (start, end) in enumerate(zip(batch_idx[:-1], batch_idx[1:])):
+                    name = data['path'][i].split('_')[-1]
+                    p = f'/workspace/result/all_egocomp_margin0.6_width25_{self.graph_construction}/{name}'
+                    if os.path.isfile(p):
+                        continue
+                    print('save')
+                    sample_edge = edge_index[:, torch.logical_and(
+                                edge_index[0, :] >= start,
+                                edge_index[1, :] < end)]
+                    d = PyGData(
+                            sample_edge - sample_edge.min())
+                    os.makedirs(os.path.dirname(p), exist_ok=True)
+                    torch.save(d, p)
+            
         else:
             edge_index = data['edge_index']
-
-        from torch_geometric.data import Data as PyGData
-        import os
-        # DataBatch(pc_list=[40615, 3], traj=[40615, 25, 3], timestamps=[4, 25], point_categories_mov=[40615], point_instances_mov=[40615], point_categories=[40615], point_instances=[40615], log_id=[4], batch=[40615], path=[4], ptr=[5])
-        for i, (start, end) in enumerate(zip(batch_idx[:-1], batch_idx[1:])):
-            d = copy.deepcopy(data)
-            d = PyGData(
-                    edge_index[:, torch.logical_and(
-                        edge_index[0, :] >= start,
-                        edge_index[1, :] < end)])
-            name = data['path'][i].split('_')[-1]
-            p = f'/workspace/result/all_egocomp_margin0.6_width25_{self.graph_construction}/{name}'
-            os.makedirs(os.path.dirname(p), exist_ok=True)
-            torch.save(d, p)
+        
         # add negative edges to edge_index
         if not eval and self.augment:
             point_instances = data.point_instances.unsqueeze(

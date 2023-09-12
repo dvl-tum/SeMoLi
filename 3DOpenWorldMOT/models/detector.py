@@ -37,11 +37,11 @@ class Detector3D():
         self.num_interior = num_interior
         self.av2_loader = av2_loader
         self.precomp_dets = precomp_dets
+        self.rank = rank
         self.out_path = os.path.join(out_path,  f'rank_{self.rank}')
         
         self.filtered_gt = '../../../data/argoverse2/val_0.833_per_frame_remove_non_move_remove_far_remove_non_drive_filtered_version.feather'
-        self.rank = rank
-
+    
     def new_log_id(self, log_id):
         # save tracks to feather and reset variables
         if self.log_id != -1:

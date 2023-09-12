@@ -93,11 +93,8 @@ def get_feather_files(
     
     if is_gt:
         # get file name
-        split_dir = paths
+        print(paths)
         split = os.path.basename(paths)
-        split_dir = os.path.dirname(os.path.dirname(paths)) + '_filtered'
-        split_dir = os.path.dirname(paths) + '_filtered'
-
         file = 'filtered_version.feather'
         file = 'remove_non_drive_' + file if remove_non_drive else file
         file = 'remove_far_' + file if remove_far else file
@@ -106,11 +103,12 @@ def get_feather_files(
         file = str(remove_non_move_thresh)[
             :5] + '_' + file if remove_non_move else file
         file = split + '_' + file
-
-        path_filtered = os.path.join(split_dir, file)
-        path_filtered = '/dvlresearch/jenny/Waymo_Converted_filtered_val/val_1.0_per_frame_remove_non_move_remove_far_filtered_version.feather'
-        path_filtered = f'/dvlresearch/jenny/Waymo_Converted_filtered/Waymo_Converted_filtered_{split}/{split}_1.0_per_frame_remove_non_move_remove_far_filtered_version.feather'
-        # path_filtered = "/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/Waymo_Converted_filtered_val/val_1.0_per_frame_remove_non_move_remove_far_filtered_version.feather"
+        
+        if 'Waymo' in paths:
+            path_filtered = os.path.join('/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/Waymo_Converted_filtered', file)
+        else:
+            path_filtered = os.path.join('/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/Argoverse2_filtered', file)
+    
     if not is_gt or not os.path.isfile(path_filtered):
         df = None
         for i, path in enumerate(os.listdir(paths)):
@@ -146,13 +144,10 @@ def get_feather_files(
         # check if filtered version already exists
         if os.path.isfile(path_filtered):
             df = feather.read_feather(path_filtered)
-
             if 'seq' in df.columns:
                 df.rename(columns={'seq': 'log_id'}, inplace=True)
-
             if seq_list is not None:
                 df = df[df['log_id'].isin(seq_list)]
-
             df = df.astype({'num_interior_pts': 'int64'})
             return df
 
@@ -515,7 +510,7 @@ def eval_detection(
 
     if just_eval:
         print("Loaded ground truth...")
-
+    
     dts = get_feather_files(
         trackers_folder,
         seq_list=seq_to_eval,
@@ -628,7 +623,7 @@ def eval_detection(
 if __name__ == '__main__':
     name ='just_eval'
     gt_folder = '/dvlresearch/jenny/Waymo_Converted_GT'
-    # gt_folder = '/workspace/Waymo_Converted_val'
+    gt_folder = '/workspace/Waymo_Converted_train/Waymo_Converted'
     # gt_folder = '../../../../datasets/Argoverse2'
 
     min_points = -1
@@ -643,7 +638,7 @@ if __name__ == '__main__':
         if 'DBSCAN_POS' not in t and 'NEW_FLOW_BEST_PARAMS_90' not in t:
             continue
         print(t)
-        tracker_dir = f'out/detections_{split}_{detections}/{t}/{split}_{detections}'
+        tracker_dir = f'out/detections_{split}_{detections}/{t}/combined/{split}_{detections}'
         print(tracker_dir)
         # seq = '16473613811052081539'
         # seq_list = [seq]
@@ -661,6 +656,7 @@ if __name__ == '__main__':
             remove_non_move_strategy='per_frame',
             remove_non_move_thresh=1.0,
             debug=False,
+            just_eval=True,
             visualize=False,
             name=name,
             min_points=min_points,

@@ -197,7 +197,7 @@ def sample_params():
             'gamma_node': random.choice([1, 1.5, 2, 2.5, 3, 3.5, 4]),
             'gamma_edge': random.choice([1, 1.5, 2, 2.5, 3, 3.5, 4]),
             'node_loss': random.choice([True, False]),
-            'graph_construction': random.choice(['min_mean_max_vel', 'pos', 'postraj', 'traj', 'mean_dist_over_time'])
+            # 'graph_construction': random.choice(['min_mean_max_vel', 'pos', 'postraj', 'traj', 'mean_dist_over_time'])
         }
         dims = sample_dims()
         params['layer_sizes_edge'] = dims
@@ -233,7 +233,7 @@ def main(cfg):
         params_list = sample_params()
         iters = 30
 
-    for iter in range(iters):
+    for iter in range(1, iters+1):
         if cfg.training.hypersearch:
             cfg.training.optim.base_lr = params_list[iter]['lr']
             cfg.training.optim.weight_decay = params_list[iter]['weight_decay']
@@ -244,13 +244,14 @@ def main(cfg):
             cfg.models.loss_hyperparams.alpha_node = params_list[iter]['alpha_node']
             cfg.models.loss_hyperparams.alpha_edge = params_list[iter]['alpha_edge']
             cfg.models.loss_hyperparams.node_loss = False #params_list[iter]['node_loss']
-            # cfg.models.hyperparams.layer_sizes_edge = params_list[iter]['layer_sizes_edge']
-            # cfg.models.hyperparams.layer_sizes_node = params_list[iter]['layer_sizes_node']
+            cfg.models.hyperparams.layer_sizes_edge = params_list[iter]['layer_sizes_edge']
+            cfg.models.hyperparams.layer_sizes_node = params_list[iter]['layer_sizes_node']
             cfg.training.epochs = 15
-            cfg.models.loss_hyperparams.graph_construction = params_list[iter]['graph_construction']
+            # cfg.models.loss_hyperparams.graph_construction = params_list[iter]['graph_construction']
             cfg.data.percentage_data_train = 0.1 
             cfg.data.percentage_data_val = 0.1
             print(f"Current params: {params_list[iter]}")
+            cfg.job_name = cfg.job_name + f'_{iter}'
 
         OmegaConf.set_struct(cfg, False)  # This allows getattr and hasattr methods to function correctly
         logger, experiment_dir, checkpoints_dir, out_path = initialize(cfg)
@@ -260,22 +261,16 @@ def main(cfg):
         
         # needed for preprocessing
         logger.info("start loading training data ...")
-        train_data, val_data, test_data = get_TrajectoryDataLoader(cfg)
+        # train_data, val_data, test_data = get_TrajectoryDataLoader(cfg)
         
         if cfg.multi_gpu:
             world_size = torch.cuda.device_count()
             in_args = (cfg, world_size)
             mp.spawn(train, args=in_args, nprocs=world_size, join=True)
-            # if not cfg.training.hypersearch:
-            #     mp.spawn(final_evaluation, args=in_args, nprocs=world_size, join=True)
         elif torch.cuda.is_available():
             train(0, cfg, world_size=1)
-            if not cfg.training.hypersearch:
-                final_evaluation(0, cfg, world_size=1)
         else:
             train('cpu', cfg, world_size=1)
-            if not cfg.training.hypersearch:
-                final_evaluation('cpu', cfg, world_size=1)
 
         # wandb.finish()
         logging.shutdown()
@@ -519,12 +514,13 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
             logger.info('---- EPOCH %03d EVALUATION ----' % (epoch + 1))
             logger.info(f'Doing correlation clustering {do_corr_clustering}')
         # Iterate over validation set
+        print('c')
         for batch, (data) in tqdm(enumerate(val_loader), total=len(val_loader), smoothing=0.9):
         # for batch, (data) in enumerate(val_loader):
-
+            print('a')
             # compute clusters
             logits, all_clusters, edge_index, _ = model(data, eval=True, name=name, corr_clustering=do_corr_clustering)
-            
+            print('c2')
             if logits is not None and torch.isnan(logits[0]).any():
                 logger.info(f'Having nan in eval logits {logits}....')
                 return None, None, None, None
@@ -744,7 +740,7 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
             
             if do_corr_clustering:
                 # combine output of different ranks
-                out = os.path.join(experiment_dir + name, 'combined', _rank, detector.split)
+                out = os.path.join(experiment_dir + name, 'combined',  detector.split)
                 for _rank in os.listdir(experiment_dir + name):
                     rank_path = os.path.join(experiment_dir + name, _rank, detector.split)
                     for log_id in os.listdir(rank_path):
@@ -764,6 +760,7 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
                 _, detection_metric = eval_detection.eval_detection(
                     gt_folder=os.path.join(os.getcwd(), cfg.data.data_dir),
                     trackers_folder=detector_dir,
+                    split='val' if 'evaluation' in cfg.data.detection_set else 'train',
                     seq_to_eval=seq_list,
                     remove_far=True,#'80' in cfg.data.trajectory_dir,
                     remove_non_drive='non_drive' in cfg.data.trajectory_dir,
@@ -772,7 +769,7 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
                     remove_non_move_thresh=cfg.data.remove_static_thresh,
                     filter_class=-1,
                     only_matched_gt=False,
-                    filter_moving_before=False,
+                    filter_moving_first=False,
                     use_matched_category=False,
                     debug=cfg.data.debug,
                     name=name)
@@ -828,7 +825,7 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
             else:
                 logger.info(f'Best {cfg.metric} metric: {best_metric}, acc: {edge_acc}')
     
-    return model, optimizer, criterion
+    return model, optimizer, criterion, best_metric
 
 
 def train(rank, cfg, world_size):
@@ -974,7 +971,7 @@ def train(rank, cfg, world_size):
             if model is None:
                 logger.info("Terminating training due to nan values...")
                 return
-        
+        print(epoch % cfg.training.eval_every_x == 0, epoch)
         # evaluate
         if epoch % cfg.training.eval_every_x == 0:
             # do corr clustering every eval_corr_every_x epochs if epoch not 0
@@ -982,9 +979,9 @@ def train(rank, cfg, world_size):
             # do corr clustering if only eval
             do_corr_clustering = do_corr_clustering # or cfg.just_eval
             # do corr clustering in last epoch always
-            # do_corr_clustering = do_corr_clustering or epoch == cfg.training.epochs - 1
+            # do_corr_clustering = do_corr_clustering or epoch == cfg.training.epochs - 
 
-            model, optimizer, criterion = eval_one_epoch(
+            model, optimizer, criterion, best_metric = eval_one_epoch(
                 model,
                 do_corr_clustering,
                 rank,
@@ -1000,10 +997,14 @@ def train(rank, cfg, world_size):
                 optimizer,
                 checkpoints_dir,
                 best_metric)
-
+        
         if not is_neural_net or cfg.just_eval:
             wandb.finish()
-            break
+            return
+        
+        # if epoch >= 3 and best_metric <= 0.85:
+        #     wandb.finish()
+        #     return
    
     # final_evaluation
     final_evaluation(

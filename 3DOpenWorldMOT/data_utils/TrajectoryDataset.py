@@ -52,7 +52,7 @@ class TrajectoryDataset(PyGDataset):
             percentage_data=1,
             detection_set='train_gnn',
             filtered_file_path=None,
-            name=None):
+            detection_out_path=None):
         
         if 'gt' in _processed_dir:
             self.trajectory_dir = Path(os.path.join(trajectory_dir, split))
@@ -99,7 +99,8 @@ class TrajectoryDataset(PyGDataset):
         if 'detector' in detection_set:
             split = 'train' if 'train' in detection_set else 'val'
             self.already_evaluated = list()
-            # self.already_evaluated = [os.path.basename(os.path.dirname(p)) for p in glob.glob(f'{name}/{split}/*/*')]
+            print(f'{detection_out_path}/combined/{detection_set}')
+            self.already_evaluated = [os.path.basename(os.path.dirname(p)) for p in glob.glob(f'{detection_out_path}/combined/{detection_set}/*/*')]
         else:
             self.already_evaluated = list()
 
@@ -131,11 +132,12 @@ class TrajectoryDataset(PyGDataset):
     @property
     def processed_paths(self):
         if not self.do_process:
-            seqs = [seq for seq in self.seqs if seq in os.listdir(self.processed_dir) and seq not in self.already_evaluated] # [:16]
+            seqs = [seq for seq in self.seqs if seq in os.listdir(self.processed_dir) and seq not in self.already_evaluated]
+            print(f'{len(seqs)} to be processed, {len(self.already_evaluated)} were already there...')
             return [os.path.join(self.processed_dir, seq, flow_file)\
                     for seq in seqs\
                         for i, flow_file in enumerate(sorted(os.listdir(osp.join(self.processed_dir, seq))))\
-                            if i % self.every_x_frame == 0]
+                        if i % self.every_x_frame == 0] #[:16]
         else:
             seqs = [seq for seq in self.seqs if seq in os.listdir(self.trajectory_dir) and seq not in self.already_evaluated]
             return [os.path.join(self.processed_dir, seq, flow_file[:-3] + 'pt')\
@@ -460,10 +462,20 @@ class TrajectoryDataset(PyGDataset):
         path = self._processed_paths[idx]
         data = torch.load(path)
         
+        ''' 
         name = path.split('_')[-1]
         if os.path.isfile(f'{self.edge_dir}/{name}'):
-            data['edge_index'] = torch.load(f'{self.edge_dir}/{name}')['edge_index']
-
+            edge_idx = torch.load(f'{self.edge_dir}/{name}', map_location='cpu')['x']
+            # try:
+            has_len = len(edge_idx)
+            data['edge_index'] = edge_idx
+            if data['edge_index'].min() != 0:
+                data['edge_index'] = data['edge_index'] - data['edge_index'].min()
+                # d = PyGData(data['edge_index'])
+                # torch.save(d, f'{self.edge_dir}/{name}')
+            # except:
+            #     print('recompute... here??')
+        '''
         if self.remove_static and self.static_thresh > 0:
             data = self._remove_static(data)
         else:
@@ -495,12 +507,19 @@ class TrajectoryDataset(PyGDataset):
 
 
 def get_TrajectoryDataLoader(cfg, name=None, train=True, val=True, test=False):
+    if 'graph_construction' in cfg.models.hyperparams.keys():
+        graph_dir = cfg.data.trajectory_dir.split('/')
+        graph_dir[-1] = graph_dir[-1] + f'_{cfg.models.hyperparams.graph_construction}'
+        graph_dir[-2] = graph_dir[-2] + f'_{cfg.models.hyperparams.graph_construction}'
+        graph_dir = '/'.join(graph_dir)
+    else:
+        graph_dir = None
     # get datasets
     if train and not cfg.just_eval:
         train_data = TrajectoryDataset(cfg.data.data_dir,
             'train',
             cfg.data.trajectory_dir + '_train',
-            cfg.data.trajectory_dir + '_{cfg.models.hyperparams.graph_construction}_train',
+            graph_dir,
             cfg.data.use_all_points,
             cfg.data.num_points,
             cfg.data.remove_static,
@@ -520,7 +539,8 @@ def get_TrajectoryDataLoader(cfg, name=None, train=True, val=True, test=False):
         val_data = TrajectoryDataset(cfg.data.data_dir + f'_{split}/' + os.path.basename(cfg.data.data_dir) if 'Argo' not in cfg.data.data_dir else cfg.data.data_dir,
                 split,
                 cfg.data.trajectory_dir + f'_{split}',
-                cfg.data.trajectory_dir + '_{cfg.models.hyperparams.graph_construction}_{split}',
+                graph_dir,
+                # '/workspace/result/all_egocomp_margin0.6_width25_min_mean_max_vel',
                 cfg.data.use_all_points_eval,
                 cfg.data.num_points_eval,
                 cfg.data.remove_static,
@@ -532,7 +552,7 @@ def get_TrajectoryDataLoader(cfg, name=None, train=True, val=True, test=False):
                 percentage_data=cfg.data.percentage_data_val,
                 detection_set=cfg.data.detection_set,
                 filtered_file_path=cfg.data.filtered_file_path,
-                name=name)
+                detection_out_path=name)
     else:
         val_data = None
     if test:

@@ -105,7 +105,7 @@ def accumulate(
     max_points: int = 10000,
     timestamp_ns: int = 0,
     filter_category: int = 1,
-    eval_only_machted: bool = False
+    only_matched_gt: bool = False
 ) -> Tuple[NDArrayFloat, NDArrayFloat]:
     """Accumulate the true / false positives (boolean flags) and true positive errors for each class.
 
@@ -153,60 +153,75 @@ def accumulate(
     is_evaluated_gts &= compute_evaluated_gts_mask(gts[..., :3], gts[..., -2], cfg)
 
     # Initialize results array.
-    dts_augmented: NDArrayFloat = np.zeros((N, T + E + 1))
+    # last +1 for tp, second last for assigned category
+    dts_augmented: NDArrayFloat = np.zeros((N, T + E + 1 + 1))
+    # set matched class to -1
+    dts_augmented[:, -2] = -1
     gts_augmented: NDArrayFloat = np.zeros((M, T + E + 1))
 
     # `is_evaluated` boolean flag is always the last column of the array.
     dts_augmented[is_evaluated_dts, -1] = True
     gts_augmented[is_evaluated_gts, -1] = True
-    msg = timestamp_ns, dts_augmented[dts_augmented[:, -1].astype(bool)].shape[0] == gts_augmented[gts_augmented[:, -1].astype(bool)].shape[0], dts_augmented[dts_augmented[:, -1].astype(bool)].shape[0], gts_augmented[gts_augmented[:, -1].astype(bool)].shape[0]
 
     if is_evaluated_dts.sum() > 0 and is_evaluated_gts.sum() > 0:
         # Compute true positives by assigning detections and ground truths.
-        dts_assignments, gts_assignments, num_points_tps, num_points_fns, criteria_keep_gts, criteria_remove_dts = assign(
-            dts[is_evaluated_dts], gts[is_evaluated_gts], cfg, min_points=min_points, max_points=max_points, msg=msg, filter_category=filter_category, eval_only_machted=eval_only_machted)
-        dts_augmented[is_evaluated_dts, :-1] = dts_assignments
+        dts_assignments, gts_assignments, np_tps, np_fns, keep_gts, rem_dts, dts_category = assign(
+            dts[is_evaluated_dts],
+            gts[is_evaluated_gts],
+            cfg=cfg,
+            min_points=min_points,
+            max_points=max_points,
+            filter_category=filter_category,
+            only_matched_gt=only_matched_gt)
+        
+        dts_augmented[is_evaluated_dts, :-2] = dts_assignments
         gts_augmented[is_evaluated_gts, :-1] = gts_assignments
-        dts_augmented[is_evaluated_dts, -1] = np.logical_and(~criteria_remove_dts, dts_augmented[is_evaluated_dts, -1])
-        gts_augmented[is_evaluated_gts, -1] = np.logical_and(criteria_keep_gts, gts_augmented[is_evaluated_gts, -1])
+        dts_augmented[is_evaluated_dts, -1] = np.logical_and(
+            ~rem_dts, dts_augmented[is_evaluated_dts, -1])
+        gts_augmented[is_evaluated_gts, -1] = np.logical_and(
+            keep_gts, gts_augmented[is_evaluated_gts, -1])
+        dts_augmented[is_evaluated_dts, -2] = dts_category
     else:
         # if there are no detections to be evaluated
         if gts.shape[0]:
             is_moving = gts[..., -1].astype(bool)
-            is_category = gts[..., -3] == filter_category
+            if filter_category != -1:
+                is_category = gts[..., -3] == filter_category
+            else:
+                is_category = np.ones(gts.shape[0])
             is_inpointrange = np.logical_and(
                 gts[:, -2] >= min_points,
                 gts[:, -2] < max_points)
-            criteria_keep_gts = np.logical_and(
+            keep_gts = np.logical_and(
                 np.logical_and(
                     is_moving,
                     is_category),
                 is_inpointrange)
             
-            if eval_only_machted:
-                criteria_keep_gts = np.logical_and(
-                    criteria_keep_gts, np.zeros(gts_augmented.shape[0]))
+            if only_matched_gt:
+                only_matches = np.zeros(gts_augmented.shape[0])
+                keep_gts = np.logical_and(
+                    keep_gts, only_matches)
                 
-            num_points_fns = gts[:, -2][criteria_keep_gts]
+            np_fns = gts[:, -2][keep_gts]
             # remove static / wrong cat / wrong point range gts
             gts_augmented[:, -1] = np.logical_and(
-                criteria_keep_gts, gts_augmented[:, -1])
-
+                keep_gts, gts_augmented[:, -1])
+            
         # if there are no gt objects to be evaluated 
         else:
-            num_points_fns = None # gts[:, -2]
+            np_fns = None # gts[:, -2]
 
         # no TPs if either of both
-        num_points_tps = None
+        np_tps = None
     
-    # Permute the detections according to the original ordering.
-    outputs: Tuple[NDArrayInt, NDArrayInt] = np.unique(permutation, return_index=True)  # type: ignore
+    # Permute the detections according to the original ordering..
+    outputs: Tuple[NDArrayInt, NDArrayInt] = np.unique(
+        permutation, return_index=True)  # type: ignore
     _, inverse_permutation = outputs
     dts_augmented = dts_augmented[inverse_permutation]
-    # if to_remove_dts is not None:
-    #     to_remove_dts = to_remove_dts[inverse_permutation]
     
-    return dts_augmented, gts_augmented, num_points_tps, num_points_fns # , to_remove_gts, to_remove_dts
+    return dts_augmented, gts_augmented, np_tps, np_fns 
 
 
 def assign(
@@ -215,9 +230,8 @@ def assign(
         cfg: DetectionCfg,
         min_points: int=0,
         max_points: int=1000,
-        msg=None,
         filter_category=1,
-        eval_only_machted=False) -> Tuple[NDArrayFloat, NDArrayFloat]:
+        only_matched_gt=False) -> Tuple[NDArrayFloat, NDArrayFloat]:
     """Attempt assignment of each detection to a ground truth label.
 
     The detections (gts) and ground truth annotations (gts) are expected to be shape (N,10) and (M,10)
@@ -246,16 +260,21 @@ def assign(
     all_gts = np.arange(gts.shape[0])
     all_dts = np.arange(dts.shape[0])
 
+    dts_category = np.ones(dts.shape[0]) * -1
+
     # all gt objects that are moving, from another class or have
     # more/less than given number of points are filtered out
     is_moving = gts[..., -1].astype(bool)
-    is_category = gts[..., -3] == filter_category
+    if filter_category != -1:
+        is_category = gts[..., -3] == filter_category
+    else:
+        is_category = np.ones(gts.shape[0])
     is_inpointrange = np.logical_and(
         gts[:, -2] >= min_points,
         gts[:, -2] < max_points)
 
     # get gts mask for moving, class and point range
-    criteria_keep_gts = np.logical_and(
+    keep_gts = np.logical_and(
         np.logical_and(
             is_category,
             is_moving),
@@ -279,50 +298,30 @@ def assign(
     # check matches if matched gts should be evaluated or not
     # we do not consider moving gt objects, objects
     # that we don't care about the category
-    '''
-    to_eval_cat = np.isin(idx_gts, is_category_idx)
-    to_eval_mov = np.isin(idx_gts, is_moving_idx)
-    to_eval_pts = np.isin(idx_gts, is_inpointrange_idx)
-    '''
-    matched_mask = np.logical_and(
-        np.logical_and(
-            is_category[idx_gts],
-            is_moving[idx_gts]),
-        is_inpointrange[idx_gts])
+    matched_mask = keep_gts[idx_gts]
 
     # all detections that are not matched to gt that is
     # static / wrong category / wrong pointrange
-    criteria_remove_dts = np.isin(
+    rem_dts = np.isin(
         all_dts, idx_dts[~matched_mask])
 
     # filter matches
     idx_dts = idx_dts[matched_mask]
     idx_gts = idx_gts[matched_mask]
 
-    if eval_only_machted:
+    if only_matched_gt:
         only_matches = np.isin(all_gts, idx_gts)
-        criteria_keep_gts = np.logical_and(
-            criteria_keep_gts,
+        keep_gts = np.logical_and(
+            keep_gts,
             only_matches)
-
-    '''
-    # filter all detections if matched to static / 
-    # other cat / out of pointrange
-    matched_to_other_class = np.isin(
-        all_dts, idx_dts[~to_eval_cat])
-    matched_to_static = np.isin(
-        all_dts, idx_dts[~to_eval_mov])
-    matched_not_pointrange = np.isin(
-        all_dts, idx_dts[~to_eval_pts])
-    '''
 
     T, E = len(cfg.affinity_thresholds_m), 3
     dts_metrics: NDArrayFloat = np.zeros((len(dts), T + E))
     dts_metrics[:, 4:] = cfg.metrics_defaults[1:4]
     gts_metrics: NDArrayFloat = np.zeros((len(gts), T + E))
     gts_metrics[:, 4:] = cfg.metrics_defaults[1:4]
-    num_interior_tps = None
-    num_interior_fns = gts[criteria_keep_gts][:, -2]
+    np_tps = None
+    np_fns = gts[keep_gts][:, -2]
     for i, threshold_m in enumerate(cfg.affinity_thresholds_m):
         is_tp: NDArrayBool = affinities[idx_dts] > -threshold_m
 
@@ -335,9 +334,10 @@ def assign(
         if not np.any(is_tp):
             continue  # Skip if no true positives exist.
         
-        num_interior_tps = gts[idx_gts[is_tp]][:, -2]
-        fns = all_gts[criteria_keep_gts][~np.isin(all_gts[criteria_keep_gts], idx_gts[is_tp])]
-        num_interior_fns = gts[fns][:, -2]
+        # getting category detection was matched to
+        dts_category[idx_dts[is_tp]] = gts[..., -3][idx_gts[is_tp]]
+        np_tps = gts[idx_gts[is_tp]][:, -2]
+        np_fns = gts[all_gts[keep_gts][~np.isin(all_gts[keep_gts], idx_gts[is_tp])]][:, -2]
         
         idx_tps_dts: NDArrayInt = idx_dts[is_tp]
         idx_tps_gts: NDArrayInt = idx_gts[is_tp]
@@ -351,7 +351,7 @@ def assign(
         dts_metrics[idx_tps_dts, 4:] = np.stack((translation_errors, scale_errors, orientation_errors), axis=-1)
         gts_metrics[idx_tps_gts, 4:] = np.stack((translation_errors, scale_errors, orientation_errors), axis=-1)
 
-    return dts_metrics, gts_metrics, num_interior_tps, num_interior_fns, criteria_keep_gts, criteria_remove_dts
+    return dts_metrics, gts_metrics, np_tps, np_fns, keep_gts, rem_dts, dts_category
 
 
 def interpolate_precision(precision: NDArrayFloat, interpolation_method: InterpType = InterpType.ALL) -> NDArrayFloat:
