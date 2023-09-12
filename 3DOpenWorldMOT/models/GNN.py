@@ -854,7 +854,8 @@ class GNNLoss(nn.Module):
             edge_weight=1,
             node_weight=1,
             ignore_stat_edges=0,
-            ignore_stat_nodes=0) -> None:
+            ignore_stat_nodes=0,
+            ignore_background=0) -> None:
         super().__init__()
         
         self.bce_loss = bce_loss
@@ -871,6 +872,7 @@ class GNNLoss(nn.Module):
         self.rank = rank
         self.ignore_stat_edges = ignore_stat_edges
         self.ignore_stat_nodes = ignore_stat_nodes
+        self.ignore_background = ignore_background
         self.sigmoid = torch.nn.Sigmoid()
 
         if not self.focal_loss_node:
@@ -924,6 +926,18 @@ class GNNLoss(nn.Module):
                 edge_logits = edge_logits[~point_instances_stat]
                 point_instances = point_instances[~point_instances_stat].float()
                 point_categories = point_categories[~point_instances_stat]
+            
+            if self.ignore_background:
+                # setting edges that do not belong to object to zero
+                # --> instance 0 is no object
+                point_instances_back = torch.logical_and(
+                    point_instances[data.point_instances[edge_index[0, :]] == 0],
+                    point_instances[data.point_instances[edge_index[1, :]] == 0])
+                
+                # filter edge logits, point instances and point categories
+                edge_logits = edge_logits[~point_instances_back]
+                point_instances = point_instances[~point_instances_back].float()
+                point_categories = point_categories[~point_instances_back]
             
             num_edge_pos, num_edge_neg = point_instances.sum(), (point_instances==0).sum()
 

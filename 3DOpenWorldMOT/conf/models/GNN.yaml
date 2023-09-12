@@ -37,8 +37,8 @@ hyperparams:
 loss_hyperparams:
     bce_loss: True
     node_loss: False
-    focal_loss_node: False
-    focal_loss_edge: False
+    focal_loss_node: True
+    focal_loss_edge: True
     alpha_edge: 0.25
     gamma_edge: 2
     alpha_node: 0.25
@@ -47,3 +47,4 @@ loss_hyperparams:
     edge_weight: 1
     ignore_stat_edges: 0
     ignore_stat_nodes: 0
+    ignore_background: 0

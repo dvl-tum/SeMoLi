@@ -13,7 +13,6 @@ class FocalLoss(nn.CrossEntropyLoss):
         self.gamma = gamma
 
     def forward(self, input_, target):
-        print(input_.shape, target.shape)
         cross_entropy = super().forward(input_, target)
         # Temporarily mask out ignore index to '0' for valid gather-indices input.
         # This won't contribute final loss as the cross_entropy contribution

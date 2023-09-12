@@ -186,16 +186,13 @@ def bn_momentum_adjust(m, momentum):
 def sample_params():
     params_list = list()
     for _  in range(30):
-        focal_loss = random.choice([True, False])
         params = {
-            'lr': 10 ** random.choice([-4, -3.5, -3, -2.5, -2, -1.5, -1]),
-            'weight_decay': 10 ** random.choice([-10, -9.5, -9, -8.5, -8, -7.5, -7, -6.5, -6, -5.5, -5]),
-            'focal_loss_node': focal_loss,
-            'focal_loss_edge': focal_loss,
+            'lr': 10 ** random.choice([-3.5, -3, -2.5, -2, -1.5]),
+            'weight_decay': 10 ** random.choice([-10, -9.5, -9, -8.5, -8, -7.5]),
             'alpha_node': random.choice([0.7, 0.8, 0.9]),
             'alpha_edge': random.choice([0.7, 0.8, 0.9]),
-            'gamma_node': random.choice([1, 1.5, 2, 2.5, 3, 3.5, 4]),
-            'gamma_edge': random.choice([1, 1.5, 2, 2.5, 3, 3.5, 4]),
+            'gamma_node': random.choice([1, 1.5, 2, 2.5, 3, 3.5]),
+            'gamma_edge': random.choice([1, 1.5, 2, 2.5, 3, 3.5]),
             'node_loss': random.choice([True, False]),
             # 'graph_construction': random.choice(['min_mean_max_vel', 'pos', 'postraj', 'traj', 'mean_dist_over_time'])
         }
@@ -237,8 +234,6 @@ def main(cfg):
         if cfg.training.hypersearch:
             cfg.training.optim.base_lr = params_list[iter]['lr']
             cfg.training.optim.weight_decay = params_list[iter]['weight_decay']
-            cfg.models.loss_hyperparams.focal_loss_node = params_list[iter]['focal_loss_node']
-            cfg.models.loss_hyperparams.focal_loss_edge = params_list[iter]['focal_loss_edge']
             cfg.models.loss_hyperparams.gamma_node = params_list[iter]['gamma_node']
             cfg.models.loss_hyperparams.gamma_edge = params_list[iter]['gamma_edge']
             cfg.models.loss_hyperparams.alpha_node = params_list[iter]['alpha_node']
@@ -514,13 +509,11 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
             logger.info('---- EPOCH %03d EVALUATION ----' % (epoch + 1))
             logger.info(f'Doing correlation clustering {do_corr_clustering}')
         # Iterate over validation set
-        print('c')
         for batch, (data) in tqdm(enumerate(val_loader), total=len(val_loader), smoothing=0.9):
         # for batch, (data) in enumerate(val_loader):
-            print('a')
             # compute clusters
             logits, all_clusters, edge_index, _ = model(data, eval=True, name=name, corr_clustering=do_corr_clustering)
-            print('c2')
+
             if logits is not None and torch.isnan(logits[0]).any():
                 logger.info(f'Having nan in eval logits {logits}....')
                 return None, None, None, None
