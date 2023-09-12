@@ -497,7 +497,7 @@ class TrajectoryDataset(PyGDataset):
 def get_TrajectoryDataLoader(cfg, name=None, train=True, val=True, test=False):
     # get datasets
     if train and not cfg.just_eval:
-        train_data = TrajectoryDataset(cfg.data.data_dir + f'_train/' + os.path.basename(cfg.data.data_dir) if 'Argo' not in cfg.data.data_dir else cfg.data.data_dir,
+        train_data = TrajectoryDataset(cfg.data.data_dir,
             'train',
             cfg.data.trajectory_dir + '_train',
             cfg.data.trajectory_dir + '_{cfg.models.hyperparams.graph_construction}_train',

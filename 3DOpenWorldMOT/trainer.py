@@ -770,7 +770,10 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
                     remove_non_move=cfg.data.remove_static_gt,
                     remove_non_move_strategy=cfg.data.remove_static_strategy,
                     remove_non_move_thresh=cfg.data.remove_static_thresh,
-                    classes_to_eval='all',
+                    filter_class=-1,
+                    only_matched_gt=False,
+                    filter_moving_before=False,
+                    use_matched_category=False,
                     debug=cfg.data.debug,
                     name=name)
 
@@ -977,7 +980,7 @@ def train(rank, cfg, world_size):
             # do corr clustering every eval_corr_every_x epochs if epoch not 0
             do_corr_clustering = epoch % cfg.training.eval_corr_every_x == 0 and epoch != 0
             # do corr clustering if only eval
-            do_corr_clustering = do_corr_clustering or cfg.just_eval
+            do_corr_clustering = do_corr_clustering # or cfg.just_eval
             # do corr clustering in last epoch always
             # do_corr_clustering = do_corr_clustering or epoch == cfg.training.epochs - 1
 
