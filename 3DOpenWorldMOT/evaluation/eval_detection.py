@@ -22,6 +22,7 @@ from scipy.spatial.transform import Rotation
 
 
 _class_dict = {
+    -1: 'UNMATCHED',
     1: 'REGULAR_VEHICLE',
     2: 'PEDESTRIAN',
     3: 'BOLLARD',
@@ -88,16 +89,12 @@ def get_feather_files(
         remove_non_move_thresh=3000/3600,
         seq_list=None,
         loader=None,
-        gt_folder=None,
-        classes_to_eval='all'):
+        gt_folder=None):
     
     if is_gt:
         # get file name
-        split_dir = paths
+        print(paths)
         split = os.path.basename(paths)
-        split_dir = os.path.dirname(os.path.dirname(paths)) + '_filtered'
-        split_dir = os.path.dirname(paths) + '_filtered'
-
         file = 'filtered_version.feather'
         file = 'remove_non_drive_' + file if remove_non_drive else file
         file = 'remove_far_' + file if remove_far else file
@@ -106,15 +103,15 @@ def get_feather_files(
         file = str(remove_non_move_thresh)[
             :5] + '_' + file if remove_non_move else file
         file = split + '_' + file
-
-        path_filtered = os.path.join(split_dir, file)
-        path_filtered = '/dvlresearch/jenny/Waymo_Converted_filtered_val/val_1.0_per_frame_remove_non_move_remove_far_filtered_version.feather'
-        # path_filtered = "/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/Waymo_Converted_filtered_val/val_1.0_per_frame_remove_non_move_remove_far_filtered_version.feather"
+        
+        if 'Waymo' in paths:
+            path_filtered = os.path.join('/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/Waymo_Converted_filtered', file)
+        else:
+            path_filtered = os.path.join('/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/Argoverse2_filtered', file)
+    
     if not is_gt or not os.path.isfile(path_filtered):
         df = None
         for i, path in enumerate(os.listdir(paths)):
-            if i % 50 == 0:
-                print(f'load {i}/{len(os.listdir(paths))}')
             if seq_list is not None:
                 if path not in seq_list and not is_gt:
                     continue
@@ -128,8 +125,6 @@ def get_feather_files(
                 def str2ing(x): return int(x)
                 data['category'] = data['category'].apply(str2ing)
 
-            if classes_to_eval != 'all':
-                data = data[data['category'] == class_dict[classes_to_eval]]
             data['log_id'] = [path] * data.shape[0]
 
             if df is None:
@@ -149,16 +144,10 @@ def get_feather_files(
         # check if filtered version already exists
         if os.path.isfile(path_filtered):
             df = feather.read_feather(path_filtered)
-
             if 'seq' in df.columns:
                 df.rename(columns={'seq': 'log_id'}, inplace=True)
-
-            if classes_to_eval != 'all':
-                df = df[df['category'] == class_dict[classes_to_eval]]
-
             if seq_list is not None:
                 df = df[df['log_id'].isin(seq_list)]
-
             df = df.astype({'num_interior_pts': 'int64'})
             return df
 
@@ -482,7 +471,6 @@ def eval_detection(
         remove_non_move_strategy='per_frame',
         remove_non_move_thresh=3000/3600,
         split='val',
-        classes_to_eval='all',
         visualize=False,
         debug=False,
         name='General',
@@ -491,9 +479,10 @@ def eval_detection(
         max_points=1000000,
         base_dir='../../../',
         print_detail=False,
-        filter_class=None,
-        eval_only_machted=False,
-        filter_moving_before=False):
+        filter_class=-2,
+        only_matched_gt=False,
+        filter_moving_first=False,
+        use_matched_category=False):
 
     if not len(seq_to_eval):
         return None, np.array([0, 2, 1, 3.142, 0])
@@ -517,19 +506,17 @@ def eval_detection(
         remove_non_move_thresh=remove_non_move_thresh,
         seq_list=seq_to_eval,
         loader=loader,
-        gt_folder=gt_folder,
-        classes_to_eval=classes_to_eval)
+        gt_folder=gt_folder)
 
     if just_eval:
         print("Loaded ground truth...")
-
+    
     dts = get_feather_files(
         trackers_folder,
         seq_list=seq_to_eval,
         is_gt=False,
         loader=loader,
-        gt_folder=gt_folder,
-        classes_to_eval=classes_to_eval)
+        gt_folder=gt_folder)
 
     dts = dts[np.logical_and(dts['height_m'] > 0.1, 
                              np.logical_and(dts['length_m'] > 0.1, dts['width_m'] > 0.1))]
@@ -538,23 +525,26 @@ def eval_detection(
     # dts = dts[dts['height_m'] < 3]
     # dts = dts[dts['width_m'] < 4]
     # dts = dts[dts['length_m'] < 7]
-    print('num dts', dts.shape)
+    print(f'Num dts: {dts.shape}, Num gts: {gts.shape}')
 
     if just_eval:
         print("Loaded detections...")
 
     if dts is None:
             return None, np.array([0, 2, 1, 3.142, 0])
-    print('filter class', filter_class)
-    if filter_class is None:
-        gts['category_int'] = [1] * gts.shape[0] # gts['category']
-        filter_class = 'REGULAR_VEHICLE'
-    else:
-        gts['category_int'] = gts['category']
+
+    if use_matched_category:
+        filter_class = -1
+    
+    if filter_class == -2:
+        gts['category_int'] = [1] * gts.shape[0]    
+        gts['category'] = [1] * gts.shape[0]
+        filter_class = 1 # 'REGULAR_VEHICLE'
+    else:                                                                                                                                                           
+         gts['category_int'] = gts['category'] 
     
     gts['category'] = [_class_dict[c] for c in gts['category']]
     dts['category'] = [_class_dict[c] for c in dts['category']]
-    gts['category'] = ['REGULAR_VEHICLE'] * gts.shape[0]
 
     print(f'Min points {min_points}, Max points {max_points}')
 
@@ -564,12 +554,10 @@ def eval_detection(
     if just_eval:
         print("Evaluate now...")
 
-    if filter_moving_before:
-       gts = gts[gts['filter_moving']]
-
     gts_orig = gts
     dts_orig = dts
-    for affinity, tp_thresh, threshs in zip(['CENTER', 'IoU3D'], [4.0, 0.6], [(0.5, 1.0, 2.0, 4.0), (0.2, 0.4, 0.6, 0.8)]):
+    for affinity, tp_thresh, threshs, n_jobs in zip(
+        ['CENTER', 'IoU3D'], [2.0, 0.6], [(0.5, 1.0, 2.0, 4.0), (0.2, 0.4, 0.6, 0.8)], [8, 1]):
         # Evaluate instances.
         # Defaults to competition parameters.
         competition_cfg = DetectionCfg(
@@ -580,8 +568,18 @@ def eval_detection(
             affinity_thresholds_m=threshs
             )
         print(f"{affinity}\n")
-        dts, gts, metrics, num_points_tps, num_points_fns, _ = evaluate(
-            dts_orig, gts_orig, cfg=competition_cfg, min_points=min_points, max_points=max_points, filter_class=class_dict[filter_class], eval_only_machted=eval_only_machted)
+        dts, gts, metrics, np_tps, np_fns, _ = evaluate(
+            dts_orig,
+            gts_orig,
+            cfg=competition_cfg,
+            min_points=min_points,
+            max_points=max_points,
+            filter_class=filter_class,
+            only_matched_gt=only_matched_gt,
+            filter_moving_first=filter_moving_first,
+            use_matched_category=use_matched_category,
+            _class_dict=_class_dict,
+            n_jobs=n_jobs)
 
         dts = dts[dts['is_evaluated']==1]
         gts = gts[gts['is_evaluated']==1]
@@ -602,20 +600,20 @@ def eval_detection(
             visualize_whole(dts, gts[gts['num_interior_pts']>0], name, base_dir)
 
         if print_detail:
-            print(f'Less than 5 points and more than 0: TP {num_points_tps[np.logical_and(num_points_tps < 5, num_points_tps >= 0)].shape[0]}, FN {num_points_fns[np.logical_and(num_points_fns < 5, num_points_fns >= 0)].shape[0]}')
-            print(f'Less than 10 points and more than 5: TP {num_points_tps[np.logical_and(num_points_tps < 10, num_points_tps >= 5)].shape[0]}, FN {num_points_fns[np.logical_and(num_points_fns < 10, num_points_fns >= 5)].shape[0]}')
-            print(f'Less than 15 points and more than 10: TP {num_points_tps[np.logical_and(num_points_tps < 15, num_points_tps >= 10)].shape[0]}, FN {num_points_fns[np.logical_and(num_points_fns < 15, num_points_fns >= 10)].shape[0]}')
-            print(f'Less than 20 points and more than 15: TP {num_points_tps[np.logical_and(num_points_tps < 20, num_points_tps >= 15)].shape[0]}, FN {num_points_fns[np.logical_and(num_points_fns < 20, num_points_fns >= 15)].shape[0]}')
-            print(f'Less than 25 points and more than 20: TP {num_points_tps[np.logical_and(num_points_tps < 25, num_points_tps >= 20)].shape[0]}, FN {num_points_fns[np.logical_and(num_points_fns < 25, num_points_fns >= 20)].shape[0]}')
-            print(f'More than 25 points: TP {num_points_tps[num_points_tps >= 25].shape[0]}, FN {num_points_fns[num_points_fns >= 25].shape[0]}')
-
+            print(f'Less than 5 points and more than 0: TP {np_tps[np.logical_and(np_tps < 5, np_tps >= 0)].shape[0]}, FN {np_fns[np.logical_and(np_fns < 5, np_fns >= 0)].shape[0]}')
+            print(f'Less than 10 points and more than 5: TP {np_tps[np.logical_and(np_tps < 10, np_tps >= 5)].shape[0]}, FN {np_fns[np.logical_and(np_fns < 10, np_fns >= 5)].shape[0]}')
+            print(f'Less than 15 points and more than 10: TP {np_tps[np.logical_and(np_tps < 15, np_tps >= 10)].shape[0]}, FN {np_fns[np.logical_and(np_fns < 15, np_fns >= 10)].shape[0]}')
+            print(f'Less than 20 points and more than 15: TP {np_tps[np.logical_and(np_tps < 20, np_tps >= 15)].shape[0]}, FN {np_fns[np.logical_and(np_fns < 20, np_fns >= 15)].shape[0]}')
+            print(f'Less than 25 points and more than 20: TP {np_tps[np.logical_and(np_tps < 25, np_tps >= 20)].shape[0]}, FN {np_fns[np.logical_and(np_fns < 25, np_fns >= 20)].shape[0]}')
+            print(f'More than 25 points: TP {np_tps[np_tps >= 25].shape[0]}, FN {np_fns[np_fns >= 25].shape[0]}')
+            
         # AP    ATE    ASE    AOE    CDS
-        classes_to_eval = 'REGULAR_VEHICLE'
-        if classes_to_eval == 'all':
+        _filter_class = filter_class if filter_class == -1 else _class_dict[filter_class]
+        if _filter_class == -1:
             metric = metrics.loc['AVERAGE_METRICS'].values
         else:
-            print(metrics.loc[classes_to_eval])
-            metric = metrics.loc[classes_to_eval].values
+            print(metrics.loc[_filter_class])
+            metric = metrics.loc[_filter_class].values
 
         # break
   
@@ -624,64 +622,41 @@ def eval_detection(
 
 if __name__ == '__main__':
     name ='just_eval'
-    tracker_dir =  '4449931/out/gt_all_egocomp_margin0.6_width25_nooracle_4096_8000_mean_dist_over_time_min_mean_max_diffpostrajtime_min_mean_max_vel_nodescore_correlation_mygraph/val'
-    # tracker_dir = 'out/gt_all_egocomp_margin0.6_width25_oraclenode_oracleedge_4096_8000_mean_dist_over_time_min_mean_max_diffpostrajtime_min_mean_max_vel_nodescore_correlation_mygraph/val'
-    # tracker_dir = '4495651/out/gt_all_egocomp_margin0.6_width25_oraclenode_oracleedge_4096_8000_mean_dist_over_time_min_mean_max_diffpostrajtime_min_mean_max_vel_nodescore_correlation_mygraph/val'
-    # tracker_dir = '../../3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/out/all_egocomp_margin0.6_width25_oraclenode_oracleedge_4096_8000_mean_dist_over_time_min_mean_max_diffpostrajtime_min_mean_max_vel_nodescore_correlation_mygraph/val/'
-    # tracker_dir = 'out/gt_all_egocomp_margin0.6_width25_oraclenode_oracleedge_4096_8000_mean_dist_over_time_min_mean_max_diffpostrajtime_min_mean_max_vel_nodescore_correlation_mygraph/val/'
-    tracker_dir = 'results/4540531/out/all_egocomp_margin0.6_width25_nooracle_4096_32000_mean_dist_over_time_min_mean_max_diffpostrajtime_min_mean_max_vel_nodescore_correlation_mygraph/val'
-    tracker_dir = '/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/out/trajectories_removestatic1_numcd44_removegroundrc1_removefar1_removeheight1_len25_nooracle_4096_8000_mean_dist_over_time_min_mean_max_diffpostrajtime_min_mean_max_vel_nodescore_correlation_mygraph_16_5.0/val'
-    tracker_dir = 'output_not_registered/val'
-    # OLD FLOW
-    tracker_dir = '4571635/out/all_egocomp_margin0.6_width25_nooracle_4096_32000_mean_dist_over_time_min_mean_max_diffpostrajtime_min_mean_max_vel_nodescore_correlation_mygraph_32_5.0/val'
-    # NEW FLOW
-    tracker_dir = 'out/trajectories_removestatic1_numcd44_removegroundrc0_remove_ground_pts_patch1_removefar1_removeheight1_len25_nooracle_32_32_32_32_0.7_3.5_1.5e-06_0.05_4096_8000_/val'
-    
-    tracker_dir = '/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/out/trajectories_removestatic1_numcd44_removegroundrc1_removefar1_removeheight1_len25_oraclenode_oracleedge_32_32_32_32_0.75_3.5_1.5e-06_0.05_4096_8000__NS_MG_16_5.0/val/'
-    tracker_dir = '/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/out/trajectories_removestatic1_numcd44_removegroundrc1_removefar1_removeheight1_len25_nooracle_32_32_32_32_0.75_3.5_1.5e-06_0.05_4096_8000__NS_MG_16_5.0/val'
-    tracker_dir = 'out/trajectories_removestatic1_numcd44_removegroundrc0_remove_ground_pts_patch1_removefar1_removeheight1_len25_nooracle_32_64_32_64_0.929_1.902_0.9221111_3.155_8.11e-08_0.0011_16000_16000__NS_MG_32_2.0_LN__AU_/val'
-    tracker_dir = '../../4673658/out/all_egocomp_margin0.6_width25_nooracle_64_64_3.5900203994472646e-07_0.06176295901709523_16000_16000__NS_MG_32_2.0_LN_/val'
-    tracker_dir = '4676686/out/all_egocomp_margin0.6_width25_nooracle_64_64_3.5900203994472646e-07_0.06176295901709523_16000_16000__NS_MG_32_2.0_LN_/val/'
-    tracker_dir = 'collapsed/val'
-    tracker_dir = 'out/trajectories2_nooracle_64_64_3.5900203994472646e-07_0.06176295901709523_16000_16000__NS_MG_32_2.0_LN_/val'
-    # tracker_dir = 'collapsed_heuristic_mean/val'
-    tracker_dir = '/workspace/result/out/all_egocomp_margin0.6_width25_nooracle_64_64_3.5900203994472646e-07_0.06176295901709523_16000_16000__NS_MG_32_2.0_LN_/val'
-    tracker_dir = '/workspace/result/out/all_egocomp_margin0.6_width25_oraclenode_oracleedge_64_64_3.5900203994472646e-07_0.06176295901709523_16000_16000__NS_MG_32_2.0_LN_/val/'
-    tracker_dir = '/workspace/result/out/detections/GNN_RealData_ValTrainOLD_all_egocomp_margin0.6_width25_oraclenode_64_64_3.5900203994472646e-07_0.06176295901709523_16000_16000__NS_MG_32_2.0_LN_/val/'
-    tracker_dir = 'out/detections/val'
-    tracker_dir = 'out/detections/GNN_GT_FLOW_FLOW_ONLY_EVAL/val/'
-
-    print(tracker_dir)
-    gt_folder = 'data/waymo_converted'
     gt_folder = '/dvlresearch/jenny/Waymo_Converted_GT'
-    gt_folder = '/dvlresearch/jenny/debug_Waymo_Converted_val/Waymo_Converted'
-    gt_folder = '/workspace/Waymo_Converted_val'
-    gt_folder = '../../../../datasets/Argoverse2'
-    seq_list = os.listdir(tracker_dir)
+    gt_folder = '/workspace/Waymo_Converted_train/Waymo_Converted'
+    # gt_folder = '../../../../datasets/Argoverse2'
+
     min_points = -1
     max_points = 1000000
     # for m in [-1]: # [-1, 0, 5, 10, 15, 20, 25]:
     m = -1
-    c = None
-    for t in ['GNN_GT_FLOW_ORACLE_EDGE_FLOW_ONLY_EVAL']: # os.listdir('out/detections/'): #class_dict.keys():
-        tracker_dir = f'out/detections/{t}/val'
+    c = -2 # -1 = dont filter, -2 = set everything to 'REGULAR_VEHICLE', else set to class
+    split = 'val'
+    detections = 'detector'
+    orig_split = 'train' if detections != 'evaluation' else 'val'
+    for t in os.listdir(f'out/detections_{split}_{detections}'): #class_dict.keys():
+        if 'DBSCAN_POS' not in t and 'NEW_FLOW_BEST_PARAMS_90' not in t:
+            continue
+        print(t)
+        tracker_dir = f'out/detections_{split}_{detections}/{t}/combined/{split}_{detections}'
         print(tracker_dir)
         # seq = '16473613811052081539'
         # seq_list = [seq]
-        print(f'Class: {c}')
+        seq_list = os.listdir(tracker_dir)
         min_points = m
         max_points = m+5 if m <= 25 and m != -1 else 1000000
         _, detection_metric = eval_detection(
             gt_folder=gt_folder,
             trackers_folder=tracker_dir,
+            split=orig_split,
             seq_to_eval=seq_list,
             remove_far=True,
             remove_non_drive=False,
             remove_non_move=True,
             remove_non_move_strategy='per_frame',
             remove_non_move_thresh=1.0,
-            classes_to_eval='all',
             debug=False,
+            just_eval=True,
             visualize=False,
             name=name,
             min_points=min_points,
@@ -689,8 +664,9 @@ if __name__ == '__main__':
             base_dir='',
             print_detail=False,
             filter_class=c,
-            eval_only_machted=False,
-            filter_moving_before=False)
+            only_matched_gt=False,
+            filter_moving_first=False,
+            use_matched_category=False)
         
         print(detection_metric, '\n')
         print()

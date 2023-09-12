@@ -90,11 +90,14 @@ def evaluate(
     dts: pd.DataFrame,
     gts: pd.DataFrame,
     cfg: DetectionCfg,
-    n_jobs: int = 8,
+    n_jobs: int = 4,
     min_points: int = 0,
     max_points: int = 10000,
     filter_class: str = 'REGULAR_VEHICLE',
-    eval_only_machted: bool = False
+    only_matched_gt: bool = False,
+    use_matched_category: bool = False,
+    filter_moving_first: bool = False,
+    _class_dict: dict = {}
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Evaluate a set of detections against the ground truth annotations.
 
@@ -120,14 +123,27 @@ def evaluate(
             "Please set `dataset_directory` to the split root, e.g. av2/sensor/val."
         )
 
+    if use_matched_category:
+        _UUID_COLUMN_NAMES = (
+                "log_id",
+                "timestamp_ns",
+            )
+    else:
+        _UUID_COLUMN_NAMES = UUID_COLUMN_NAMES
+                
+    if filter_moving_first:
+        print(gts['category_int'].unique())
+        gts = gts[gts['filter_moving']]
+        print(gts['category_int'].unique())
+
     # Sort both the detections and annotations by lexicographic order for grouping.
-    dts = dts.sort_values(list(UUID_COLUMN_NAMES))
-    gts = gts.sort_values(list(UUID_COLUMN_NAMES))
+    dts = dts.sort_values(list(_UUID_COLUMN_NAMES))
+    gts = gts.sort_values(list(_UUID_COLUMN_NAMES))
 
     dts_npy: NDArrayFloat = dts[list(DTS_COLUMN_NAMES)].to_numpy().astype(float)
     gts_npy: NDArrayFloat = gts[list(GTS_COLUMN_NAMES)].to_numpy().astype(float)
-    dts_uuids: List[str] = dts[list(UUID_COLUMN_NAMES)].to_numpy().tolist()
-    gts_uuids: List[str] = gts[list(UUID_COLUMN_NAMES)].to_numpy().tolist()
+    dts_uuids: List[str] = dts[list(_UUID_COLUMN_NAMES)].to_numpy().tolist()
+    gts_uuids: List[str] = gts[list(_UUID_COLUMN_NAMES)].to_numpy().tolist()
 
     # We merge the unique identifier -- the tuple of ("log_id", "timestamp_ns", "category")
     # into a single string to optimize the subsequent grouping operation.
@@ -148,7 +164,10 @@ def evaluate(
     args_list: List[Tuple[NDArrayFloat, NDArrayFloat, DetectionCfg, Optional[ArgoverseStaticMap], Optional[SE3]]] = []
     uuids = sorted(uuid_to_dts.keys() | uuid_to_gts.keys())
     for uuid in uuids:
-        log_id, timestamp_ns, _ = uuid.split(":")
+        if use_matched_category:
+            log_id, timestamp_ns = uuid.split(":")
+        else:
+            log_id, timestamp_ns, _ = uuid.split(":")
         args: Tuple[NDArrayFloat, NDArrayFloat, DetectionCfg, Optional[ArgoverseStaticMap], Optional[SE3]]
 
         sweep_dts: NDArrayFloat = np.zeros((0, 10))
@@ -158,11 +177,11 @@ def evaluate(
         if uuid in uuid_to_gts:
             sweep_gts = uuid_to_gts[uuid]
 
-        args = sweep_dts, sweep_gts, cfg, None, None, min_points, max_points, int(timestamp_ns), filter_class, eval_only_machted
+        args = sweep_dts, sweep_gts, cfg, None, None, min_points, max_points, int(timestamp_ns), filter_class, only_matched_gt
         if log_id_to_avm is not None and log_id_to_timestamped_poses is not None:
             avm = log_id_to_avm[log_id]
             city_SE3_ego = log_id_to_timestamped_poses[log_id][int(timestamp_ns)]
-            args = sweep_dts, sweep_gts, cfg, avm, city_SE3_ego, min_points, max_points, int(timestamp_ns), filter_class, eval_only_machted
+            args = sweep_dts, sweep_gts, cfg, avm, city_SE3_ego, min_points, max_points, int(timestamp_ns), filter_class, only_matched_gt
         args_list.append(args)
 
     logger.info("Starting evaluation ...")
@@ -171,50 +190,46 @@ def evaluate(
 
     if outputs is None:
         raise RuntimeError("Accumulation has failed! Please check the integrity of your detections and annotations.")
-    dts_list, gts_list, num_points_tps, num_points_fns = zip(*outputs)
+    dts_list, gts_list, np_tps, np_fns = zip(*outputs)
 
-    METRIC_COLUMN_NAMES = cfg.affinity_thresholds_m + TP_ERROR_COLUMNS + ("is_evaluated",)
+    METRIC_COLUMN_NAMES_DTS = cfg.affinity_thresholds_m + TP_ERROR_COLUMNS + ("matched_category",) + ("is_evaluated",)
+    METRIC_COLUMN_NAMES_GTS = cfg.affinity_thresholds_m + TP_ERROR_COLUMNS + ("is_evaluated",)
+
     dts_metrics: NDArrayFloat = np.concatenate(dts_list)  # type: ignore
     gts_metrics: NDArrayFloat = np.concatenate(gts_list)  # type: ignore
-    dts.loc[:, METRIC_COLUMN_NAMES] = dts_metrics
-    gts.loc[:, METRIC_COLUMN_NAMES] = gts_metrics
-    if len([t for t in num_points_tps if t is not None]):
-        num_points_tps = np.concatenate([t for t in num_points_tps if t is not None])
+    # add column for matched categories
+    dts['matched_category'] = np.ones(dts.shape[0]) * -1
+    dts.loc[:, METRIC_COLUMN_NAMES_DTS] = dts_metrics
+    gts.loc[:, METRIC_COLUMN_NAMES_GTS] = gts_metrics
+    print(dts['matched_category'].unique())
+    dts['matched_category'] = dts['matched_category'].apply(lambda x: _class_dict[x])
+
+    if len([t for t in np_tps if t is not None]):
+        np_tps = np.concatenate([t for t in np_tps if t is not None])
     else:
-        num_points_tps = None
-    if [f for f in num_points_fns if f is not None]:
-        num_points_fns = np.concatenate([f for f in num_points_fns if f is not None])
+        np_tps = None
+    if [f for f in np_fns if f is not None]:
+        np_fns = np.concatenate([f for f in np_fns if f is not None])
     else:
-        num_points_fns = None
-    '''if len([t for t in to_remove_gts if t is not None]):
-        to_remove_gts = np.concatenate([t for t in to_remove_gts if t is not None])
-        # remove
-        gts = gts[~to_remove_gts]
-    else:
-        to_remove_gts = None
-    if len([t for t in to_remove_dts if t is not None]):
-        to_remove_dts = np.concatenate([t for t in to_remove_dts if t is not None])
-        # remove
-        dts = dts[~to_remove_dts]
-    else:
-        to_remove_dts = None'''
+        np_fns = None
 
     # Compute summary metrics.
-    metrics, fps = summarize_metrics(dts, gts, cfg)
+    metrics, fps = summarize_metrics(dts, gts, cfg, use_matched_category)
     metrics.loc["AVERAGE_METRICS"] = metrics.mean()
     metrics = metrics.round(NUM_DECIMALS)
-    return dts, gts, metrics, num_points_tps, num_points_fns, fps
+    return dts, gts, metrics, np_tps, np_fns, fps
 
 
 def summarize_metrics(
     dts: pd.DataFrame,
     gts: pd.DataFrame,
     cfg: DetectionCfg,
+    use_matched_category: bool
 ) -> pd.DataFrame:
     """Calculate and print the 3D object detection metrics.
 
     Args:
-        dts: (N,14) Table of detections.
+        dts: (N,15) Table of detections.
         gts: (M,15) Table of ground truth annotations.
         cfg: Detection configuration.
 
@@ -229,11 +244,18 @@ def summarize_metrics(
         {s.value: cfg.metrics_defaults[i] for i, s in enumerate(tuple(MetricNames))}, index=cfg.categories
     )
 
+    unmatched_fps_dets = dts[np.logical_and(dts["is_evaluated"], dts["matched_category"]=='UNMATCHED')].shape[0]
+    print(f"Unmatched FP detections {unmatched_fps_dets} ...")
+
     average_precisions = pd.DataFrame({t: 0.0 for t in cfg.affinity_thresholds_m}, index=cfg.categories)
     precisions = pd.DataFrame({t: 0.0 for t in cfg.affinity_thresholds_m}, index=cfg.categories)
+    fps = 0
     for category in cfg.categories:
         # Find detections that have the current category.
-        is_category_dts = dts["category"] == category
+        if use_matched_category:
+            is_category_dts = dts["matched_category"] == category
+        else:
+            is_category_dts = dts["category"] == category
 
         # Only keep detections if they match the category and have NOT been filtered.
         is_valid_dts = np.logical_and(is_category_dts, dts["is_evaluated"])
@@ -254,11 +276,11 @@ def summarize_metrics(
         # Cannot evaluate without ground truth information.
         if num_gts == 0:
             continue
-
+        
         for affinity_threshold_m in cfg.affinity_thresholds_m:
             true_positives: NDArrayBool = category_dts[affinity_threshold_m].astype(bool).to_numpy()
             if affinity_threshold_m == cfg.tp_threshold_m:
-                fps = ~true_positives
+                fps += ~true_positives.sum()
             
             '''
             ## GET STATS
@@ -349,10 +371,7 @@ def summarize_metrics(
             plt.savefig(f'/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/stats/{affinity_threshold_m}_all_AOE.png')
             plt.close()
             '''
-            # print("FPS", category_dts[~true_positives][['log_id','timestamp_ns', 'tx_m', 'ty_m', 'tz_m']])
-            # a = gts[np.logical_and(is_category_gts, gts["is_evaluated"])]
-            # print("FNS", a[~a[affinity_threshold_m].values.astype(bool)][['log_id','timestamp_ns', 'tx_m', 'ty_m', 'tz_m','is_evaluated', 'num_interior_pts', 'track_uuid']])
-
+            
             # Continue if there aren't any true positives.
             if len(true_positives) == 0:
                 continue
