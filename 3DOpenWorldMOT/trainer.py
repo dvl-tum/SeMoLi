@@ -315,6 +315,11 @@ def train_one_epoch(model, cfg, epoch, logger, optimizer, train_loader,\
             with torch.cuda.amp.autocast():
                 logits, edge_index, batch_edge = model(data)
                 loss, log_dict, hist_node, hist_edge = criterion(logits, data, edge_index)
+                
+                # means all points filtered
+                if loss is None:
+                    continue
+
                 scaler.scale(loss).backward()
                 for name, param in model.named_parameters():
                     if torch.isnan(param.grad).any():
@@ -325,6 +330,11 @@ def train_one_epoch(model, cfg, epoch, logger, optimizer, train_loader,\
         else:
             logits, edge_index, batch_edge = model(data)
             loss, log_dict, hist_node, hist_edge = criterion(logits, data, edge_index)
+            
+            # means all points filtered
+            if loss is None:
+                    continue
+
             loss.backward()
             for p_name, param in model.named_parameters():
                 try:
@@ -548,6 +558,10 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
 
             if is_neural_net and logits[0] is not None:
                 loss, log_dict, hist_node, hist_edge = criterion(logits, data, edge_index, rank, mode='eval')
+                
+                if loss is None:
+                    continue
+
                 if cfg.wandb and not cfg.multi_gpu:
                     if hist_node is not None:
                         wandb.log({"eval histogram node":

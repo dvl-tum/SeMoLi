@@ -911,34 +911,35 @@ class GNNLoss(nn.Module):
 
             # sample edges
             point_instances = point_instances.to(self.rank)
-            
+           
+            point_mask = torch.zeros(point_instances.shape[0], dtype=bool).to(self.rank)
             # if ignoring predictions for static edges in loss, get static edge filter
-            if self.ignore_stat_edges:
-                point_instances_stat = torch.logical_or(
+            if self.ignore_stat_edges and mode == 'train':
+                point_mask = torch.logical_or(
+                    torch.logical_or(
                         torch.logical_and(
                             ~(data.point_instances_mov[edge_index[0, :]] != 0), 
                             data.point_instances[edge_index[0, :]] != 0),
                         torch.logical_and(
                             ~(data.point_instances_mov[edge_index[1, :]] != 0), 
-                            data.point_instances[edge_index[1, :]] != 0))
-
-                # filter edge logits, point instances and point categories
-                edge_logits = edge_logits[~point_instances_stat]
-                point_instances = point_instances[~point_instances_stat].float()
-                point_categories = point_categories[~point_instances_stat]
-            
-            if self.ignore_background:
+                            data.point_instances[edge_index[1, :]] != 0)),
+                    point_mask)
+            if self.ignore_background and mode == 'train':
                 # setting edges that do not belong to object to zero
                 # --> instance 0 is no object
-                point_instances_back = torch.logical_and(
-                    point_instances[data.point_instances[edge_index[0, :]] == 0],
-                    point_instances[data.point_instances[edge_index[1, :]] == 0])
-                
-                # filter edge logits, point instances and point categories
-                edge_logits = edge_logits[~point_instances_back]
-                point_instances = point_instances[~point_instances_back].float()
-                point_categories = point_categories[~point_instances_back]
+                point_mask = torch.logical_or(
+                    torch.logical_and(
+                        data.point_instances[edge_index[0, :]] == 0,
+                        data.point_instances[edge_index[1, :]] == 0),
+                    point_mask)
+            # filter edge logits, point instances and point categories
+            edge_logits = edge_logits[~point_mask]
+            point_instances = point_instances[~point_mask].float()
+            point_categories = point_categories[~point_mask]
             
+            if edge_logits.shape[0] == 0:
+                return None, None, None, None
+
             num_edge_pos, num_edge_neg = point_instances.sum(), (point_instances==0).sum()
 
             # compute loss
@@ -977,9 +978,10 @@ class GNNLoss(nn.Module):
             correct = logits_rounded == point_instances.squeeze()
             
             # overall
-            log_dict[f'{mode} accuracy edge'] = torch.zeros(6).to(self.rank) 
-            log_dict[f'{mode} accuracy edge'][0] = torch.sum(correct)/logits_rounded.shape[0]
-            log_dict[f'{mode} accuracy edge'][1] = 1
+            if correct.shape[0]:
+                log_dict[f'{mode} accuracy edge'] = torch.zeros(6).to(self.rank) 
+                log_dict[f'{mode} accuracy edge'][0] = torch.sum(correct)/logits_rounded.shape[0]
+                log_dict[f'{mode} accuracy edge'][1] = 1
             # negative edges
             if correct[point_instances==0].shape[0]:
                 log_dict[f'{mode} accuracy edge'][2] = torch.sum(
