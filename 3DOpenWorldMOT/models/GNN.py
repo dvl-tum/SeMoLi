@@ -226,24 +226,22 @@ class ClusterGNN(MessagePassing):
             edge_dim = traj_channels
         elif self.edge_attr == 'difftraj_diffpos':
             edge_dim = pos_channels + traj_channels
-        elif self.edge_attr == 'pertime_diffpostraj':
+        elif self.edge_attr == 'PTDPT':
             edge_dim = int(traj_channels/3)
-        elif self.edge_attr == 'min_mean_max_diffpostrajtime' or self.edge_attr == 'min_mean_max_difftrajtime':
+        elif self.edge_attr == 'MMMDPTT' or self.edge_attr == 'MMMDTT':
             edge_dim = 3
-        elif self.edge_attr == 'min_mean_max_diffpostrajtime_normaldiff':
-            edge_dim = 4
         
         # get node mlp
         self.node_attr = node_attr
-        if self.node_attr == 'pos':
+        if self.node_attr == 'p':
             node_dim = pos_channels
-        elif self.node_attr == 'traj' or self.node_attr == 'postraj':
+        elif self.node_attr == 'T' or self.node_attr == 'PT':
             node_dim = traj_channels
-        elif self.node_attr == 'traj_pos':
+        elif self.node_attr == 'PTS':
             node_dim = traj_channels + pos_channels
-        elif self.node_attr == 'min_mean_max_vel':
+        elif self.node_attr == 'MMMV':
             node_dim = 3
-        elif self.node_attr == 'min_mean_max_vel_normal':
+        elif self.node_attr == 'MMMVN':
             node_dim = 6
 
         layers = list()
@@ -300,26 +298,41 @@ class ClusterGNN(MessagePassing):
 
         self.rank = rank
 
-    def initial_edge_attributes(self, x1, x2, edge_index, point_normals=None, distance='euclidean'):
+    def initial_edge_attributes(self, x1, x2, edge_index, point_normals=None, distance='euclidean', timestamps=None, batch=None):
+        """
+        DP = diffpos
+        DT = difftraj
+        DTDP = difftraj_diffpos
+        DPT = diffpostraj
+        PTDT = pertime_difftraj
+        MMMDTT = min_mean_max_difftrajtime
+        PTDPT = pertime_diffpostraj
+        MMMDPTT = min_mean_max_diffpostrajtime
+        MMMDV = min_mean_max_diffvelocity
+        """
         # Given edge-level attention coefficients for source and target nodes,
         # we simply need to sum them up to "emulate" concatenation:
-        if self.edge_attr == 'diffpos':
+        if '_DP_' in self.edge_attr:
             a = x2[edge_index[0]]
             b = x2[edge_index[1]]
-            d = simplediff
-        elif self.edge_attr == 'difftraj':
+            edge_attr = simplediff(a, b)
+
+        if '_DT_' in self.edge_attr:
             a = x1[edge_index[0]]
             b = x1[edge_index[1]]
-            d = simplediff
-        elif self.edge_attr == 'difftraj_diffpos':
+            edge_attr = simplediff(a, b)
+
+        if '_DTDP_' in self.edge_attr:
             a = torch.stack([x2[edge_index[0]], x1[edge_index[0]]])
             b = torch.stack([x2[edge_index[1]], x1[edge_index[1]]])
-            d = simplediff
-        elif self.edge_attr == 'diffpostraj':
+            edge_attr = simplediff(a, b)
+
+        if '_DPT_' in self.edge_attr:
             a = x2[edge_index[0]].repeat((1, int(x1.shape[1]/x2.shape[1]))) + x1[edge_index[0]]
             b = x2[edge_index[1]].repeat((1, int(x1.shape[1]/x2.shape[1]))) + x1[edge_index[1]]
-            d = simplediff
-        elif self.edge_attr == 'pertime_difftraj' or self.edge_attr == 'min_mean_max_difftrajtime':
+            edge_attr = simplediff(a, b)
+
+        if '_PTDT_' in self.edge_attr or '_MMMDTT_' in self.edge_attr:
             a = x1.view(x1.shape[0], -1, 3)[edge_index[0]]
             a = a.view(edge_index.shape[1], -1)
 
@@ -329,76 +342,86 @@ class ClusterGNN(MessagePassing):
             a_shape = a.shape
             a = a.view(-1, 3)
             b = b.view(-1, 3)
-            d = torch.nn.PairwiseDistance(p=2)
+            edge_attr = torch.nn.PairwiseDistance(p=2)(a, b)
 
-        elif self.edge_attr == 'pertime_diffpostraj' or self.edge_attr == 'min_mean_max_diffpostrajtime' or \
-                self.edge_attr == 'min_mean_max_diffpostrajtime_normaldiff':
+        if '_PTDPT_' in self.edge_attr or '_MMMDPTT_' in self.edge_attrßß:
             a = x1.view(x1.shape[0], -1, 3)[edge_index[0]]+x2[edge_index[0]].unsqueeze(1)
             a = a.view(edge_index.shape[1], -1)
-
             b = x1.view(x1.shape[0], -1, 3)[edge_index[1]]+x2[edge_index[1]].unsqueeze(1)
             b = b.view(edge_index.shape[1], -1)
-
             a_shape = a.shape
             a = a.view(-1, 3)
             b = b.view(-1, 3)
             d = torch.nn.PairwiseDistance(p=2)
-
-            if self.edge_attr == 'min_mean_max_diffpostrajtime_normaldiff':
-                cos = nn.CosineSimilarity(dim=1, eps=1e-6)
-                cos_normals = 1 - cos(point_normals[edge_index[0]], point_normals[edge_index[1]])
         
-        edge_attr = d(a, b)
-        if self.edge_attr == 'pertime_diffpostraj':
-            edge_attr = edge_attr.view(a_shape[0], -1)
-        elif self.edge_attr == 'min_mean_max_diffpostrajtime' or self.edge_attr == 'min_mean_max_difftrajtime':
-            edge_attr = edge_attr.view(a_shape[0], -1)
-            edge_attr = torch.vstack([
-                edge_attr.min(dim=-1).values,
-                edge_attr.max(dim=-1).values,
-                edge_attr.mean(dim=-1)]).T
-        elif self.edge_attr == 'min_mean_max_diffpostrajtime_normaldiff':
-            edge_attr = edge_attr.view(a_shape[0], -1)
-            edge_attr = torch.vstack([
-                edge_attr.min(dim=-1).values,
-                edge_attr.max(dim=-1).values,
-                edge_attr.mean(dim=-1),
-                cos_normals]).T
-
-        return edge_attr
-    
-    def initial_node_attributes(self, x1, x2, _type, point_normals=None, timestamps=None, batch=None):
-        # Given edge-level attention coefficients for source and target nodes,
-        # we simply need to sum them up to "emulate" concatenation:
-        if _type == 'pos':
-            node_attr = x2
-        elif _type == 'traj' or _type == 'mean_traj_over_time':
-            node_attr = x1
-            if _type == 'mean_traj_over_time':
-                node_attr = node_attr.view(x1.shape[0], -1, 3)
-        elif _type == 'traj_pos':
-            node_attr = torch.stack([x2, x1])
-        elif _type == 'postraj' or _type =='mean_dist_over_time':
-            node_attr = x1.view(x1.shape[0], -1, 3)+x2.unsqueeze(1)
-            if _type == 'postraj':
-                node_attr = node_attr.view(node_attr.shape[0], -1)
-        elif _type == 'min_mean_max_vel' or 'min_mean_max_vel_normal':
-            time = timestamps[batch, :]
-            node_attr = x1.view(x1.shape[0], -1, 3)
+        if '_MMMDV_' in self.edge_attr:
+            a = x1.view(x1.shape[0], -1, 3)
             diff_time = timestamps[batch, 1:] - timestamps[batch, :-1]
             if 'argo' in self.dataset:
                 diff_time = diff_time / torch.pow(torch.tensor(10), 9.0) 
             else:
                 diff_time = diff_time / torch.pow(torch.tensor(10), 6.0)
-            node_attr = node_attr[:, 1:, :] - node_attr[:, :-1, :]
-            node_attr = torch.linalg.norm(node_attr, dim=-1)
-            node_attr = node_attr / diff_time                
-            node_attr = torch.vstack([
-                node_attr.min(dim=-1).values,
-                node_attr.max(dim=-1).values,
-                node_attr.mean(dim=-1)]).T
-            if _type == 'min_mean_max_vel_normal':
-                node_attr = torch.hstack([node_attr, point_normals])
+            
+            # get dx/dt of all nodes
+            a = (a[:, 1:, :] - a[:, :-1, :])/diff_time
+            # get dx/dt for sending and receiving
+            a = a[edge_index[0]]
+            b = b[edge_index[1]]
+            # get diff between and compute norm to get magnitude
+            a = torch.linalg.norm(simplediff(a - b), dim=-1)
+
+        if self.edge_attr == 'PTDPT':
+            edge_attr = edge_attr.view(a_shape[0], -1)
+        elif self.edge_attr == 'MMMDPTT' or self.edge_attr == 'MMMDTT' or self.edge_attr == '_MMMDV_':
+            edge_attr = edge_attr.view(a_shape[0], -1)
+            edge_attr = torch.vstack([
+                edge_attr.min(dim=-1).values,
+                edge_attr.max(dim=-1).values,
+                edge_attr.mean(dim=-1)]).T
+        
+
+        return edge_attr
+    
+    def initial_node_attributes(self, x1, x2, _type, point_normals=None, timestamps=None, batch=None):
+        """
+        P = pos
+        T = traj
+        MTOT = mean_traj_over_time
+        PTS = pos_traj_stacked
+        PT = postraj
+        MDOT = mean_dist_over_time
+        MMMV = min_mean_max_vel
+        """
+        # Given edge-level attention coefficients for source and target nodes,
+        # we simply need to sum them up to "emulate" concatenation:
+        node_attr = list()
+        if '_P_' in _type:
+            node_attr.append(x2)
+        if '_T_' in _type:
+            node_attr.append(x1)
+        if '_MTOT_' in _type:
+            node_attr.append(x1.view(x1.shape[0], -1, 3))
+        if '_PT_' in _type:
+            node_attr.append(x1.view(x1.shape[0], -1, 3)+x2.unsqueeze(1).view(node_attr.shape[0], -1))
+        if  '_MDOT_' in _type:
+            node_attr.append(x1.view(x1.shape[0], -1, 3)+x2.unsqueeze(1))
+        if '_MMMV_' in _type:
+            _node_attr = x1.view(x1.shape[0], -1, 3)
+            diff_time = timestamps[batch, 1:] - timestamps[batch, :-1]
+            if 'argo' in self.dataset:
+                diff_time = diff_time / torch.pow(torch.tensor(10), 9.0) 
+            else:
+                diff_time = diff_time / torch.pow(torch.tensor(10), 6.0)
+            _node_attr = _node_attr[:, 1:, :] - _node_attr[:, :-1, :]
+            _node_attr = torch.linalg.norm(_node_attr, dim=-1)
+            _node_attr = _node_attr / diff_time
+            _node_attr = torch.vstack([
+                _node_attr.min(dim=-1).values,
+                _node_attr.max(dim=-1).values,
+                _node_attr.mean(dim=-1)]).T
+            node_attr.append(_node_attr)
+
+        node_attr = torch.stack(node_attr)
 
         return node_attr
     
@@ -448,7 +471,7 @@ class ClusterGNN(MessagePassing):
             '''
 
             # get distances between nodes
-            if self.graph_construction == 'traj' or self.graph_construction == 'pos' or self.graph_construction == 'min_mean_max_vel' or self.graph_construction == 'postraj':
+            if self.graph_construction == 'traj' or self.graph_construction == 'pos' or self.graph_construction == 'MMMV' or self.graph_construction == 'postraj':
                 dist = torch.from_numpy(sklearn.metrics.pairwise_distances(X.cpu().numpy(), metric=metric)).to(self.rank)
             
             else:
