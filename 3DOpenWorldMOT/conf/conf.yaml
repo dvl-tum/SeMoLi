@@ -26,6 +26,8 @@ metric: acc
 multi_gpu: False
 half_precision: False
 gradient_checkpointing: False
+keep_checkpoint: False
+keep_detections: False
 
 tracker_options: # Extra options for the tracker
   a_threshold: 2.0
