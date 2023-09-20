@@ -12,7 +12,7 @@ hyperparams:
     graph_construction: pos
     node_attr: traj
     min_samples: ${detection_options.num_interior}
-    use_node_score: True
+    use_node_score: 0.5
     node_loss: ${models.loss_hyperparams.node_loss}
     clustering: 'correlation'
     do_visualize: False
@@ -50,3 +50,4 @@ loss_hyperparams:
     ignore_stat_edges: 0
     ignore_stat_nodes: 0
     ignore_background: 0
+    use_node_score: ${models.hyperparams.use_node_score}

@@ -156,6 +156,51 @@ def simplediff(a, b):
     return b-a
 
 
+def get_mean_min_max(_in, num_edges):
+    _in = _in.view(num_edges, -1)
+    _in = torch.vstack([
+        _in.min(dim=-1).values,
+        _in.max(dim=-1).values,
+        _in.mean(dim=-1)]).T
+    return _in
+
+def get_per_time_traj_diff(traj, edge_index, pos_dim):
+    a = traj.view(traj.shape[0], -1, pos_dim)[edge_index[0]]
+    a = a.view(edge_index.shape[1], -1)
+
+    b = traj.view(traj.shape[0], -1, pos_dim)[edge_index[1]]
+    b = b.view(edge_index.shape[1], -1)
+
+    a = a.view(-1, pos_dim)
+    b = b.view(-1, pos_dim)
+    return torch.nn.PairwiseDistance(p=2)(a, b)
+
+def get_per_time_pos_traj_diff(traj, pos, edge_index, pos_dim):
+    a = traj.view(traj.shape[0], -1, pos_dim)[edge_index[0]]+pos[edge_index[0]].unsqueeze(1)
+    a = a.view(edge_index.shape[1], -1)
+    b = traj.view(traj.shape[0], -1, pos_dim)[edge_index[1]]+pos[edge_index[1]].unsqueeze(1)
+    b = b.view(edge_index.shape[1], -1)
+    a = a.view(-1, pos_dim)
+    b = b.view(-1, pos_dim)
+    return torch.nn.PairwiseDistance(p=2)(a, b)
+
+def get_per_time_vel_diff(traj, time, _batch, dataset, edge_index, pos_dim):
+    a = traj.view(traj.shape[0], -1, pos_dim)
+    diff_time = time[_batch, 1:] - time[_batch, :-1]
+    if 'argo' in dataset:
+        diff_time = diff_time / torch.pow(torch.tensor(10), 9.0) 
+    else:
+        diff_time = diff_time / torch.pow(torch.tensor(10), 6.0)
+    
+    # get dx/dt of all nodes
+    a = (a[:, 1:, :] - a[:, :-1, :])/diff_time
+    # get dx/dt for sending and receiving
+    a = a[edge_index[0]]
+    b = b[edge_index[1]]
+    # get diff between and compute norm to get magnitude
+    return torch.linalg.norm(simplediff(a - b), dim=-1)
+
+
 class SevInpSequential(nn.Sequential):
 
     def __init__(self, gradient_checkpointing, layers):
@@ -220,29 +265,37 @@ class ClusterGNN(MessagePassing):
         self.graph_construction = graph_construction
         self.use_node_score = use_node_score * node_loss
         self.clustering = clustering
-        if self.edge_attr == 'diffpos':
-            edge_dim = pos_channels
-        elif self.edge_attr == 'difftraj' or self.edge_attr == 'diffpostraj':
-            edge_dim = traj_channels
-        elif self.edge_attr == 'difftraj_diffpos':
-            edge_dim = pos_channels + traj_channels
-        elif self.edge_attr == 'PTDPT':
-            edge_dim = int(traj_channels/3)
-        elif self.edge_attr == 'MMMDPTT' or self.edge_attr == 'MMMDTT':
-            edge_dim = 3
+        edge_dim = 0
+        if '_DP_' in self.edge_attr:
+            edge_dim += pos_channels
+        if '_DT_' in self.edge_attr:
+            edge_dim += pos_channels
+        if '_DTDP_' in self.edge_attr:
+            edge_dim += pos_channels + traj_channels
+        if '_DPT_' in self.edge_attr:
+            edge_dim += traj_channels
+        if '_PTDT_' in self.edge_attr:
+            edge_dim += int(traj_channels / pos_channels)
+        if '_MMMDTT_' in self.edge_attr:
+            edge_dim += 3
+        if '_PTDPT_' in self.edge_attr:
+            edge_dim += int(traj_channels / 3)
+        if '_MMMDPTT_' in self.edge_attr:
+            edge_dim += 3
+        if '_MMMDV_' in self.edge_attr:
+            edge_dim += 3
         
         # get node mlp
         self.node_attr = node_attr
-        if self.node_attr == 'p':
-            node_dim = pos_channels
-        elif self.node_attr == 'T' or self.node_attr == 'PT':
-            node_dim = traj_channels
-        elif self.node_attr == 'PTS':
-            node_dim = traj_channels + pos_channels
-        elif self.node_attr == 'MMMV':
-            node_dim = 3
-        elif self.node_attr == 'MMMVN':
-            node_dim = 6
+        node_dim = 0
+        if '_P_' in self.node_attr:
+            node_dim += pos_channels
+        if '_T_' in self.node_attr:
+            node_dim += traj_channels
+        if '_PT_' in self.node_attr:
+            node_dim += traj_channels
+        if '_MMMV_' in self.node_attr:
+            node_dim += 3
 
         layers = list()
 
@@ -310,80 +363,69 @@ class ClusterGNN(MessagePassing):
         MMMDPTT = min_mean_max_diffpostrajtime
         MMMDV = min_mean_max_diffvelocity
         """
+        num_edges = edge_index.shape[1]
+        pos_dim = x2.shape[0]
+        traj_dim = x1.shape[0]
+
+        edge_attr = list()
+        edge_dim = 0
         # Given edge-level attention coefficients for source and target nodes,
         # we simply need to sum them up to "emulate" concatenation:
         if '_DP_' in self.edge_attr:
             a = x2[edge_index[0]]
             b = x2[edge_index[1]]
-            edge_attr = simplediff(a, b)
+            edge_attr.append(simplediff(a, b))
+            edge_dim += pos_dim
 
         if '_DT_' in self.edge_attr:
             a = x1[edge_index[0]]
             b = x1[edge_index[1]]
-            edge_attr = simplediff(a, b)
+            edge_attr.append(simplediff(a, b))
+            edge_dim += traj_dim
 
         if '_DTDP_' in self.edge_attr:
             a = torch.stack([x2[edge_index[0]], x1[edge_index[0]]])
             b = torch.stack([x2[edge_index[1]], x1[edge_index[1]]])
-            edge_attr = simplediff(a, b)
+            edge_attr.append(simplediff(a, b))
+            edge_dim += pos_dim + traj_dim
 
         if '_DPT_' in self.edge_attr:
             a = x2[edge_index[0]].repeat((1, int(x1.shape[1]/x2.shape[1]))) + x1[edge_index[0]]
             b = x2[edge_index[1]].repeat((1, int(x1.shape[1]/x2.shape[1]))) + x1[edge_index[1]]
-            edge_attr = simplediff(a, b)
+            edge_attr.append(simplediff(a, b))
+            edge_dim += traj_dim
 
-        if '_PTDT_' in self.edge_attr or '_MMMDTT_' in self.edge_attr:
-            a = x1.view(x1.shape[0], -1, 3)[edge_index[0]]
-            a = a.view(edge_index.shape[1], -1)
+        if '_PTDT_' in self.edge_attr:
+            edge_attr.append(get_per_time_traj_diff(x1, edge_index, pos_dim))
+            edge_dim += int(traj_dim / pos_dim)
+        
+        if '_MMMDTT_' in self.edge_attr:
+            edge_attr.append(get_mean_min_max(get_per_time_traj_diff(x1, edge_index, pos_dim), num_edges))
+            edge_dim += 3
 
-            b = x1.view(x1.shape[0], -1, 3)[edge_index[1]]
-            b = b.view(edge_index.shape[1], -1)
-
-            a_shape = a.shape
-            a = a.view(-1, 3)
-            b = b.view(-1, 3)
-            edge_attr = torch.nn.PairwiseDistance(p=2)(a, b)
-
-        if '_PTDPT_' in self.edge_attr or '_MMMDPTT_' in self.edge_attrßß:
-            a = x1.view(x1.shape[0], -1, 3)[edge_index[0]]+x2[edge_index[0]].unsqueeze(1)
-            a = a.view(edge_index.shape[1], -1)
-            b = x1.view(x1.shape[0], -1, 3)[edge_index[1]]+x2[edge_index[1]].unsqueeze(1)
-            b = b.view(edge_index.shape[1], -1)
-            a_shape = a.shape
-            a = a.view(-1, 3)
-            b = b.view(-1, 3)
-            d = torch.nn.PairwiseDistance(p=2)
+        if '_PTDPT_' in self.edge_attr:
+            edge_attr.append(get_per_time_pos_traj_diff(x1, x2, edge_index, pos_dim))
+            edge_dim += int(traj_dim / 3)
+        
+        if '_MMMDPTT_' in self.edge_attr:
+            edge_attr.append(get_mean_min_max(get_per_time_pos_traj_diff(x1, x2, edge_index), num_edges))
+            edge_dim += 3
         
         if '_MMMDV_' in self.edge_attr:
-            a = x1.view(x1.shape[0], -1, 3)
-            diff_time = timestamps[batch, 1:] - timestamps[batch, :-1]
-            if 'argo' in self.dataset:
-                diff_time = diff_time / torch.pow(torch.tensor(10), 9.0) 
-            else:
-                diff_time = diff_time / torch.pow(torch.tensor(10), 6.0)
-            
-            # get dx/dt of all nodes
-            a = (a[:, 1:, :] - a[:, :-1, :])/diff_time
-            # get dx/dt for sending and receiving
-            a = a[edge_index[0]]
-            b = b[edge_index[1]]
-            # get diff between and compute norm to get magnitude
-            a = torch.linalg.norm(simplediff(a - b), dim=-1)
-
-        if self.edge_attr == 'PTDPT':
-            edge_attr = edge_attr.view(a_shape[0], -1)
-        elif self.edge_attr == 'MMMDPTT' or self.edge_attr == 'MMMDTT' or self.edge_attr == '_MMMDV_':
-            edge_attr = edge_attr.view(a_shape[0], -1)
-            edge_attr = torch.vstack([
-                edge_attr.min(dim=-1).values,
-                edge_attr.max(dim=-1).values,
-                edge_attr.mean(dim=-1)]).T
+            edge_attr.append(get_mean_min_max(get_per_time_vel_diff(x1, timestamps, batch, self.dataset, edge_index, pos_dim), num_edges))
+            edge_dim += 3
         
+        edge_attr = torch.stack(edge_attr)
 
-        return edge_attr
+        return edge_attr, edge_dim
     
     def initial_node_attributes(self, x1, x2, _type, point_normals=None, timestamps=None, batch=None):
         """
+        x1 = N x 3
+        x2 = N x 3*T
+
+        ----
+
         P = pos
         T = traj
         MTOT = mean_traj_over_time
@@ -395,18 +437,27 @@ class ClusterGNN(MessagePassing):
         # Given edge-level attention coefficients for source and target nodes,
         # we simply need to sum them up to "emulate" concatenation:
         node_attr = list()
+        traj_dim = x1.shape[0]
+        pos_dim = x2.shape[0]
+        node_dim = 0
+        # JUST FOR GRAPH CONST
+        if '_MTOT_' in _type:
+            node_attr.append(x1.view(traj_dim, -1, pos_dim))
+        if  '_MDOT_' in _type:
+            node_attr.append(x1.view(traj_dim, -1, pos_dim)+x2.unsqueeze(1))
+        
+        # FOR GRAPH CONST AND NODES
         if '_P_' in _type:
             node_attr.append(x2)
+            node_dim += pos_dim
         if '_T_' in _type:
             node_attr.append(x1)
-        if '_MTOT_' in _type:
-            node_attr.append(x1.view(x1.shape[0], -1, 3))
+            node_dim += traj_dim
         if '_PT_' in _type:
-            node_attr.append(x1.view(x1.shape[0], -1, 3)+x2.unsqueeze(1).view(node_attr.shape[0], -1))
-        if  '_MDOT_' in _type:
-            node_attr.append(x1.view(x1.shape[0], -1, 3)+x2.unsqueeze(1))
+            node_attr.append((x1.view(traj_dim, -1, pos_dim)+x2.unsqueeze(1)).view(traj_dim, -1))
+            node_dim += traj_dim
         if '_MMMV_' in _type:
-            _node_attr = x1.view(x1.shape[0], -1, 3)
+            _node_attr = x1.view(traj_dim, -1, pos_dim)
             diff_time = timestamps[batch, 1:] - timestamps[batch, :-1]
             if 'argo' in self.dataset:
                 diff_time = diff_time / torch.pow(torch.tensor(10), 9.0) 
@@ -420,10 +471,11 @@ class ClusterGNN(MessagePassing):
                 _node_attr.max(dim=-1).values,
                 _node_attr.mean(dim=-1)]).T
             node_attr.append(_node_attr)
+            node_dim += 3
 
         node_attr = torch.stack(node_attr)
 
-        return node_attr
+        return node_attr, node_dim
     
     def get_graph(self, node_attr, r=5, max_num_neighbors=16, batch_idx=None, type='radius', metric='euclidean', batch=None, data=None):
         # my graph
@@ -541,11 +593,11 @@ class ClusterGNN(MessagePassing):
         else:
             point_normals = None
         
-        node_attr = self.initial_node_attributes(traj, pc, self.node_attr, point_normals, data['timestamps'], data['batch'])
+        node_attr, node_dim = self.initial_node_attributes(traj, pc, self.node_attr, point_normals, data['timestamps'], data['batch'])
         if self.node_attr == self.graph_construction:
             graph_attr = node_attr
         else:
-            graph_attr = self.initial_node_attributes(traj, pc, self.graph_construction, point_normals, data['timestamps'], data['batch'])
+            graph_attr, _ = self.initial_node_attributes(traj, pc, self.graph_construction, point_normals, data['timestamps'], data['batch'])
         
         # get edges using knn graph (for computational feasibility)
         k = self.k if not eval else self.k_eval
@@ -623,7 +675,7 @@ class ClusterGNN(MessagePassing):
         if edge_index.shape[1] == 0:
             return [None, None], torch.tensor(list(range(pc.shape[0]))), None, None
         
-        edge_attr = self.initial_edge_attributes(traj, pc, edge_index, point_normals)
+        edge_attr, edge_dim = self.initial_edge_attributes(traj, pc, edge_index, point_normals)
 
         edge_attr = edge_attr.float()
         node_attr = node_attr.float()
@@ -878,7 +930,8 @@ class GNNLoss(nn.Module):
             node_weight=1,
             ignore_stat_edges=0,
             ignore_stat_nodes=0,
-            ignore_background=0) -> None:
+            ignore_background=0,
+            use_node_score=False) -> None:
         super().__init__()
         
         self.bce_loss = bce_loss
@@ -897,6 +950,7 @@ class GNNLoss(nn.Module):
         self.ignore_stat_nodes = ignore_stat_nodes
         self.ignore_background = ignore_background
         self.sigmoid = torch.nn.Sigmoid()
+        self.use_node_score = use_node_score
 
         if not self.focal_loss_node:
             self._node_loss = nn.BCEWithLogitsLoss().to(self.rank)
@@ -955,6 +1009,16 @@ class GNNLoss(nn.Module):
                         data.point_instances[edge_index[0, :]] == 0,
                         data.point_instances[edge_index[1, :]] == 0),
                     point_mask)
+            
+            if self.use_node_score and mode != 'train':
+                logits_rounded_node = self.sigmoid(node_logits.clone().detach()).squeeze()
+
+                point_mask = torch.logical_or(
+                    torch.logical_and(
+                        logits_rounded_node[edge_index[0, :]] > self.use_node_score,
+                        logits_rounded_node[edge_index[1, :]] > self.use_node_score),
+                )
+
             # filter edge logits, point instances and point categories
             edge_logits = edge_logits[~point_mask]
             point_instances = point_instances[~point_mask].float()
