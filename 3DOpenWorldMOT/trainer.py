@@ -193,7 +193,7 @@ def sample_params():
             'alpha_edge': random.choice([0.7, 0.8, 0.9]),
             'gamma_node': random.choice([1, 1.5, 2, 2.5, 3, 3.5]),
             'gamma_edge': random.choice([1, 1.5, 2, 2.5, 3, 3.5]),
-            'node_loss': random.choice([True, False]),
+            # 'node_loss': random.choice([True, False]),
             # 'graph_construction': random.choice(['min_mean_max_vel', 'pos', 'postraj', 'traj', 'mean_dist_over_time'])
         }
         dims = sample_dims()
@@ -205,7 +205,7 @@ def sample_params():
 
 def sample_dims():
     dims = [16, 32, 64, 128]                                                                                                                    
-    num_layers =  random.choice([1, 2, 3, 4])                                                                                      
+    num_layers =  random.choice([2, ])                                                                                      
     sampled_dims = [random.choice([16, 32, 64])]                                                                                   
     for i in range(1, num_layers):
         if num_layers > 2 and i == 1:
@@ -238,7 +238,7 @@ def main(cfg):
             cfg.models.loss_hyperparams.gamma_edge = params_list[iter]['gamma_edge']
             cfg.models.loss_hyperparams.alpha_node = params_list[iter]['alpha_node']
             cfg.models.loss_hyperparams.alpha_edge = params_list[iter]['alpha_edge']
-            cfg.models.loss_hyperparams.node_loss = False #params_list[iter]['node_loss']
+            # cfg.models.loss_hyperparams.node_loss = False #params_list[iter]['node_loss']
             cfg.models.hyperparams.layer_sizes_edge = params_list[iter]['layer_sizes_edge']
             cfg.models.hyperparams.layer_sizes_node = params_list[iter]['layer_sizes_node']
             cfg.training.epochs = 15
@@ -269,7 +269,12 @@ def main(cfg):
 
         # wandb.finish()
         logging.shutdown()
-    
+
+        if not cfg.keep_checkpoint:
+            shutil.rmtree(checkpoints_dir)
+        if not cfg.keep_detections:
+            shutil.rmtree(experiment_dir)
+
 def train_one_epoch(model, cfg, epoch, logger, optimizer, train_loader,\
                     rank, criterion, scaler, checkpoints_dir, name, log_during=True, log_after=False):
     # Adapt learning rate

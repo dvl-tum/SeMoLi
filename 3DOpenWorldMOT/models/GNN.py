@@ -443,8 +443,8 @@ class ClusterGNN(MessagePassing):
                     data['edge_index'] = edge_idx
                     if edge_idx.min() != 0:
                         edge_idx = edge_idx - edge_idx.min()
-                        d = PyGData(edge_idx)
-                        torch.save(d, p)
+                        # d = PyGData(edge_idx)
+                        # torch.save(d, p)
                     idxs_0 = edge_idx[0, :]
                     idxs_1 = edge_idx[1, :]
                     
@@ -508,10 +508,10 @@ class ClusterGNN(MessagePassing):
                 idx = torch.where(dist<r)[0]
                 idxs_0, idxs_1 = idxs_0[idx], idxs_1[idx]
             
-            if not os.path.isfile(p):
-                d = PyGData(torch.vstack([idxs_0, idxs_1]))
-                os.makedirs(os.path.dirname(p), exist_ok=True)
-                torch.save(d, p)
+            # if not os.path.isfile(p):
+            #     d = PyGData(torch.vstack([idxs_0, idxs_1]))
+            #     os.makedirs(os.path.dirname(p), exist_ok=True)
+            #     torch.save(d, p)
             idxs_0 += start
             idxs_1 += start            
             _idxs_0.append(idxs_0)
@@ -562,7 +562,7 @@ class ClusterGNN(MessagePassing):
                         graph_attr, self.r, max_num_neighbors=k, batch_idx=batch_idx, type='radius', batch=data['batch'], data=data)
                 else:
                     edge_index = radius_graph(graph_attr, self.r, data['batch'], max_num_neighbors=k)
-            
+            '''
             if self.my_graph and len(graph_attr.shape) == 2:
                 from torch_geometric.data import Data as PyGData
                 import os
@@ -580,7 +580,7 @@ class ClusterGNN(MessagePassing):
                             sample_edge - sample_edge.min())
                     os.makedirs(os.path.dirname(p), exist_ok=True)
                     torch.save(d, p)
-            
+                '''
         else:
             edge_index = data['edge_index']
         
