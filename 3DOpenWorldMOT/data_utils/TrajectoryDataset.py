@@ -137,7 +137,7 @@ class TrajectoryDataset(PyGDataset):
             return [os.path.join(self.processed_dir, seq, flow_file)\
                     for seq in seqs\
                         for i, flow_file in enumerate(sorted(os.listdir(osp.join(self.processed_dir, seq))))\
-                        if i % self.every_x_frame == 0] #[:16]
+                        if i % self.every_x_frame == 0]# [:256]
         else:
             seqs = [seq for seq in self.seqs if seq in os.listdir(self.trajectory_dir) and seq not in self.already_evaluated]
             return [os.path.join(self.processed_dir, seq, flow_file[:-3] + 'pt')\

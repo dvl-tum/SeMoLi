@@ -279,7 +279,7 @@ class ClusterGNN(MessagePassing):
         if '_MMMDTT_' in self.edge_attr:
             edge_dim += 3
         if '_PTDPT_' in self.edge_attr:
-            edge_dim += int(traj_channels / 3)
+            edge_dim += int(traj_channels / pos_channels)
         if '_MMMDPTT_' in self.edge_attr:
             edge_dim += 3
         if '_MMMDV_' in self.edge_attr:
@@ -296,7 +296,7 @@ class ClusterGNN(MessagePassing):
             node_dim += traj_channels
         if '_MMMV_' in self.node_attr:
             node_dim += 3
-
+        
         layers = list()
 
         _node_dim = node_dim
@@ -364,8 +364,9 @@ class ClusterGNN(MessagePassing):
         MMMDV = min_mean_max_diffvelocity
         """
         num_edges = edge_index.shape[1]
-        pos_dim = x2.shape[0]
-        traj_dim = x1.shape[0]
+        num_objexts = x2.shape[0]
+        pos_dim = x2.shape[1]
+        traj_dim = x1.shape[1]
 
         edge_attr = list()
         edge_dim = 0
@@ -408,14 +409,14 @@ class ClusterGNN(MessagePassing):
             edge_dim += int(traj_dim / 3)
         
         if '_MMMDPTT_' in self.edge_attr:
-            edge_attr.append(get_mean_min_max(get_per_time_pos_traj_diff(x1, x2, edge_index), num_edges))
+            edge_attr.append(get_mean_min_max(get_per_time_pos_traj_diff(x1, x2, edge_index, pos_dim), num_edges))
             edge_dim += 3
         
         if '_MMMDV_' in self.edge_attr:
             edge_attr.append(get_mean_min_max(get_per_time_vel_diff(x1, timestamps, batch, self.dataset, edge_index, pos_dim), num_edges))
             edge_dim += 3
         
-        edge_attr = torch.stack(edge_attr)
+        edge_attr = torch.stack(edge_attr).squeeze()
 
         return edge_attr, edge_dim
     
@@ -437,8 +438,9 @@ class ClusterGNN(MessagePassing):
         # Given edge-level attention coefficients for source and target nodes,
         # we simply need to sum them up to "emulate" concatenation:
         node_attr = list()
-        traj_dim = x1.shape[0]
-        pos_dim = x2.shape[0]
+        num_objects = x1.shape[0]
+        traj_dim = x1.shape[1]
+        pos_dim = x2.shape[1]
         node_dim = 0
         # JUST FOR GRAPH CONST
         if '_MTOT_' in _type:
@@ -457,7 +459,7 @@ class ClusterGNN(MessagePassing):
             node_attr.append((x1.view(traj_dim, -1, pos_dim)+x2.unsqueeze(1)).view(traj_dim, -1))
             node_dim += traj_dim
         if '_MMMV_' in _type:
-            _node_attr = x1.view(traj_dim, -1, pos_dim)
+            _node_attr = x1.view(num_objects, -1, pos_dim)
             diff_time = timestamps[batch, 1:] - timestamps[batch, :-1]
             if 'argo' in self.dataset:
                 diff_time = diff_time / torch.pow(torch.tensor(10), 9.0) 
@@ -472,8 +474,8 @@ class ClusterGNN(MessagePassing):
                 _node_attr.mean(dim=-1)]).T
             node_attr.append(_node_attr)
             node_dim += 3
-
-        node_attr = torch.stack(node_attr)
+        
+        node_attr = torch.stack(node_attr).squeeze()
 
         return node_attr, node_dim
     
@@ -673,7 +675,8 @@ class ClusterGNN(MessagePassing):
             edge_index = torch.cat([edge_index.T, add_idxs.T]).T
 
         if edge_index.shape[1] == 0:
-            return [None, None], torch.tensor(list(range(pc.shape[0]))), None, None
+            print("EEEMPTY")
+            return [None, None], torch.tensor(list(range(pc.shape[0]))), None
         
         edge_attr, edge_dim = self.initial_edge_attributes(traj, pc, edge_index, point_normals)
 
@@ -735,7 +738,7 @@ class ClusterGNN(MessagePassing):
             return [score, node_score], all_clusters, edge_index, None
         elif eval:
             return [score, node_score], [[]*len(batch_idx[:-1])], edge_index, None
-
+        
         return [score, node_score], edge_index, None
     
     def corr_clustering(self, iter_data):
@@ -973,7 +976,8 @@ class GNNLoss(nn.Module):
         
         if self.bce_loss:
             point_instances = data.point_instances
-            point_categories = data.point_categories[edge_index[1, :]]
+            point_categories = data.point_categories[edge_index[0, :]]
+            point_categories1 = data.point_categories[edge_index[1, :]]
 
             # get bool edge mask
             point_instances = point_instances[edge_index[0, :]] == point_instances[edge_index[1, :]]
@@ -1012,18 +1016,18 @@ class GNNLoss(nn.Module):
             
             if self.use_node_score and mode != 'train':
                 logits_rounded_node = self.sigmoid(node_logits.clone().detach()).squeeze()
-
                 point_mask = torch.logical_or(
-                    torch.logical_and(
-                        logits_rounded_node[edge_index[0, :]] > self.use_node_score,
-                        logits_rounded_node[edge_index[1, :]] > self.use_node_score),
-                )
+                    torch.logical_or(
+                        logits_rounded_node[edge_index[0, :]] < self.use_node_score,
+                        logits_rounded_node[edge_index[1, :]] < self.use_node_score),
+                    point_mask)
 
             # filter edge logits, point instances and point categories
             edge_logits = edge_logits[~point_mask]
             point_instances = point_instances[~point_mask].float()
             point_categories = point_categories[~point_mask]
-            
+            point_categories1 = point_categories1[~point_mask]
+
             if edge_logits.shape[0] == 0:
                 return None, None, None, None
 
@@ -1084,8 +1088,9 @@ class GNNLoss(nn.Module):
             log_dict[f'{mode} accuracy edges connected to class'] = torch.zeros(65).to(self.rank)
             for c in torch.unique(point_categories):
                 if correct[point_categories==c].shape[0]:
-                    log_dict[f'{mode} accuracy edges connected to class'][2*c] = torch.sum(
-                            correct[point_categories==c])/correct[point_categories==c].shape[0]
+                    log_dict[f'{mode} accuracy edges connected to class'][2*c] = (torch.sum(
+                            correct[point_categories==c])+torch.sum(
+                            correct[point_categories1==c]))/(correct[point_categories1==c].shape[0]+correct[point_categories==c].shape[0])
                     log_dict[f'{mode} accuracy edges connected to class'][2*c+1] = 1
             log_dict[f'{mode} num edge pos'] = num_edge_pos
             log_dict[f'{mode} num edge neg'] = num_edge_neg
