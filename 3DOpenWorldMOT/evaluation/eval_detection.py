@@ -517,9 +517,9 @@ def eval_detection(
         is_gt=False,
         loader=loader,
         gt_folder=gt_folder)
-
-    dts = dts[np.logical_and(dts['height_m'] > 0.1, 
-                             np.logical_and(dts['length_m'] > 0.1, dts['width_m'] > 0.1))]
+    dts = dts.drop_duplicates()
+    # dts = dts[np.logical_and(dts['height_m'] > 0.1, 
+    #                          np.logical_and(dts['length_m'] > 0.1, dts['width_m'] > 0.1))]
 
     # dts = dts[dts['num_interior_pts'] > 50]
     # dts = dts[dts['height_m'] < 3]
@@ -580,6 +580,9 @@ def eval_detection(
             use_matched_category=use_matched_category,
             _class_dict=_class_dict,
             n_jobs=n_jobs)
+        
+        os.makedirs(f'matched_{trackers_folder}', exist_ok=True)
+        feather.write_feather(dts, f'matched_{trackers_folder}/annotations_{affinity}.feather')
 
         dts = dts[dts['is_evaluated']==1]
         gts = gts[gts['is_evaluated']==1]
@@ -631,11 +634,11 @@ if __name__ == '__main__':
     # for m in [-1]: # [-1, 0, 5, 10, 15, 20, 25]:
     m = -1
     c = -2 # -1 = dont filter, -2 = set everything to 'REGULAR_VEHICLE', else set to class
-    split = 'val'
+    split = 'train'
     detections = 'detector'
     orig_split = 'train' if detections != 'evaluation' else 'val'
     for t in os.listdir(f'out/detections_{split}_{detections}'): #class_dict.keys():
-        if 'DBSCAN_POS' not in t and 'NEW_FLOW_BEST_PARAMS_90' not in t:
+        if 'NEW_FLOW_BEST_PARAMS_90_NO_NODE_EVAL_TRAIN_DET_0.9_0.9_all_egocomp_margin0.6_width25_nooracle_64_64_64_64_0.5_3.5_0.5_4_3.162277660168379e-06_0.0031622776601683794_16000_16000__NS_MG_32_2.0_LN_' not in t:
             continue
         print(t)
         tracker_dir = f'out/detections_{split}_{detections}/{t}/combined/{split}_{detections}'
