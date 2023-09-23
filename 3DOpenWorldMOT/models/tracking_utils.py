@@ -157,7 +157,6 @@ class Track():
         self.final = list()
         self.dead = False
 
-    
     def add_detection(self, detection):
         self.detections.append(detection)
         detection.track_id = self.track_id

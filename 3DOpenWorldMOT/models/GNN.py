@@ -718,6 +718,7 @@ class ClusterGNN(MessagePassing):
             if self.clustering == 'correlation':
                 multiprocessing = False
                 data_loader = enumerate(zip(batch_idx[:-1], batch_idx[1:]))
+                # data_loader = enumerate(zip(batch_idx[0], batch_idx[-1]))
                 rama_cuda = rama_py.rama_cuda
                 all_clusters = list()
                 if multiprocessing:
@@ -727,10 +728,14 @@ class ClusterGNN(MessagePassing):
                         clusters = pool.map(self.corr_clustering, data_loader, chunksize=None)
                         all_clusters.append(clusters)
                 else:
+                    import time
+                    start = time.time()
                     self.args = edge_index, _node_score, _score, data, score, node_score, pc, rama_cuda, name
                     for iter_data in data_loader:
                         clusters = self.corr_clustering(iter_data)
                         all_clusters.append(clusters)
+                    print('Took ', time.time() - start)
+                    quit()
             else:
                 print('Invalid clustering choice')
                 quit()
@@ -989,10 +994,9 @@ class GNNLoss(nn.Module):
             # --> instance 0 is no object
             point_instances[data.point_instances[edge_index[0, :]] == 0] = False
             point_instances[data.point_instances[edge_index[1, :]] == 0] = False
-
-            # sample edges
             point_instances = point_instances.to(self.rank)
-           
+            
+            # FILDER EDGES
             point_mask = torch.zeros(point_instances.shape[0], dtype=bool).to(self.rank)
             # if ignoring predictions for static edges in loss, get static edge filter
             if self.ignore_stat_edges and mode == 'train':
@@ -1033,7 +1037,7 @@ class GNNLoss(nn.Module):
 
             num_edge_pos, num_edge_neg = point_instances.sum(), (point_instances==0).sum()
 
-            # compute loss
+            # COMPUTE LOSS
             if weight and not self.focal_loss_edge:
                 # weight pos and neg samples
                 num_pos = torch.sum((point_instances==1).float())
@@ -1042,7 +1046,6 @@ class GNNLoss(nn.Module):
                 pos_weight = pos_weight.cpu()
                 self._edge_loss = nn.BCEWithLogitsLoss(pos_weight=pos_weight).to(self.rank)
             
-            # compute loss
             if not self.focal_loss_edge:
                 bce_loss_edge = self._edge_loss(
                     edge_logits.squeeze(), point_instances.squeeze())
@@ -1054,7 +1057,7 @@ class GNNLoss(nn.Module):
                     gamma=self.gamma_edge,
                     reduction="mean",)
             
-            # log loss
+            # LOG LOSS
             loss += self.edge_weight * bce_loss_edge
             #print(f'{mode} bce loss edge', bce_loss_edge.detach().item())
             log_dict[f'{mode} bce loss edge'] = torch.zeros(2).to(self.rank)
