@@ -38,9 +38,8 @@ class Detector3D():
         self.av2_loader = av2_loader
         self.precomp_dets = precomp_dets
         self.rank = rank
+        self.name = os.path.basename(out_path)
         self.out_path = os.path.join(out_path,  f'rank_{self.rank}')
-        
-        self.filtered_gt = '../../../data/argoverse2/val_0.833_per_frame_remove_non_move_remove_far_remove_non_drive_filtered_version.feather'
     
     def new_log_id(self, log_id):
         # save tracks to feather and reset variables
@@ -149,7 +148,7 @@ class Detector3D():
         return mat
 
     def to_feather(self):
-        to_feather(self.detections, self.log_id, self.out_path, self.split, self.rank, self.precomp_dets)
+        to_feather(self.detections, self.log_id, self.out_path, self.split, self.rank, self.precomp_dets, self.name)
         self.detections = dict()
         # write_path = os.path.join(self.out_path, self.split, self.log_id, 'annotations.feather') # os.path.join(self.out_path, self.split, 'feathers', f'all_{self.rank}.feather')
         # logger.info(f'wrote {write_path}')

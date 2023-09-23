@@ -612,10 +612,10 @@ def _create_box(xyz, lwh, rot):
     return vertices_dst_xyz_m
 
 
-def to_feather(detections, log_id, out_path, split, rank, precomp_dets=False):
+def to_feather(detections, log_id, out_path, split, rank, precomp_dets=False, name=''):
     track_vals = list()
     if precomp_dets:
-        store_initial_detections(detections, seq=log_id, out_path='tracks/tracks/initial_dets', split=split)
+        store_initial_detections(detections, seq=log_id, out_path=f'/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/tracks/tracks/initial_dets/{name}', split=split)
     # per timestamp detections
     for i, timestamp in enumerate(sorted(detections.keys())):
         dets = detections[timestamp]
