@@ -107,7 +107,8 @@ column_names_dets_wo_traj = [
     'gt_id',
     'num_interior_pts',
     'pts_density',
-    'log_id']
+    'log_id',
+    'rot']
 
 column_names_dets = column_names_dets_wo_traj + [f'{i}_{j}' for i in range(25) for j in ['x', 'y', 'z']]
 
@@ -348,8 +349,7 @@ def get_alpha_rot_t0_to_t1(t0=None, t1=None, trajectory=None, traj_t0=None, traj
         mean_flow = (trajectory[:, t1, :] - trajectory[:, t0, :]).mean(dim=0)
     else:
         mean_flow = (traj_t1 - traj_t0).mean(dim=0)
-    alpha = torch.arctan(mean_flow[1]/mean_flow[0])
-
+    alpha = torch.atan2(mean_flow[1], mean_flow[0])
     rot = torch.tensor([
         [torch.cos(alpha), -torch.sin(alpha), 0],
         [torch.sin(alpha), torch.cos(alpha), 0],
@@ -430,7 +430,7 @@ def store_initial_detections(detections, seq, out_path, split, tracks=False, gt_
         for k, t in detections.items():
             extracted_detections[k] = t.detections
         detections =  extracted_detections
-    else:
+    elif gt_path is not None:
         if type(list(detections.keys())[0]) == int:
             detections = {k: v for k, v in detections.items()}
         else:
@@ -448,7 +448,7 @@ def store_initial_detections(detections, seq, out_path, split, tracks=False, gt_
                 num_interior=d.num_interior,
                 overlap=d.overlap,
                 gt_id=d.gt_id,
-                gt_id_box=d.gt_id_box,
+                gt_id_box=d.gt_id_box if gt_path is not None else d.gt_id,
                 track_id=d.track_id,
                 rot=d.rot.numpy(),
                 alpha=d.alpha.numpy()
@@ -615,7 +615,7 @@ def _create_box(xyz, lwh, rot):
 def to_feather(detections, log_id, out_path, split, rank, precomp_dets=False):
     track_vals = list()
     if precomp_dets:
-        store_initial_detections(detections, seq=log_id)
+        store_initial_detections(detections, seq=log_id, out_path='tracks/tracks/initial_dets', split=split)
     # per timestamp detections
     for i, timestamp in enumerate(sorted(detections.keys())):
         dets = detections[timestamp]
@@ -645,7 +645,8 @@ def to_feather(detections, log_id, out_path, split, rank, precomp_dets=False):
                 det.gt_id,
                 det.num_interior,
                 det.pts_density,
-                det.log_id] + det.trajectory.numpy().tolist()
+                det.log_id,
+                det.alpha.item()] + det.trajectory.numpy().tolist()
             track_vals.append(values)
     track_vals = np.asarray(track_vals)
 

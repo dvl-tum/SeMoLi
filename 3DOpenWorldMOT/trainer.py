@@ -1,4 +1,5 @@
 # CONFIGURATION HANDLING
+from datetime import timedelta
 import os
 import hydra
 from omegaconf import OmegaConf
@@ -52,8 +53,10 @@ def initialize(cfg):
     '''CREATE DIR'''
     out_path = os.path.join(cfg.out_path, 'out/')
     os.makedirs(out_path, exist_ok=True)
+    # experiments dir
     experiment_dir = os.path.join(out_path, f'detections_{cfg.data.detection_set}/')
     os.makedirs(experiment_dir, exist_ok=True)
+    # checkpoints dir
     checkpoints_dir = os.path.join(out_path, 'checkpoints/')
     os.makedirs(checkpoints_dir, exist_ok=True)
 
@@ -251,9 +254,6 @@ def main(cfg):
         OmegaConf.set_struct(cfg, False)  # This allows getattr and hasattr methods to function correctly
         logger, experiment_dir, checkpoints_dir, out_path = initialize(cfg)
         
-        if os.path.isdir(os.path.join(out_path, 'val', 'feathers')):
-            shutil.rmtree(os.path.join(out_path, 'val', 'feathers'))
-        
         # needed for preprocessing
         logger.info("start loading training data ...")
         # train_data, val_data, test_data = get_TrajectoryDataLoader(cfg)
@@ -270,10 +270,6 @@ def main(cfg):
         # wandb.finish()
         logging.shutdown()
 
-        if not cfg.keep_checkpoint:
-            shutil.rmtree(checkpoints_dir)
-        if not cfg.keep_detections:
-            shutil.rmtree(experiment_dir)
 
 def train_one_epoch(model, cfg, epoch, logger, optimizer, train_loader,\
                     rank, criterion, scaler, checkpoints_dir, name, log_during=True, log_after=False):
@@ -742,17 +738,8 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
                         np_histogram=np.histogram(num_edge_pos.cpu().numpy()/num_edge_neg.cpu().numpy(), bins=30, range=(0., 3.))), "epoch": epoch})
 
             if do_corr_clustering:
-                logger.info(f"Loading detections from {os.path.join(detector.out_path, detector.split)}...")
-                # get sequence list for evaluation
-                detector_dir = os.path.join(detector.out_path, detector.split)
-                try:
-                    seq_list = os.listdir(detector_dir)
-                except:
-                    seq_list = list()
-            
-            if do_corr_clustering:
                 # combine output of different ranks
-                out = os.path.join(experiment_dir + name, 'combined',  detector.split)
+                out = os.path.join(experiment_dir + name,  detector.split)
                 for _rank in os.listdir(experiment_dir + name):
                     rank_path = os.path.join(experiment_dir + name, _rank, detector.split)
                     for log_id in os.listdir(rank_path):
@@ -763,11 +750,21 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
                         else:
                             os.makedirs(os.path.join(out, log_id), exist_ok=True)
                         feather.write_feather(df, write_path)
+                    shutil.rmtree(rank_path)
+                
+                logger.info(f"Loading detections from {os.path.join(detector.out_path, detector.split)}...")
+                # get sequence list for evaluation
+                detector_dir = os.path.join(experiment_dir + name, detector.split)
+                try:
+                    seq_list = os.listdir(detector_dir)
+                except:
+                    seq_list = list()
 
                 # average NMI
                 cluster_metric = [nmis]
                 logger.info(f'NMI: {cluster_metric[0]}')
                 logger.info(f'Evaluating detection performance...')
+                
                 # evaluate detection
                 _, detection_metric = eval_detection.eval_detection(
                     gt_folder=os.path.join(os.getcwd(), cfg.data.data_dir),
@@ -841,6 +838,7 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
 
 
 def train(rank, cfg, world_size):
+    print("AAAAHHH")
     if cfg.half_precision:
         scaler = torch.cuda.amp.GradScaler()
     else:
@@ -863,6 +861,10 @@ def train(rank, cfg, world_size):
         load_model(cfg, checkpoints_dir, logger, rank)
     
     if rank == 0 or not cfg.multi_gpu:
+        if os.path.isdir(experiment_dir + name):
+            shutil.rmtree(experiment_dir + name)
+        if os.path.isdir(str(checkpoints_dir) + name):
+            shutil.rmtree(str(checkpoints_dir) + name)
         os.makedirs(experiment_dir + name, exist_ok=True)
         logger.info(f'Detections are stored under {experiment_dir + name}...')
         os.makedirs(str(checkpoints_dir) + name, exist_ok=True)
@@ -982,6 +984,7 @@ def train(rank, cfg, world_size):
                     name)
             if model is None:
                 logger.info("Terminating training due to nan values...")
+                on_return(rank, name, experiment_dir, checkpoints_dir, cfg)
                 return
         print(epoch % cfg.training.eval_every_x == 0, epoch)
         # evaluate
@@ -989,7 +992,7 @@ def train(rank, cfg, world_size):
             # do corr clustering every eval_corr_every_x epochs if epoch not 0
             do_corr_clustering = epoch % cfg.training.eval_corr_every_x == 0 and epoch != 0
             # do corr clustering if only eval
-            do_corr_clustering = do_corr_clustering # or cfg.just_eval
+            do_corr_clustering = do_corr_clustering or cfg.just_eval
             # do corr clustering in last epoch always
             # do_corr_clustering = do_corr_clustering or epoch == cfg.training.epochs - 
 
@@ -1012,6 +1015,7 @@ def train(rank, cfg, world_size):
         
         if not is_neural_net or cfg.just_eval:
             wandb.finish()
+            on_return(rank, name, experiment_dir, checkpoints_dir, cfg)
             return
         
         # if epoch >= 3 and best_metric <= 0.85:
@@ -1019,6 +1023,11 @@ def train(rank, cfg, world_size):
         #     return
    
     # final_evaluation
+    dist.barrier()
+    print("RAAAAAAAAAAAAAAAAAAAAAAAAANK", rank)
+    if rank == 0:
+        for d in os.listdir(experiment_dir + name):
+            shutil.rmtree(experiment_dir + name + f'/{d}')
     final_evaluation(
             model,
                 do_corr_clustering,
@@ -1036,6 +1045,15 @@ def train(rank, cfg, world_size):
                 checkpoints_dir,
                 best_metric)
     wandb.finish()
+    on_return(rank, name, experiment_dir, checkpoints_dir, cfg)
+    return
+
+
+def on_return(rank, name, experiment_dir, checkpoints_dir, cfg):
+    if not cfg.keep_checkpoint and rank == 0:
+        shutil.rmtree(checkpoints_dir + name)
+    if not cfg.keep_detections and rank == 0:
+        shutil.rmtree(experiment_dir + name)
 
 
 #def final_evaluation(rank, cfg, world_size):

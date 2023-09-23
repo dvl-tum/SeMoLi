@@ -938,7 +938,8 @@ class GNNLoss(nn.Module):
             node_weight=1,
             ignore_stat_edges=0,
             ignore_stat_nodes=0,
-            ignore_background=0,
+            ignore_edges_between_background=0,
+            classification_is_moving_node=0,
             use_node_score=False) -> None:
         super().__init__()
         
@@ -956,7 +957,9 @@ class GNNLoss(nn.Module):
         self.rank = rank
         self.ignore_stat_edges = ignore_stat_edges
         self.ignore_stat_nodes = ignore_stat_nodes
-        self.ignore_background = ignore_background
+        self.ignore_edges_between_background = ignore_edges_between_background
+        self.classification_is_moving_node = classification_is_moving_node
+        assert self.classification_is_moving_node != self.ignore_stat_nodes, "Can only either ignore static objects or classify as moving object or not a moving object"
         self.sigmoid = torch.nn.Sigmoid()
         self.use_node_score = use_node_score
 
@@ -986,22 +989,20 @@ class GNNLoss(nn.Module):
 
             # get bool edge mask
             point_instances = point_instances[edge_index[0, :]] == point_instances[edge_index[1, :]]
-
+            
             # keep only edges that belong to same graph (for batching opteration)
-            point_instances = torch.logical_and(point_instances, same_graph)
-
+            point_instances = torch.logical_and(point_instances, same_graph).bool()
+            
             # setting edges that do not belong to object to zero
             # --> instance 0 is no object
             point_instances[data.point_instances[edge_index[0, :]] == 0] = False
-            point_instances[data.point_instances[edge_index[1, :]] == 0] = False
             point_instances = point_instances.to(self.rank)
             
-            # FILDER EDGES
             point_mask = torch.zeros(point_instances.shape[0], dtype=bool).to(self.rank)
             # if ignoring predictions for static edges in loss, get static edge filter
-            if self.ignore_stat_edges and mode == 'train':
+            if (self.ignore_stat_edges and mode == 'train') or (self.use_node_score and mode != 'train'):
                 point_mask = torch.logical_or(
-                    torch.logical_or(
+                    torch.logical_and(
                         torch.logical_and(
                             ~(data.point_instances_mov[edge_index[0, :]] != 0), 
                             data.point_instances[edge_index[0, :]] != 0),
@@ -1009,7 +1010,7 @@ class GNNLoss(nn.Module):
                             ~(data.point_instances_mov[edge_index[1, :]] != 0), 
                             data.point_instances[edge_index[1, :]] != 0)),
                     point_mask)
-            if self.ignore_background and mode == 'train':
+            if (self.ignore_edges_between_background and mode == 'train') or (self.use_node_score and mode != 'train'):
                 # setting edges that do not belong to object to zero
                 # --> instance 0 is no object
                 point_mask = torch.logical_or(
@@ -1017,7 +1018,7 @@ class GNNLoss(nn.Module):
                         data.point_instances[edge_index[0, :]] == 0,
                         data.point_instances[edge_index[1, :]] == 0),
                     point_mask)
-            
+            '''
             if self.use_node_score and mode != 'train':
                 logits_rounded_node = self.sigmoid(node_logits.clone().detach()).squeeze()
                 point_mask = torch.logical_or(
@@ -1025,13 +1026,13 @@ class GNNLoss(nn.Module):
                         logits_rounded_node[edge_index[0, :]] < self.use_node_score,
                         logits_rounded_node[edge_index[1, :]] < self.use_node_score),
                     point_mask)
-
+            '''
             # filter edge logits, point instances and point categories
             edge_logits = edge_logits[~point_mask]
             point_instances = point_instances[~point_mask].float()
             point_categories = point_categories[~point_mask]
             point_categories1 = point_categories1[~point_mask]
-
+            
             if edge_logits.shape[0] == 0:
                 return None, None, None, None
 
@@ -1104,16 +1105,19 @@ class GNNLoss(nn.Module):
             is_object = is_object.type(torch.FloatTensor).to(self.rank)
             object_class = data.point_categories
 
-            # if ignoring static nodes for loss computation get filter
-            if self.ignore_stat_nodes:
+            # classify moving objects only or ignore static nodes for loss computation get filter
+            if self.classification_is_moving_node or self.ignore_stat_nodes:
                 is_object_stat = torch.logical_and(
                     ~(data.point_instances_mov != 0), data.point_instances != 0)
                 is_object_stat = is_object_stat.to(self.rank)
-
-                # filter logits and object ground truth
-                is_object = is_object[~is_object_stat]
-                node_logits = node_logits[~is_object_stat]
-                object_class = object_class[~is_object_stat]
+                
+                if self.ignore_stat_nodes:
+                    # filter logits and object ground truth
+                    is_object = is_object[~is_object_stat]
+                    node_logits = node_logits[~is_object_stat]
+                    object_class = object_class[~is_object_stat]
+                if self.classification_is_moving_node:
+                    is_object[is_object_stat] = False
 
             # weight pos and neg samples
             if weight_node and not self.focal_loss_node:
