@@ -2,14 +2,15 @@ import torch
 from .tracking_utils import *
 from scipy.optimize import linear_sum_assignment
 import matplotlib.pyplot as plt
+import torch_scatter
 
 
 class SimpleTracker():
     def __init__(self, every_x_frame, overlap, av2_loader, log_id, logger, a_threshold=0.8, i_threshold=0.8, rank=0):
         self.active_tracks = list()
         self.inactive_tracks = list()
-        self.every_x_frame = every_x_frame
-        self.overlap = overlap
+        # self.every_x_frame = every_x_frame
+        # self.overlap = overlap
         self.av2_loader = av2_loader
         self.track_id = 0
         self.ordered_timestamps = torch.tensor(
@@ -52,7 +53,7 @@ class SimpleTracker():
         if not len(self.active_tracks):
             self.active_tracks = list()
             for d in detections:
-                self.active_tracks.append(Track(d, self.track_id, self.every_x_frame, self.overlap))
+                self.active_tracks.append(Track(d, self.track_id))#, self.every_x_frame, self.overlap))
                 self.track_id += 1
             return
         
@@ -82,16 +83,6 @@ class SimpleTracker():
         gt_id_tracks = [t.detections[-1].gt_id for t in self.active_tracks] + \
             [t.detections[-1].gt_id for t in self.inactive_tracks] 
         gt_matches = sum([1 for gt_id_d in gt_id_detections if gt_id_d in gt_id_tracks])
-
-        if make_cost_mat_dist:
-            if matching != 'majority':
-                cost_mat = torch.nn.functional.softmax(-cost_mat, dim=1)
-            else:
-                tr, de, ti = cost_mat.shape
-                cost_mat = cost_mat.view(tr, -1)
-                cost_mat = torch.nn.functional.softmax(-cost_mat, dim=1)
-                cost_mat = cost_mat.view(tr, de, ti)
-            cost_mat = 1 - cost_mat
         
         # match detections and tracks
         if matching == 'greedy':
@@ -109,10 +100,9 @@ class SimpleTracker():
             self.tps += tps
             self.fps += fps
             self.fns += fns
+        
+        elif matching == 'hungarian':
 
-        elif matching == 'majority':
-            re_activate, matched_tracks, matched_dets = \
-                self.majority_vote(cost_mat, num_act, detections, inactive_tracks_to_use)
         
         # reactivated tracks
         reactivated_tracks = list()
@@ -216,62 +206,14 @@ class SimpleTracker():
 
         return re_activate, matched_tracks, matched_dets, tps, fps
 
-    def majority_vote(self, cost_mat, num_act, detections, inactive_tracks_to_use):
-        re_activate = list()
-        matched_tracks = list()
-        matched_dets = list()
-        # majority voting over tracks within overlap
-        # cost_mat shape: trajs, dats, time
-        # get closest vote (trajs, time) for all trajectories over overlap
-        votes = torch.zeros((cost_mat.shape[0], cost_mat.shape[2]))
-        for t in range(cost_mat.shape[2]):
-            cost = cost_mat[:, :, t]
-            vote = torch.argsort(cost, dim=1)
-            votes[:, t] = vote[:, 0]
-
-        # get majority counts
-        count = list()
-        max_vote = list()
-        for track_votes in votes.numpy():
-            c = np.bincount(track_votes.astype(np.int64))
-            count.append(c)
-            max_vote.append(np.max(c))
-
-        # assign the one with the 
-        for idx in torch.argsort(torch.tensor(max_vote))[::-1]:
-            if torch.max(torch.tensor(count[idx])) == 0:
-                continue
-            det_traj = torch.argmax(torch.tensor(count[idx]))
-            act = idx < num_act
-            thresh = self.a_threshold if act else self.i_threshold
-            if cost_mat[idx, det_traj, :].mean() < thresh:
-                matched_dets.append(det_traj)
-                if act: 
-                    self.active_tracks[idx].add_detection(detections[det_traj])
-                    matched_tracks.append(idx)
-                else:
-                    inactive_idx = inactive_tracks_to_use[idx-num_act]
-                    self.inactive_tracks[inactive_idx].add_detection(detections[det_traj])
-                    self.inactive_tracks[inactive_idx].inactive_count = 0
-                    self.active_tracks.append(self.inactive_tracks[inactive_idx])
-                    re_activate.append(inactive_idx)
-
-                for i, c in enumerate(count):
-                    if i == idx:
-                        continue
-                    if c.shape[0] - 1 >= det_traj:
-                        c[det_traj] = 0
-        
-        return re_activate, matched_tracks, matched_dets
-
     def _calculate_traj_dist(self, detections, timestamp, alpha=0.0, \
                              matching='greedy'):
         # get detections and canonical points of last x frames 
         # and convert to current time for all active tracks
-        trajs = [t._get_traj_and_convert_time(
-            timestamp, self.av2_loader, overlap=True) for t in self.active_tracks]
+        trajs = [t._get_whole_traj_and_convert_time(
+            timestamp, self.av2_loader) for t in self.active_tracks]
         cano_points = [t._get_canonical_points_and_convert_time(
-            timestamp, self.av2_loader, overlap=True).float().to(self.rank) for t in self.active_tracks]
+            timestamp, self.av2_loader).float().to(self.rank) for t in self.active_tracks]
 
         # get detections and canonical points of inactive track if 
         # overlap still predicted in previous added detection
@@ -288,60 +230,43 @@ class SimpleTracker():
                     time_dist = t1 - t0
                     # < cos for example if len_traj = 2, inactive_count=1, overlap=1
                     # then <= will be true but should not cos index starts at 0 not 1
-                    if (t.inactive_count + time_dist) * self.every_x_frame + self.overlap \
-                            < t.detections[-1].length:
+                    if time_dist < t.detections[-1].length:
                         trajs.extend([
-                            t._get_traj_and_convert_time(timestamp, self.av2_loader, overlap=True)])
+                            t._get_whole_traj_and_convert_time(timestamp, self.av2_loader)])
                         cano_points.extend([
-                            t._get_canonical_points_and_convert_time(timestamp, self.av2_loader, overlap=True).float().to(self.rank)])
+                            t._get_canonical_points_and_convert_time(timestamp, self.av2_loader).float().to(self.rank)])
                         inactive_tracks_to_use.append(i)
                     else:
                         t.dead = True
 
         # trajectories from canonical point of last added detections
-        trajs_from_cano = [t[1].float().to(self.rank) for t in trajs]
-        # tracejtories from current frame as canonical frame
-        trajs_from_overlap = [t[0].float().to(self.rank) for t in trajs]
+        trajs_from_cano = [t.float().to(self.rank) for t in trajs]
+        traj_lens = [t.shape[1] for t in trajs_from_cano]
         
         # trajectories and canonical points of new detections
         det_trajs = [t._get_traj().float().to(self.rank) for t in detections]
         det_cano_points = [t._get_canonical_points().float().to(self.rank) for t in detections]
 
+        _propagated_pos_tracks = torch.stack([
+            (cano_points[i] + trajs_from_cano[i]).mean(axis=1) for i in range(len(trajs_from_cano))])
+        indices_tracks = torch.tensor([
+            j for i in range(len(trajs_from_cano)) for j in range(trajs_from_cano[i].shape[1])])
+        indices_time = torch.tensor([
+            i for i in range(len(trajs_from_cano)) for j in range(trajs_from_cano[i].shape[1])])
+        propagated_pos_dets = torch.stack([
+            (det_cano_points[i] + torch.stack(det_trajs[i][j])).mean(axis=1) \
+                for i in range(len(det_trajs)) for j in range(max(traj_lens))])
+
         # initialize position distances and trajectory distances
-        num_time = trajs_from_overlap[0].shape[1]
-        if matching != 'majority':
-            dists_p = torch.zeros((len(trajs_from_overlap), len(det_trajs)))
-        else:
-            dists_p = torch.zeros((len(trajs_from_overlap), len(det_trajs), num_time))
+        propagated_pos_dets = propagated_pos_dets.view(max(traj_lens), len(det_trajs), 3)
+        propagated_pos_tracks = torch.zeros((max(traj_lens), len(trajs_from_cano), 3))
+        propagated_pos_tracks[indices_time, indices_tracks, :] = _propagated_pos_tracks
 
-        # get trajectory and position distances
-        # iterate over trajectories
-        for i, (track_traj, track_traj_c, track_p) in enumerate(zip(trajs_from_overlap, trajs_from_cano, cano_points)):
+        dists_p = torch.cdist(propagated_pos_dets, propagated_pos_tracks, p=2)
+        dists_p = dists_p[indices_time, :, indices_tracks]
+        dists_p = torch_scatter.scatter_mean(dists_p, indices_tracks)
 
-            # iterate over detections
-            for j, (det_traj, det_p) in enumerate(zip(det_trajs, det_cano_points)):
-                # initialize distances for overlap time
-                dists_time_p = torch.zeros(num_time)
-
-                # iterate over time, compute minimum distance from each point in track point
-                # cloud to points in detection point cloud and get mean over track points
-                for time in range(num_time):
-                    # from get positions using previous canonical point at time
-                    _traj_p = track_traj_c[:, time, :].unsqueeze(0)
-
-                    # from get positions using current canonical point at time
-                    _det_p = det_p + det_traj[:, time, :].unsqueeze(0)
-                    dists_time_p[time] = self.pdist(_traj_p.mean(axis=1)[:, :-1].unsqueeze(0), _det_p.mean(axis=1)[:, :-1].unsqueeze(0))[0].cpu()
-
-                # depending on matching strategy get mean over time or not
-                if matching != 'majority':
-                    dists_p[i, j] = dists_time_p.mean()
-                else:
-                    dists_p[i, j, :] = dists_time_p
-
-        dists = dists_p
-
-        return dists, \
+        return dists_p, \
             len(self.active_tracks), \
                 len(trajs) - len(self.active_tracks), \
                     inactive_tracks_to_use
