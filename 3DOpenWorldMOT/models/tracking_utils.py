@@ -8,6 +8,7 @@ from pytorch3d.ops import box3d_overlap
 from lapsolver import solve_dense
 from pyarrow import feather
 import pandas as pd
+import copy
 
 
 _class_dict = {
@@ -147,7 +148,7 @@ column_dtypes_dets.update(column_dtypes_dets_wo_traj)
 
 
 class Track():
-    def __init__(self, detection, track_id, every_x_frame, overlap) -> None:
+    def __init__(self, detection, track_id, every_x_frame=-1, overlap=-1) -> None:
         self.detections = [detection]
         detection.track_id = track_id
         self.inactive_count = 0
@@ -195,6 +196,21 @@ class Track():
     def _get_traj(self, i=-1):
         return self.detections[i].trajectory
     
+    def _get_whole_traj_and_convert_time(self, t1, av2_loader, i=-1, overlap=False, city=False):
+        index = torch.where(self.detections[-1].timestamps[0]==t1)[0][0].item()
+        traj = copy.deepcopy(self._get_traj(i))[index:]
+        cano = self._get_canonical_points()
+        traj = torch.tile(
+                cano.unsqueeze(1), (1, traj.shape[1], 1)) + traj
+
+        t0 = self.detections[i].timestamps[0, 0].item()
+        if not city:
+            traj = self._convert_time(t0, t1, av2_loader, traj)
+        else:
+            traj = self._convert_city(t0, av2_loader, traj)
+
+        return traj
+
     def _get_traj_and_convert_time(self, t1, av2_loader, i=-1, overlap=False, city=False):
         index = torch.where(self.detections[-1].timestamps[0]==t1)[0][0].item()
         traj = copy.deepcopy(self._get_traj(i))
