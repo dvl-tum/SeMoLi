@@ -526,6 +526,7 @@ def assign_gt(dets, gt, gt_assign_min_iou=0.25):
     Assigns a GT identity to every detection in self.det_df, based on the ground truth boxes in self.gt_df.
     The assignment is done frame by frame via bipartite matching.
     """
+    gt = gt[gt['category'] != '3']
     for time, time_dets in dets.items():
         frame_gt = gt[gt.timestamp_ns == time]
 
@@ -536,7 +537,6 @@ def assign_gt(dets, gt, gt_assign_min_iou=0.25):
         det_boxes = list()
         for trans, lwh, rot in zip(dets_trans, dets_lwh, dets_rot):
             det_boxes.append(_create_box(trans, lwh, rot))
-        
         gt_boxes = list()
         for trans, lwh, alpha in zip(
                 torch.from_numpy(frame_gt[['tx_m', 'ty_m', 'tz_m']].values),
@@ -550,11 +550,18 @@ def assign_gt(dets, gt, gt_assign_min_iou=0.25):
         
         det_boxes = torch.stack(det_boxes)
         gt_boxes = torch.stack(gt_boxes)
+        ''' 
+        for d in det_boxes:
+            _, iou_matrix = box3d_overlap(
+                d.cuda().unsqueeze(0),
+                d.cuda().unsqueeze(0),
+                eps=1e-6)
+        '''
         _, iou_matrix = box3d_overlap(
             det_boxes.cuda(),
             gt_boxes.cuda(),
             eps=1e-6)
-
+        
         iou_matrix[iou_matrix < gt_assign_min_iou] = np.nan
         dist_matrix = 1 - iou_matrix
         assigned_detect_ixs, assigned_detect_ixs_ped_ids = solve_dense(dist_matrix.cpu().numpy())
