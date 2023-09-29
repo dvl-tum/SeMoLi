@@ -51,7 +51,7 @@ class InitialDetProcessor():
         self.i_threshold = i_threshold
         self.len_thresh = len_thresh
 
-    def track(self, log_id, split):
+    def track(self, log_id, split, detections=None):
         tracker = self._tracker(
             self.every_x_frame,
             self.overlap,
@@ -64,20 +64,23 @@ class InitialDetProcessor():
             self.len_thresh)
 
         # detections = self.dataset(self.collapsed_dets_path, self.gt_path, log_id, self.split).dets
-        detections = self.dataset(self.initial_dets_path, self.gt_path, log_id, self.split).dets
-        detections = tracker.associate(detections)
-        store_initial_detections(detections, log_id, self.tracked_dets_path, split, tracks=True)
-        return detections
+        if detections is None:
+            detections = self.dataset(self.initial_dets_path, self.gt_path, log_id, self.split).dets
+        tracks = tracker.associate(detections)
+        store_initial_detections(tracks, log_id, self.tracked_dets_path, split, tracks=True)
+        return tracks
     
-    def register(self, log_id, split):
-        tracks = self.dataset(self.tracked_dets_path, self.gt_path, log_id, self.split, tracks=True).dets
+    def register(self, log_id, split, tracks=None):
+        if tracks is None:
+            tracks = self.dataset(self.tracked_dets_path, self.gt_path, log_id, self.split, tracks=True).dets
         detections = self._registration(tracks, self.av2_loader, log_id).register()
         store_initial_detections(detections, log_id, self.tracked_dets_path, split, tracks=True)
         detections = {k: [t.detections[i] for i in range(len(t.detections))] for k, t in detections.items()}
         return detections
 
-    def collaps(self, log_id, split):
-        detections = self.dataset(self.initial_dets_path, self.gt_path, log_id, self.split).dets
+    def collaps(self, log_id, split, detections=None):
+        if detections is None:
+            detections = self.dataset(self.initial_dets_path, self.gt_path, log_id, self.split).dets
         self.collaps = self._collaps(self.av2_loader)
         detections = self.collaps.collaps(detections, log_id, self.gt_path)
         store_initial_detections(detections, log_id, self.collapsed_dets_path, split, tracks=False, gt_path=self.gt_path)
@@ -87,10 +90,8 @@ class InitialDetProcessor():
         return self.dataset(self.initial_dets_path, self.gt_path, log_id, self.split).dets
 
     def to_feather(self, detections, log_id, out_path, split):
-        # detections = [d for track_dets in detections.values() for d in track_dets]
         to_feather(detections, log_id, out_path, self.split, self.rank, precomp_dets=False)
         write_path = os.path.join(out_path, split, log_id, 'annotations.feather')
-        # write_path = os.path.join(out_path, self.split, 'feathers', f'all_{self.rank}.feather')
         logger.info(f'wrote {write_path}')
 
     @staticmethod
@@ -205,22 +206,24 @@ def track(rank, cfg, world_size):
             i_threshold=cfg.tracker_options.i_threshold,
             len_thresh=cfg.tracker_options.len_thresh)
         print(seq_name, detection_set)
+        detections = None
+        tracks = None
         if cfg.tracker_options.convert_initial:
             logger.info('Converting initial...')
             detections = detsprocessor.get_initial_dets(seq_name, detection_set)
             detsprocessor.to_feather(detections, seq_name, os.path.join(cfg.tracker_options.out_path_for_eval, cfg.tracker_options.initial_dets), detection_set)
         if cfg.tracker_options.collaps:
             logger.info('Collapsing...')
-            detections = detsprocessor.collaps(seq_name, detection_set)
+            detections = detsprocessor.collaps(seq_name, detection_set, detections)
             detsprocessor.to_feather(detections, seq_name, os.path.join(cfg.tracker_options.out_path_for_eval, cfg.tracker_options.collapsed_dets), detection_set)
         if cfg.tracker_options.track:
             logger.info('Tracking...')
-            detections = detsprocessor.track(seq_name, detection_set)
-            detections = {k: v.detections for k, v in detections.items()}
+            tracks = detsprocessor.track(seq_name, detection_set, detections=detections)
+            detections = {k: v.detections for k, v in tracks.items()}
             detsprocessor.to_feather(detections, seq_name, os.path.join(cfg.tracker_options.out_path_for_eval, cfg.tracker_options.tracked_dets), detection_set)
         if cfg.tracker_options.register:
             logger.info('Registration...')
-            detections = detsprocessor.register(seq_name, detection_set)
+            detections = detsprocessor.register(seq_name, detection_set, tracks=tracks)
             detsprocessor.to_feather(detections, seq_name, os.path.join(cfg.tracker_options.out_path_for_eval, cfg.tracker_options.registered_dets), detection_set)
 
 

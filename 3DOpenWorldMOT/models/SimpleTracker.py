@@ -48,9 +48,6 @@ class SimpleTracker():
         
         return {t.track_id: t for t in active_tracks if len(t) > self.len_thresh}
 
-    def register(self, tracks):
-        pass
-
     def associate_timestamp(
             self,
             detections,

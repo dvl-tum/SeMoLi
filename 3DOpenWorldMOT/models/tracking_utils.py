@@ -155,19 +155,19 @@ class Track():
         self.inactive_count = 0
         self.track_id = track_id
         self.log_id = detection.log_id
-        self.every_x_frame = every_x_frame
-        self.overlap = overlap
-        self.final = list()
         self.dead = False
 
     def add_detection(self, detection):
         self.detections.append(detection)
         detection.track_id = self.track_id
     
-    def final_detections(self, av2_loader):
+    def fill_detections(self, av2_loader, ordered_timestamps):
+        filled_detections = list()
         for i, det in enumerate(self.detections):
-            if i != len(self.detection) or self.inactive_count != 0:
-                _range = self.every_x_frame
+            if i != len(self.detections)-1:
+                t0 = self.detections[i].timestamps[0, 0].item()
+                t1 = self.detections[i+1].timestamps[0, 0].item()
+                _range = ordered_timestamps.index(t1) - self.ordered_timestamps.index(t0)
             else:
                 _range = det.trajectory.shape[1]
 
@@ -184,20 +184,23 @@ class Track():
                     mean_flow = (det.trajectory[:, time+1, :] - det.trajectory[:, time, :]).mean(axis=0)
                 else:
                     mean_flow = (det.trajectory[:, time, :] - det.trajectory[:, time-1, :]).mean(axis=0)
-                alpha = torch.arctan(mean_flow[1]/mean_flow[0])
-                rot = torch.tensor([
-                    [torch.cos(alpha), torch.sin(alpha), 0],
-                    [torch.sin(alpha), torch.cos(alpha), 0],
-                    [0, 0, 1]])
+                
+                filled_detections.append(Detection(
+                    trajectory=mean_flow,
+                    canonical_points=points_c_time,
+                    timestamps=self.detections[i].timestamps[0, time],
+                    log_id=det.log_id,
+                    num_interior=det.num_interior))
+        
+        return filled_detections
 
-                lwh, translation = get_rotated_center_and_lwh(points_c_time, rot)
-                pts_density = (lwh[0] * lwh[1] * lwh[2]) / det.num_interior
-                self.final.append(Detection(rot, translation, lwh, det.timestamps[0, time], det.log_id, det.num_interior, pts_density=pts_density))
-    
     def _get_traj(self, i=-1):
         return self.detections[i].trajectory
     
-    def _get_whole_traj_and_convert_time(self, t1, av2_loader, i=-1, overlap=False, city=False):
+    def _get_canonical_points(self, i=-1):
+        return self.detections[i].canonical_points
+    
+    def _get_whole_traj_and_convert_time(self, t1, av2_loader, i=-1, city=False):
         index = torch.where(self.detections[-1].timestamps[0]==t1)[0][0].item()
         traj = copy.deepcopy(self._get_traj(i))[:, index:]
         cano = self._get_canonical_points()
@@ -211,45 +214,9 @@ class Track():
             traj = self._convert_city(t0, av2_loader, traj)
 
         return traj
-
-    def _get_traj_and_convert_time(self, t1, av2_loader, i=-1, overlap=False, city=False):
-        index = torch.where(self.detections[-1].timestamps[0]==t1)[0][0].item()
-        traj = copy.deepcopy(self._get_traj(i))
-        if overlap:
-            start = self.inactive_count * (self.every_x_frame)
-            end = start + self.overlap
-
-            assert end < self.detections[i].length, 'inactive track too short'
-            # +1 cos of indexing
-            traj = traj[:, start+index:end+index]
-        
-        if overlap:
-            traj_from_overlap = traj - torch.tile(
-                traj[:, 0, :].unsqueeze(1), (1, traj.shape[1], 1))
-
-        cano = self._get_canonical_points()
-        traj = torch.tile(
-                cano.unsqueeze(1), (1, traj.shape[1], 1)) + traj
-
-        t0 = self.detections[i].timestamps[0, 0].item()
-        if not city:
-            traj = self._convert_time(t0, t1, av2_loader, traj)
-        else:
-            traj = self._convert_city(t0, av2_loader, traj)
-
-        if overlap:
-            return traj_from_overlap, traj
-        else:
-            return traj
     
-    def _get_canonical_points(self, i=-1):
-        return self.detections[i].canonical_points
-    
-    def _get_canonical_points_and_convert_time(self, t1, av2_loader, i=-1, overlap=False, city=False):
+    def _get_canonical_points_and_convert_time(self, t1, av2_loader, i=-1, city=False):
         canonical_points = copy.deepcopy(self._get_canonical_points(i=i))
-        if overlap:
-            start = (1 + self.inactive_count) * (self.every_x_frame)
-            canonical_points += copy.deepcopy(self.detections[i].trajectory[:, start])
         t0 = self.detections[i].timestamps[0, 0].item()
         if not city:
             canonical_points = self._convert_time(t0, t1, av2_loader, canonical_points)
@@ -288,8 +255,8 @@ class Track():
             raise StopIteration
 
 
-class InitialDetection():
-    def __init__(self, trajectory, canonical_points, timestamps, log_id, num_interior, overlap, gt_id,gt_id_box=None, rot=None, alpha=None, gt_cat=-10) -> None:
+class Detection():
+    def __init__(self, trajectory, canonical_points, timestamps, log_id, num_interior, overlap=None, gt_id=None, gt_id_box=None, rot=None, alpha=None, gt_cat=-10, lwh=None, translation=None, pts_density=None) -> None:
         self.trajectory = trajectory
         self.canonical_points = canonical_points
         self.timestamps = timestamps
@@ -301,6 +268,7 @@ class InitialDetection():
         self.gt_id_box = gt_id
         self.length = trajectory.shape[0] if len(trajectory.shape) < 3 else trajectory.shape[1]
         self.track_id = 0
+        self.pts_density = pts_density
         
         if rot is not None:
             self.rot = rot
@@ -308,11 +276,28 @@ class InitialDetection():
         else:
             self.rot, self.alpha = self.get_alpha_rot_t0_to_t1(0, 1, self.trajectory)
         
-        self.lwh, self.translation = get_rotated_center_and_lwh(canonical_points, self.rot)
+        if lwh is None:
+            self.lwh, self.translation = get_rotated_center_and_lwh(canonical_points, self.rot)
+        else:
+            self.lwh, self.translation = lwh, translation
+        
+        if pts_density is None:
+            self.pts_density = (self.lwh[0] * self.lwh[1] * self.lwh[2]) / self.num_interior
+        else:
+            self.pts_density = pts_density
+
         if len(self.trajectory.shape) > 2:
             self.mean_trajectory = torch.mean(self.trajectory, dim=0)
         else:
             self.mean_trajectory = self.trajectory
+        
+    @property
+    def timestamp(self):
+        return self.timestamps[0, 0]
+    
+    @property
+    def traj(self):
+        return self.trajectory
 
     @property
     def rotation(self):
@@ -322,13 +307,8 @@ class InitialDetection():
         rot, alpha = get_alpha_rot_t0_to_t1(t0, t1, trajectory, traj_t0, traj_t1)
         return rot, alpha
 
-    def _get_traj(self):
-        # traj = self.trajectory[:, 1:self.overlap+1]
-        traj = self.trajectory
-        return traj
-
     def _get_traj_city(self, av2_loader, t0):
-        traj = self._get_traj()
+        traj = self.trajectory
         city_SE3_t0 = av2_loader.get_city_SE3_ego(self.log_id, t0)
         return city_SE3_t0.transform_point_cloud(traj)
     
@@ -342,11 +322,6 @@ class InitialDetection():
         # if  t0 == 1507677181475568 or t0 == 1507677182775411 or t0 == 1507677182975295:
         #     print(city_SE3_t0.translation)
         return city_SE3_t0.transform_point_cloud(canonical_points)
-
-    def final_detection(self):
-        pts_density = (self.lwh[0] * self.lwh[1] * self.lwh[2]) / self.num_interior
-        self.final = Detection(self.rot, self.alpha, self.translation, self.lwh, self.timestamps[0, 0], self.log_id, self.num_interior, pts_density=pts_density, trajectory=self.mean_trajectory, gt_id=self.gt_id, gt_cat=self.gt_cat)
-        return self.final
 
 
 def get_rotated_center_and_lwh(pc, rot):
@@ -383,6 +358,7 @@ def get_center(canonical_points):
 
     return translation
 
+
 def get_lwh(object_points):
     points_c_time = object_points
     mins, maxs = points_c_time.min(dim=0), points_c_time.max(dim=0)
@@ -390,55 +366,6 @@ def get_lwh(object_points):
 
     return lwh
 
-
-class Detection():
-    def __init__(self, rot, alpha, translation, lwh, timestamp, log_id, num_interior, pts_density, trajectory, gt_id, gt_cat) -> None:
-        self.rot = rot
-        self.alpha = alpha
-        self.translation = translation
-        self.lwh = lwh
-        self.timestamp = timestamp
-        self.log_id = log_id
-        self.num_interior = num_interior
-        self.pts_density = pts_density
-        self.trajectory = trajectory.reshape(trajectory.shape[0]*trajectory.shape[1])
-        self.gt_id = gt_id
-        self.gt_cat = gt_cat
-   
-    @property
-    def timestamps(self):
-        return torch.tensor(self.timestamp)
-
-
-class CollapsedDetection():
-    def __init__(self, rot, alpha, translation, lwh, traj, canonical_points, timestamp, log_id, num_interior, overlap, pts_density, gt_id, gt_cat=-10) -> None:
-        self.rot = rot
-        self.alpha = alpha
-        self.translation = translation
-        self.lwh = lwh
-        self.traj = traj
-        self.canonical_points = canonical_points
-        self.timestamp = timestamp
-        self.log_id = log_id
-        self.num_interior = num_interior
-        self.overlap = overlap
-        self.track_id = 0
-        self.pts_density = pts_density
-        self.gt_id = gt_id
-        self.gt_cat = gt_cat
-    
-    @property
-    def trajectory(self):
-        return self.traj
-
-    @property
-    def timestamps(self):
-        return torch.tensor(self.timestamp)
-
-    def final_detection(self):
-        pts_density = (self.lwh[0] * self.lwh[1] * self.lwh[2]) / self.num_interior
-        self.final = Detection(self.rot, self.alpha, self.translation, self.lwh, self.timestamp, self.log_id, self.num_interior, pts_density=pts_density, trajectory=self.traj, gt_id=self.gt_id, gt_cat=self.gt_cat)
-        return self.final
 
 def store_initial_detections(detections, seq, out_path, split, tracks=False, gt_path=None):
     p = f'{out_path}/{split}/{seq}'
@@ -494,7 +421,7 @@ def load_initial_detections(out_path, split, seq=None, tracks=False, every_x_fra
         except:
             print(os.path.join(p, d))
             quit()
-        d = InitialDetection(
+        d = Detection(
             torch.from_numpy(d['trajectory']), 
             torch.from_numpy(d['canonical_points']) if d['canonical_points'] is not None else d['canonical_points'], 
             torch.atleast_2d(torch.from_numpy(d['timestamps'])),
@@ -650,11 +577,10 @@ def to_feather(detections, log_id, out_path, split, rank, precomp_dets=False, na
     for i, timestamp in enumerate(sorted(detections.keys())):
         dets = detections[timestamp]
         for det in dets:
-            det = det.final_detection()
-            
+
             # only keep bounding boxes with lwh > 0
-            if det.lwh[0] < 0.1 or det.lwh[1] < 0.1 or det.lwh[2] < 0.1:
-                continue
+            # if det.lwh[0] < 0.1 or det.lwh[1] < 0.1 or det.lwh[2] < 0.1:
+            #     continue
 
             # quaternion rotation around z axis
             quat = torch.tensor([torch.cos(det.alpha/2), 0, 0, torch.sin(det.alpha/2)]).numpy()

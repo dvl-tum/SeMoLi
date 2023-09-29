@@ -99,7 +99,7 @@ class Detector3D():
 
             # generate new detected trajectory
             traj_cluster = traj[clusters==c]
-            detections.append(InitialDetection(
+            detections.append(Detection(
                 traj_cluster.cpu(),
                 point_cluster.cpu(),
                 log_id=log_id,

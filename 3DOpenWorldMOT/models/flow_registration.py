@@ -13,7 +13,6 @@ class FlowRegistration():
     def register(self):
         detections = dict()
         for j, track in enumerate(self.active_tracks):
-            track_dets = list()
             # we start from timestep with most points and then go
             # from max -> end -> start -> max
 
@@ -56,18 +55,9 @@ class FlowRegistration():
                     track.detections[i].lwh = lwh
                     track.detections[i].translation = translation
                     track.detections[i].num_interior = num_interior
-                    track_dets.append(track.detections[i])
-                    track_dets.reverse()
-            else:
-                for i in range(len(track.detections)):
-                    points = track._get_canonical_points(i=i)
-                    lwh, translation = get_rotated_center_and_lwh(points, track.detections[i].rot)
-                    
-                    # setting last detection
-                    track.detections[i].lwh = lwh
-                    track.detections[i].translation = translation
-                    track_dets.append(track.detections[i])
+                
+            track_dets = track.fill_detections(self.av2_loader)
 
-            detections[j] = track # track_dets
+            detections[j] = track_dets
         
         return detections
