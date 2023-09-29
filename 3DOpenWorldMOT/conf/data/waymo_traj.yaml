@@ -1,18 +1,18 @@
 # @package data
 class_class: 'TrajectoryDataLoader'
 dataset_name: 'waymo_traj'
-trajectory_dir: '/storage/user/seidensc/datasets/trajectories_waymo/traj_dataset_waymo/gt_all_egocomp_margin0.6_width2' #'/storage/user/seidensc/datasets/trajectories_waymo/trajectories_rubbish/egocomp_remgroundrc_remclosepts_remlowpts_remstatic_alllaseridx_2000'
+trajectory_dir: '/workspace/all_egocomp_margin0.6_width25/all_egocomp_margin0.6_width25' # '/storage/user/seidensc/datasets/trajectories_waymo/traj_dataset_waymo/gt_all_egocomp_margin0.6_width2' #'/storage/user/seidensc/datasets/trajectories_waymo/trajectories_rubbish/egocomp_remgroundrc_remclosepts_remlowpts_remstatic_alllaseridx_2000'
 data_dir: '/workspace/Waymo_Converted' # '../../../data/waymo_converted'
-processed_dir: False
+processed_dir: '/workspace/all_egocomp_margin0.6_width25/all_egocomp_margin0.6_width25'
 do_process: False
 num_classes: 1
 use_all_points: False
-use_all_points_eval: True
-num_points: 4096
-num_points_eval: 4096
+use_all_points_eval: False
+num_points: 16000
+num_points_eval: 16000
 # remove input data
 remove_static: 0
-static_thresh: 1.0
+static_thresh: 0.0
 # remove gt data
 remove_static_gt: 1
 remove_static_strategy: 'per_frame' #'per_frame' #'per_seq' #'per_frame' #'per_seq'
@@ -25,5 +25,5 @@ margin: 0.6
 traj_channels: 75
 percentage_data_train: 0.5
 percentage_data_val: 0.1
-filtered_file_path: '/dvlresearch/jenny/'
+filtered_file_path: '/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/' #'/dvlresearch/jenny/'
 detection_set: 'val_gnn' # 'val_gnn' 'train_gnn' 'val_detector', 'train_detector'

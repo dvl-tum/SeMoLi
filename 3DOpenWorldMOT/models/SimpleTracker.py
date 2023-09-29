@@ -1,12 +1,13 @@
+import pytorch3d
+from lapsolver import solve_dense
 import torch
 from .tracking_utils import *
 from scipy.optimize import linear_sum_assignment
 import matplotlib.pyplot as plt
-import torch_scatter
 
 
 class SimpleTracker():
-    def __init__(self, every_x_frame, overlap, av2_loader, log_id, logger, a_threshold=0.8, i_threshold=0.8, rank=0):
+    def __init__(self, every_x_frame, overlap, av2_loader, log_id, rank, logger, a_threshold=0.8, i_threshold=0.8, len_thresh=5):
         self.active_tracks = list()
         self.inactive_tracks = list()
         # self.every_x_frame = every_x_frame
@@ -23,6 +24,7 @@ class SimpleTracker():
         self.i_threshold = i_threshold
         self.rank = rank
         self.logger = logger
+        self.len_thresh = len_thresh
     
     def associate(self, detections):
         # per timestampdetections
@@ -37,25 +39,33 @@ class SimpleTracker():
                 dets,
                 timestamp=time,
                 last=len(detections)==i+1)
+        
+        self.active_tracks += self.inactive_tracks
+        self.logger.info(f'TPA: {self.tps}, FNA: {self.fns}, FPS: {self.fps}')
+        self.tps = 0
+        self.fns = 0
+        self.fps = 0
+        
+        return {t.track_id: t for t in active_tracks if len(t) > self.len_thresh}
 
-        return active_tracks
+    def register(self, tracks):
+        pass
 
     def associate_timestamp(
             self,
             detections,
-            matching='greedy',
+            matching='hungarian',
             timestamp=None,
             alpha=0.0,
             make_cost_mat_dist=False,
             last=False):
-        
         # add tracks if no tracks yet, initialize tracks
         if not len(self.active_tracks):
             self.active_tracks = list()
             for d in detections:
                 self.active_tracks.append(Track(d, self.track_id))#, self.every_x_frame, self.overlap))
                 self.track_id += 1
-            return
+            return self.active_tracks
         
         if not len(detections):
             # move all tracks to inactive track
@@ -73,11 +83,11 @@ class SimpleTracker():
             
             # reset active tracks
             self.active_tracks = list()
-            return
+            return self.active_tracks
         
         # calculate matching costs between detections and tracks
         cost_mat, num_act, num_inact, inactive_tracks_to_use = \
-            self._calculate_traj_dist(detections, timestamp, matching=matching, alpha=alpha)
+            self._calculate_traj_dist(detections, timestamp)
 
         gt_id_detections = [d.gt_id for d in detections]
         gt_id_tracks = [t.detections[-1].gt_id for t in self.active_tracks] + \
@@ -96,14 +106,22 @@ class SimpleTracker():
                 gt_id_tracks=gt_id_tracks,
                 gt_id_detections=gt_id_detections)
             
-            fns = gt_matches - tps
-            self.tps += tps
-            self.fps += fps
-            self.fns += fns
-        
         elif matching == 'hungarian':
-
+            re_activate, matched_tracks, matched_dets, tps, fps = self.hungarian(
+                    cost_mat,
+                num_act,
+                detections,
+                inactive_tracks_to_use,
+                active_first=True,
+                timestamp=timestamp,
+                gt_id_tracks=gt_id_tracks,
+                gt_id_detections=gt_id_detections)
         
+        fns = gt_matches - tps
+        self.tps += tps
+        self.fps += fps
+        self.fns += fns
+
         # reactivated tracks
         reactivated_tracks = list()
         for r, t in enumerate(self.inactive_tracks):
@@ -145,19 +163,48 @@ class SimpleTracker():
                 self.active_tracks.append(Track(
                     detections[idx],
                     self.track_id,
-                    overlap=self.overlap,
-                    every_x_frame=self.every_x_frame))
+                    # overlap=self.overlap,
+                    # every_x_frame=self.every_x_frame
+                    ))
                 self.track_id += 1
-
-        if last:
-            self.active_tracks += self.inactive_tracks
-            self.loggerlogger.info(f'TPA: {self.tps}, FNA: {self.fns}, FPS: {self.fps}')
-            self.tps = 0
-            self.fns = 0
-            self.fps = 0
 
         return self.active_tracks
     
+    def hungarian(
+            self,
+            cost_mat,
+            num_act,
+            detections,
+            inactive_tracks_to_use,
+            active_first=False,
+            timestamp=None,
+            gt_id_tracks=None,
+            gt_id_detections=None):
+        re_activate = list()
+        matched_tracks = list()
+        matched_dets = list()
+        fps = 0
+        tps = 0
+        rids, cids = solve_dense(cost_mat)
+        for rid, cid in zip(rids, cids):
+            # check if active or inactive track and get threshold
+            act = cid < num_act
+            thresh = self.a_threshold if act else self.i_threshold
+            # match only of cost smaller than threshold
+            if cost_mat[rid, cid] < thresh:
+                matched_dets.append(rid)
+                # if matched to inactive track, reactivate
+                if act:
+                    self.active_tracks[cid].add_detection(detections[rid])
+                    matched_tracks.append(cid)
+                else:
+                    inactive_idx = inactive_tracks_to_use[cid-num_act]
+                    self.inactive_tracks[inactive_idx].add_detection(detections[rid])
+                    re_activate.append(inactive_idx)
+                tps = tps + 1 if gt_id_tracks[cid] == gt_id_detections[rid] else tps
+                fps = fps + 1 if gt_id_tracks[cid] != gt_id_detections[rid] else fps
+        return re_activate, matched_tracks, matched_dets, tps, fps
+
     def greedy(
             self,
             cost_mat,
@@ -168,6 +215,9 @@ class SimpleTracker():
             timestamp=None,
             gt_id_tracks=None,
             gt_id_detections=None):
+        
+        cost_mat = cost_mat.t
+
         re_activate = list()
         matched_tracks = list()
         matched_dets = list()
@@ -206,8 +256,7 @@ class SimpleTracker():
 
         return re_activate, matched_tracks, matched_dets, tps, fps
 
-    def _calculate_traj_dist(self, detections, timestamp, alpha=0.0, \
-                             matching='greedy'):
+    def _calculate_traj_dist(self, detections, timestamp, alpha=0.0, dist='cd'):
         # get detections and canonical points of last x frames 
         # and convert to current time for all active tracks
         trajs = [t._get_whole_traj_and_convert_time(
@@ -240,33 +289,43 @@ class SimpleTracker():
                         t.dead = True
 
         # trajectories from canonical point of last added detections
-        trajs_from_cano = [t.float().to(self.rank) for t in trajs]
-        traj_lens = [t.shape[1] for t in trajs_from_cano]
-        
+        propagated_pos_tracks = [t.float().to(self.rank) for t in trajs]
+        traj_lens = [t.shape[1] for t in propagated_pos_tracks]
+        num_tracks = len(traj_lens)
+
         # trajectories and canonical points of new detections
         det_trajs = [t._get_traj().float().to(self.rank) for t in detections]
         det_cano_points = [t._get_canonical_points().float().to(self.rank) for t in detections]
-
-        _propagated_pos_tracks = torch.stack([
-            (cano_points[i] + trajs_from_cano[i]).mean(axis=1) for i in range(len(trajs_from_cano))])
+        '''
         indices_tracks = torch.tensor([
-            j for i in range(len(trajs_from_cano)) for j in range(trajs_from_cano[i].shape[1])])
+            j for i in range(len(propagated_pos_tracks)) for j in range(propagated_pos_tracks[i].shape[1])])
         indices_time = torch.tensor([
-            i for i in range(len(trajs_from_cano)) for j in range(trajs_from_cano[i].shape[1])])
-        propagated_pos_dets = torch.stack([
-            (det_cano_points[i] + torch.stack(det_trajs[i][j])).mean(axis=1) \
-                for i in range(len(det_trajs)) for j in range(max(traj_lens))])
+            i for i in range(len(propagated_pos_tracks)) for j in range(propagated_pos_tracks[i].shape[1])])
+        propagated_pos_tracks = [
+            propagated_pos_tracks[i][:, j, :] for i in range(num_tracks) for j in range(propagated_pos_tracks[i].shape[1])]
+        '''
+        propagated_pos_dets = [
+            torch.tile(det_cano_points[i].unsqueeze(1), (1, det_trajs[i].shape[1], 1)) + det_trajs[i] \
+                for i in range(len(det_trajs))]
 
         # initialize position distances and trajectory distances
-        propagated_pos_dets = propagated_pos_dets.view(max(traj_lens), len(det_trajs), 3)
-        propagated_pos_tracks = torch.zeros((max(traj_lens), len(trajs_from_cano), 3))
-        propagated_pos_tracks[indices_time, indices_tracks, :] = _propagated_pos_tracks
-
-        dists_p = torch.cdist(propagated_pos_dets, propagated_pos_tracks, p=2)
-        dists_p = dists_p[indices_time, :, indices_tracks]
-        dists_p = torch_scatter.scatter_mean(dists_p, indices_tracks)
-
-        return dists_p, \
+        chamferDist = pytorch3d.loss.chamfer_distance
+        cd_dists = torch.zeros(len(propagated_pos_dets), num_tracks)
+        mean_dist = torch.zeros(len(propagated_pos_dets), num_tracks)
+        for k in range(len(propagated_pos_dets)):
+            for i in range(num_tracks):
+                cd_dist_track = chamferDist(
+                        propagated_pos_tracks[i].permute(1, 0, 2), propagated_pos_dets[k][:, :propagated_pos_tracks[i].shape[1]].permute(1, 0, 2))[0]
+                # for t in range(propagated_pos_tracks[i].shape[1]):
+                #     print(propagated_pos_tracks[i].permute(1, 0, 2)[t].mean(), propagated_pos_dets[k][:, :propagated_pos_tracks[i].shape[1]].permute(1, 0, 2)[t].mean())
+                mean_dist[k, i] = self.pdist(propagated_pos_tracks[i].permute(1, 0, 2).mean(dim=1),
+                        propagated_pos_dets[k][:, :propagated_pos_tracks[i].shape[1]].permute(1, 0, 2).mean(dim=1)).mean()
+                cd_dists[k, i] = cd_dist_track
+        if dist == 'cd':
+            dists = cd_dists
+        else:
+            dists = mean_dist
+        return dists, \
             len(self.active_tracks), \
                 len(trajs) - len(self.active_tracks), \
                     inactive_tracks_to_use

@@ -2,12 +2,12 @@
 model_name: GNN
 weight_path: ''
 hyperparams:
-    graph: knn
+    graph: 'radius'
     traj_channels: 75
     pos_channels: 3
-    k: 8
+    k: 32
     k_eval: 32
-    r: 5.0
+    r: 2.0
     edge_attr: diffpostraj
     graph_construction: pos
     node_attr: traj
@@ -47,5 +47,6 @@ loss_hyperparams:
     edge_weight: 1
     ignore_stat_edges: 0
     ignore_stat_nodes: 0
-    ignore_background: 0
+    ignore_edges_between_background: 0
+    classification_is_moving_node: 0
     use_node_score: ${models.hyperparams.use_node_score}

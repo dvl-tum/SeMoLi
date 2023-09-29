@@ -28,7 +28,8 @@ logger.addHandler(ch)
 class InitialDetProcessor():
     def __init__(self, tracker_type, tracker_params, registration_type, collaps_type,
                  every_x_frame, overlap, av2_loader, rank, track_data_path, initial_dets_path, 
-                 collapsed_dets_path, tracked_dets_path, registered_dets_path, gt_path, split):
+                 collapsed_dets_path, tracked_dets_path, registered_dets_path, gt_path, split,
+                 detection_set, percentage, a_threshold, i_threshold, len_thresh):
         self.every_x_frame = every_x_frame
         self.overlap = overlap
         self.av2_loader = av2_loader
@@ -44,6 +45,11 @@ class InitialDetProcessor():
         self.registered_dets_path = os.path.join(track_data_path, registered_dets_path)
         self.gt_path = gt_path
         self.split = split
+        self.detection_set = detection_set
+        self.percentage = percentage
+        self.a_threshold = a_threshold
+        self.i_threshold = i_threshold
+        self.len_thresh = len_thresh
 
     def track(self, log_id, split):
         tracker = self._tracker(
@@ -52,9 +58,13 @@ class InitialDetProcessor():
             self.av2_loader,
             log_id,
             self.rank,
-            logger)
+            logger,
+            self.a_threshold,
+            self.i_threshold,
+            self.len_thresh)
 
-        detections = self.dataset(self.collapsed_dets_path, self.gt_path, log_id, self.split).dets
+        # detections = self.dataset(self.collapsed_dets_path, self.gt_path, log_id, self.split).dets
+        detections = self.dataset(self.initial_dets_path, self.gt_path, log_id, self.split).dets
         detections = tracker.associate(detections)
         store_initial_detections(detections, log_id, self.tracked_dets_path, split, tracks=True)
         return detections
@@ -139,18 +149,22 @@ def main(cfg):
 
 
 def track(rank, cfg, world_size):
-    loader = AV2SensorDataLoader(data_dir=Path(f'{cfg.data.data_dir}_{cfg.tracker_options.split}/Waymo_Converted/{cfg.tracker_options.split}'), labels_dir=Path(f'{cfg.data.data_dir}_{cfg.tracker_options.split}/Waymo_Converted/{cfg.tracker_options.split}'))
     if cfg.multi_gpu:
         os.environ['MASTER_ADDR'] = 'localhost'
         os.environ['MASTER_PORT'] = '12355'
         torch.cuda.set_device(rank)
         dist.init_process_group('nccl', rank=rank, world_size=world_size)
+    cfg.tracker_options.initial_dets = f'{cfg.tracker_options.initial_dets}/{cfg.tracker_options.model}'
     dataset = MOT3DTrackDataset(
-        os.path.join(cfg.tracker_options.track_data_path, 'initial_dets'),
+        os.path.join(cfg.tracker_options.track_data_path, cfg.tracker_options.initial_dets),
         cfg.data.data_dir,
-        cfg.tracker_options.split,
+        cfg.data.detection_set,
+        cfg.data.percentage_data_val,
         cfg.data.debug)
-    
+    cfg.tracker_options.collapsed_dets = f'{cfg.tracker_options.collapsed_dets}/{cfg.tracker_options.model}' 
+    cfg.tracker_options.tracked_dets = f'{cfg.tracker_options.tracked_dets}/{cfg.tracker_options.model}'
+    cfg.tracker_options.registered_dets = f'{cfg.tracker_options.registered_dets}/{cfg.tracker_options.model}'
+
     if not cfg.multi_gpu:
         dataloader = DataLoader(
             dataset,
@@ -166,8 +180,9 @@ def track(rank, cfg, world_size):
             sampler=sampler)
     
     for data in dataloader:
-        seq_name, dataset_path, gt_path, split = data
-        seq_name, dataset_path, gt_path, split = seq_name[0], dataset_path[0], gt_path[0], split[0]
+        seq_name, dataset_path, gt_path, split, detection_set, percentage = data
+        seq_name, dataset_path, gt_path, split, detection_set, percentage = seq_name[0], dataset_path[0], gt_path[0], split[0], detection_set[0], percentage[0]
+        loader = AV2SensorDataLoader(data_dir=Path(f'{cfg.data.data_dir}_{split}/Waymo_Converted/{split}'), labels_dir=Path(f'{cfg.data.data_dir}_{split}/Waymo_Converted/{split}'))    
         detsprocessor = InitialDetProcessor(
             tracker_type=cfg.tracker_options.tracker_type,
             tracker_params=cfg.tracker_options,
@@ -183,25 +198,30 @@ def track(rank, cfg, world_size):
             tracked_dets_path=cfg.tracker_options.tracked_dets,
             registered_dets_path=cfg.tracker_options.registered_dets,
             gt_path=f'{gt_path}_{split}/Waymo_Converted/{split}',
-            split=split)
-
+            split=split,
+            detection_set=detection_set,
+            percentage=percentage,
+            a_threshold=cfg.tracker_options.a_threshold,
+            i_threshold=cfg.tracker_options.i_threshold,
+            len_thresh=cfg.tracker_options.len_thresh)
+        print(seq_name, detection_set)
         if cfg.tracker_options.convert_initial:
             logger.info('Converting initial...')
-            detections = detsprocessor.get_initial_dets(seq_name, split)
-            detsprocessor.to_feather(detections, seq_name, os.path.join(cfg.tracker_options.out_path_for_eval, 'initial'), split)
+            detections = detsprocessor.get_initial_dets(seq_name, detection_set)
+            detsprocessor.to_feather(detections, seq_name, os.path.join(cfg.tracker_options.out_path_for_eval, cfg.tracker_options.initial_dets), detection_set)
         if cfg.tracker_options.collaps:
             logger.info('Collapsing...')
-            detections = detsprocessor.collaps(seq_name, split)
-            detsprocessor.to_feather(detections, seq_name, os.path.join(cfg.tracker_options.out_path_for_eval, 'collapsed'), split)
+            detections = detsprocessor.collaps(seq_name, detection_set)
+            detsprocessor.to_feather(detections, seq_name, os.path.join(cfg.tracker_options.out_path_for_eval, cfg.tracker_options.collapsed_dets), detection_set)
         if cfg.tracker_options.track:
             logger.info('Tracking...')
-            detections = detsprocessor.track(seq_name, split)
+            detections = detsprocessor.track(seq_name, detection_set)
             detections = {k: v.detections for k, v in detections.items()}
-            detsprocessor.to_feather(detections, seq_name, os.path.join(cfg.tracker_options.out_path_for_eval, 'tracked'), split)
+            detsprocessor.to_feather(detections, seq_name, os.path.join(cfg.tracker_options.out_path_for_eval, cfg.tracker_options.tracked_dets), detection_set)
         if cfg.tracker_options.register:
             logger.info('Registration...')
-            detections = detsprocessor.register(seq_name, split)
-            detsprocessor.to_feather(detections, seq_name, os.path.join(cfg.tracker_options.out_path_for_eval, 'registered'), split)
+            detections = detsprocessor.register(seq_name, detection_set)
+            detsprocessor.to_feather(detections, seq_name, os.path.join(cfg.tracker_options.out_path_for_eval, cfg.tracker_options.registered_dets), detection_set)
 
 
 if __name__ == "__main__":

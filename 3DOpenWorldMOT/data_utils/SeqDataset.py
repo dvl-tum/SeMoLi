@@ -16,13 +16,15 @@ from models.tracking_utils import load_initial_detections, load_gt
  
 
 class MOT3DSeqDataset:
-    def __init__(self, dataset_path, gt_path, seq_name, split, tracks=False):
+    def __init__(self, dataset_path, gt_path, seq_name, split, detection_set='val_gnn', percentage=0.1, tracks=False):
         self.seq_name = seq_name
         self.dataset_path = dataset_path
         self.split = split
+        self.detection_set = detection_set
+        self.percentage = percentage
         self.gt_path = gt_path
         self.tracks = tracks
-        self._load_detections(tracks, self.dataset_path, self.split, self.seq_name)
+        self._load_detections(tracks, self.dataset_path, self.detection_set, self.seq_name)
 
     def _add_extra_det_features(self):
         """

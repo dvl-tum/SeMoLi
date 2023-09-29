@@ -1,4 +1,4 @@
-# CONFIGURATION HANDLING
+ HANDLING
 from datetime import timedelta
 import os
 import hydra
@@ -555,6 +555,7 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
                         data.timestamps[g].unsqueeze(0),
                         data.log_id[g],
                         data['point_instances'][batch_idx[g]:batch_idx[g+1]],
+                        data['point_categories'][batch_idx[g]:batch_idx[g+1]],
                         last= batch+1 == len(val_loader) and g+1 == len(all_clusters))
 
             if is_neural_net and logits[0] is not None:
@@ -861,9 +862,9 @@ def train(rank, cfg, world_size):
         load_model(cfg, checkpoints_dir, logger, rank)
     
     if rank == 0 or not cfg.multi_gpu:
-        if os.path.isdir(experiment_dir + name):
+        if os.path.isdir(experiment_dir + name) and not cfg.continue_from_existing:
             shutil.rmtree(experiment_dir + name)
-        if os.path.isdir(str(checkpoints_dir) + name):
+        if os.path.isdir(str(checkpoints_dir) + name) and not cfg.continue_from_existing:
             shutil.rmtree(str(checkpoints_dir) + name)
         os.makedirs(experiment_dir + name, exist_ok=True)
         logger.info(f'Detections are stored under {experiment_dir + name}...')
@@ -1024,7 +1025,6 @@ def train(rank, cfg, world_size):
    
     # final_evaluation
     dist.barrier()
-    print("RAAAAAAAAAAAAAAAAAAAAAAAAANK", rank)
     if rank == 0:
         for d in os.listdir(experiment_dir + name):
             shutil.rmtree(experiment_dir + name + f'/{d}')

@@ -24,9 +24,9 @@ class DBSCAN_Intersection():
             visualization=False) -> None:
 
         self.model_pos = sklearn.cluster.DBSCAN(
-            min_samples=min_samples_pos, eps=thresh_pos)
+            min_samples=min_samples_pos, eps=thresh_pos, n_jobs=-1)
         self.model_traj = sklearn.cluster.DBSCAN(
-            min_samples=min_samples_traj, eps=thresh_traj)
+            min_samples=min_samples_traj, eps=thresh_traj, n_jobs=-1)
 
         self.input_traj = input_traj
         self.flow_thresh = flow_thresh

@@ -718,7 +718,6 @@ class ClusterGNN(MessagePassing):
             if self.clustering == 'correlation':
                 multiprocessing = False
                 data_loader = enumerate(zip(batch_idx[:-1], batch_idx[1:]))
-                # data_loader = enumerate(zip(batch_idx[0], batch_idx[-1]))
                 rama_cuda = rama_py.rama_cuda
                 all_clusters = list()
                 if multiprocessing:
@@ -728,14 +727,10 @@ class ClusterGNN(MessagePassing):
                         clusters = pool.map(self.corr_clustering, data_loader, chunksize=None)
                         all_clusters.append(clusters)
                 else:
-                    import time
-                    start = time.time()
                     self.args = edge_index, _node_score, _score, data, score, node_score, pc, rama_cuda, name
                     for iter_data in data_loader:
                         clusters = self.corr_clustering(iter_data)
                         all_clusters.append(clusters)
-                    print('Took ', time.time() - start)
-                    quit()
             else:
                 print('Invalid clustering choice')
                 quit()

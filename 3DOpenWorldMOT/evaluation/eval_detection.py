@@ -3,6 +3,7 @@ import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
 from av2.evaluation.detection.eval import evaluate
 from av2.evaluation.detection.utils import DetectionCfg
+from av2.evaluation.detection.constants import CompetitionCategories, CompetitionCategoriesWaymo 
 from pathlib import Path
 from av2.utils.io import read_feather, read_all_annotations
 import numpy as np
@@ -21,7 +22,7 @@ import pandas as pd
 from scipy.spatial.transform import Rotation
 
 
-_class_dict = {
+_class_dict_argo = {
     -1: 'UNMATCHED',
     1: 'REGULAR_VEHICLE',
     2: 'PEDESTRIAN',
@@ -55,11 +56,16 @@ _class_dict = {
     30: 'ANIMAL',
     31: 'MOBILE_PEDESTRIAN_CROSSING_SIGN'}
 
-class_dict = {v: k for k, v in _class_dict.items()}
+class_dict_argo = {v: k for k, v in _class_dict_argo.items()}
 
-WAYMO_CLASSES = {'TYPE_UNKNOWN': 0, 'TYPE_VECHICLE': 1,
+WAYMO_CLASSES = {'TYPE_UNKNOWN': -1, 'TYPE_VECHICLE': 1,
                  'TYPE_PEDESTRIAN': 2, 'TYPE_SIGN': 12, 'TYPE_CYCLIST': 15}
-
+_class_dict_waymo = {
+        -1: 'TYPE_UNKNOWN', 
+        1: 'TYPE_VECHICLE',
+        2: 'TYPE_PEDESTRIAN', 
+        3: 'TYPE_SIGN', 
+        4: 'TYPE_CYCLIST'}
 
 def quat_to_mat(quat_wxyz):
     """Convert a quaternion to a 3D rotation matrix.
@@ -119,7 +125,7 @@ def get_feather_files(
                 os.path.join(paths, path, 'annotations.feather'))
 
             if 'Argo' in paths or not is_gt:
-                def convert2int(x): return class_dict[x]
+                def convert2int(x): return class_dict_argo[x]
                 data['category'] = data['category'].apply(convert2int)
             else:
                 def str2ing(x): return int(x)
@@ -487,11 +493,12 @@ def eval_detection(
     if not len(seq_to_eval):
         return None, np.array([0, 2, 1, 3.142, 0])
 
+    is_waymo = 'waymo' in gt_folder or 'Waymo' in gt_folder
     gt_folder = os.path.join(gt_folder, split)
     loader = AV2SensorDataLoader(data_dir=Path(
         gt_folder), labels_dir=Path(gt_folder))
     dataset_dir = Path(gt_folder)
-    eval_only_roi_instances = False if 'waymo' in gt_folder or 'Waymo' in gt_folder else True
+    eval_only_roi_instances = False if is_waymo else True
 
     if just_eval:
         print("Loading data...")
@@ -507,7 +514,7 @@ def eval_detection(
         seq_list=seq_to_eval,
         loader=loader,
         gt_folder=gt_folder)
-
+    
     if just_eval:
         print("Loaded ground truth...")
     
@@ -543,9 +550,13 @@ def eval_detection(
     else:                                                                                                                                                           
          gts['category_int'] = gts['category'] 
     
+    if is_waymo:
+        _class_dict = _class_dict_waymo
+    else:
+        _class_dict = _class_dict_argo
+
     gts['category'] = [_class_dict[c] for c in gts['category']]
     dts['category'] = [_class_dict[c] for c in dts['category']]
-
     print(f'Min points {min_points}, Max points {max_points}')
 
     if just_eval:
@@ -560,13 +571,21 @@ def eval_detection(
         ['CENTER', 'IoU3D'], [2.0, 0.6], [(0.5, 1.0, 2.0, 4.0), (0.2, 0.4, 0.6, 0.8)], [8, 1]):
         # Evaluate instances.
         # Defaults to competition parameters.
+        print(f'Setting categories to Waymo categories {is_waymo}')
+        if is_waymo:
+            categories : Tuple[str, ...] = tuple(x.value for x in CompetitionCategoriesWaymo)
+        else:
+            categories : Tuple[str, ...] = tuple(x.value for x in CompetitionCategories)
         competition_cfg = DetectionCfg(
             dataset_dir=dataset_dir, 
             eval_only_roi_instances=eval_only_roi_instances, 
             tp_threshold_m=tp_thresh,
             affinity_type=affinity,
-            affinity_thresholds_m=threshs
+            affinity_thresholds_m=threshs,
+            categories=categories
             )
+        
+        print()
         print(f"{affinity}\n")
         dts, gts, metrics, np_tps, np_fns, _ = evaluate(
             dts_orig,
@@ -581,6 +600,7 @@ def eval_detection(
             _class_dict=_class_dict,
             n_jobs=n_jobs)
         
+        print(f"Writing macthed detections to matched_{trackers_folder}/annotations_{affinity}.feather...")
         os.makedirs(f'matched_{trackers_folder}', exist_ok=True)
         feather.write_feather(dts, f'matched_{trackers_folder}/annotations_{affinity}.feather')
 
@@ -618,7 +638,7 @@ def eval_detection(
             print(metrics.loc[_filter_class])
             metric = metrics.loc[_filter_class].values
 
-        # break
+        break
   
     return metrics, metric
 
@@ -638,10 +658,10 @@ if __name__ == '__main__':
     detections = 'detector'
     orig_split = 'train' if detections != 'evaluation' else 'val'
     for t in os.listdir(f'out/detections_{split}_{detections}'): #class_dict.keys():
-        if 'NEW_FLOW_BEST_PARAMS_90_NO_NODE_EVAL_TRAIN_DET_0.9_0.9_all_egocomp_margin0.6_width25_nooracle_64_64_64_64_0.5_3.5_0.5_4_3.162277660168379e-06_0.0031622776601683794_16000_16000__NS_MG_32_2.0_LN_' not in t:
+        if 'RECOMPUTE_REMOVE_BUG_HEADING_90' not in t:
             continue
         print(t)
-        tracker_dir = f'out/detections_{split}_{detections}/{t}/combined/{split}_{detections}'
+        tracker_dir = f'out/detections_{split}_{detections}/{t}/{split}_{detections}'
         print(tracker_dir)
         # seq = '16473613811052081539'
         # seq_list = [seq]
@@ -669,7 +689,7 @@ if __name__ == '__main__':
             filter_class=c,
             only_matched_gt=False,
             filter_moving_first=False,
-            use_matched_category=False)
+            use_matched_category=True)
         
         print(detection_metric, '\n')
         print()

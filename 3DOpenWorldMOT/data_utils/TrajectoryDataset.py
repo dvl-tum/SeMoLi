@@ -86,9 +86,9 @@ class TrajectoryDataset(PyGDataset):
             elif split == 'train' and 'Argo' in self.data_dir:
                 self.seqs = ['00a6ffc1-6ce9-3bc3-a060-6006e9893a1a']
             elif split == 'val':
-                self.seqs = ['16473613811052081539']
+                self.seqs = ['809159138284604331']
             else:
-                self.seqs = ['2400780041057579262']
+                self.seqs = ['809159138284604331']
         else:
             # self.seqs = get_seq_list(
             self.seqs = get_seq_list_fixed_val(
@@ -99,8 +99,8 @@ class TrajectoryDataset(PyGDataset):
         if 'detector' in detection_set:
             split = 'train' if 'train' in detection_set else 'val'
             self.already_evaluated = list()
-            print(f'{detection_out_path}/combined/{detection_set}')
-            self.already_evaluated = [os.path.basename(os.path.dirname(p)) for p in glob.glob(f'{detection_out_path}/combined/{detection_set}/*/*')]
+            print(f'{detection_out_path}/{detection_set}')
+            self.already_evaluated = [os.path.basename(os.path.dirname(p)) for p in glob.glob(f'{detection_out_path}/*/{detection_set}/*/*')]
         else:
             self.already_evaluated = list()
 
@@ -137,7 +137,7 @@ class TrajectoryDataset(PyGDataset):
             return [os.path.join(self.processed_dir, seq, flow_file)\
                     for seq in seqs\
                         for i, flow_file in enumerate(sorted(os.listdir(osp.join(self.processed_dir, seq))))\
-                        if i % self.every_x_frame == 0]# [:256]
+                        if i % self.every_x_frame == 0]#[:64]
         else:
             seqs = [seq for seq in self.seqs if seq in os.listdir(self.trajectory_dir) and seq not in self.already_evaluated]
             return [os.path.join(self.processed_dir, seq, flow_file[:-3] + 'pt')\

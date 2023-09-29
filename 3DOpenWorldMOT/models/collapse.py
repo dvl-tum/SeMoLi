@@ -29,6 +29,7 @@ class Collapser():
         self.assign = assign
         self.collaps_mode = collaps_mode
         self.do_track = do_track
+        self._id = 0
 
     def collaps(self, data, seq, gt_dir):
         """
@@ -49,11 +50,12 @@ class Collapser():
                 alphas = list()
                 lwhs = list()
                 translations = list()
-                times = list()
-                count = list()
+                counts = list()
+                num_non_empty_frames = 0
                 # get all forward propagated bounding boxes
                 for i, time in enumerate(timestamps):
                     if time in data.keys():
+                        num_non_empty_frames += 1
                         for j, det in enumerate(data[time]):
                             # transform pc to city
                             city_SE3_t = self.loader.get_city_SE3_ego(seq, time)
@@ -64,8 +66,6 @@ class Collapser():
                             traj_city = city_SE3_t.transform_point_cloud(det.trajectory)
                             trajs_city_t0.append(traj_city[:, len(timestamps)-1-i, :])
                             trajs_city_t1.append(traj_city[:, len(timestamps)-i, :])
-                            times.append(time)
-                            count.append(j)
 
                             # get rotation, lwh and translation to crete box corners
                             rot, alpha = det.get_alpha_rot_t0_to_t1(
@@ -78,8 +78,31 @@ class Collapser():
                             alphas.append(alpha)
                             lwhs.append(lwh)
                             translations.append(translation)
-
-                # num detections in time 
+                        counts.append(len(data[time]))
+                    else:
+                        counts.append(0)
+                if num_non_empty_frames <= 1:
+                    print(f'Num empty frames only {num_non_empty_frames}, next timestamp...')
+                    for det in data[k]:
+                        collapsed_detections[k].append(
+                                CollapsedDetection(
+                                    det.rot, 
+                                    det.alpha, 
+                                    det.translation, 
+                                    det.lwh, 
+                                    det.mean_trajectory, 
+                                    det.canonical_points, 
+                                    det.timestamps[0, 0], 
+                                    det.log_id, 
+                                    det.length, 
+                                    det.overlap, 
+                                    (det.lwh[0] * det.lwh[1] * det.lwh[2]) / det.num_interior, 
+                                    det.gt_id,
+                                    self._id))
+                        self._id += 1
+                    continue
+                print(f'Num empty frames {num_non_empty_frames}, collapse...')
+                # num detections in time i
                 num_det = len(data[time])
                 
                 # minus mean to not get numerical instabilities
@@ -129,23 +152,38 @@ class Collapser():
                     lwhs_other = lwhs[:-num_det]
                     translations_other = translations[:-num_det]
                     alphas_other = alphas[:-num_det]
-                    '''for i, d in enumerate(dts_corners.cuda()):
+                    '''
+                    for i, d in enumerate(dts_corners.cuda()):
                         print(i, d)
                         _, iou_3d = box3d_overlap(
                             d.cuda().unsqueeze(0),
                             d.cuda().unsqueeze(0),
-                            eps=1e-4)'''
+                            eps=1e-4)
+                    '''
                     _, iou_3d = box3d_overlap(
                         dts_corners.cuda()[-num_det:],
                         dts_corners.cuda()[:-num_det],
                         eps=1e-4)
+                    all_matches = torch.zeros(iou_3d.shape)
+                    counts = counts[:-1]
+                    _iou_3d = torch.ones([len(counts), num_det, max(counts)]) * -1
+                    count_sum = 0
+                    for i, c in enumerate(counts):
+                        if c == 0:
+                            continue
+                        time_iou = torch.max(iou_3d[:, count_sum:count_sum+c], dim=1)
+                        matches = time_iou.values > 0.001
+                        idxes = time_iou.indices
+                        order = torch.argsort(time_iou.values, descending=True)
+                        for det in order:
+                            if matches[det]:
+                                all_matches[det, count_sum+idxes[det]] = True
+                                matches[idxes==idxes[det]] = False
+                        _iou_3d[i, :, :c] = iou_3d[:, count_sum:count_sum+c]
+                        count_sum += c
                     
-                    arg_max = torch.max(iou_3d, dim=0).indices
-                    matches = iou_3d[arg_max.long(), torch.arange(iou_3d.shape[1], dtype=torch.long)]
-                    matches = matches > 0.25
                     for i in range(num_det):
-                        matched = torch.logical_and(arg_max==i, matches)
-                        if torch.where(matched)[0].shape[0] and self.collaps_mode == 'accumulate':
+                        if all_matches[i].any() and self.collaps_mode == 'accumulate':
                             collapsed_detections[k].append(self.accumulate(i,
                                         city_SE3_t,
                                         det,
@@ -158,10 +196,10 @@ class Collapser():
                                         pcs_dets,
                                         trajs_city_t0_dets,
                                         trajs_city_t1_dets,
-                                        matched,
+                                        all_matches[i],
                                         alphas_other,
                                         alphas_dets))
-                        elif torch.where(matched)[0].shape[0] and self.collaps_mode == 'mean':
+                        elif all_matches[i].any() and self.collaps_mode == 'mean':
                             collapsed_detections[k].append(self.mean_box(i,
                                             lwhs_dets,
                                             translations_dets,
@@ -169,7 +207,7 @@ class Collapser():
                                             lwhs_other,
                                             translations_other,
                                             alphas_other,
-                                            matched,
+                                            all_matches[i],
                                             city_SE3_t,
                                             seq,
                                             time,
@@ -181,32 +219,32 @@ class Collapser():
                                             trajs_city_t1_dets,
                                             data[time][i]))
                         else:
-                            collapsed_detections[k].append(CollapsedDetection(det.rot, det.alpha, det.translation, det.lwh, det.mean_trajectory, det.canonical_points, det.timestamps[0, 0], det.log_id, det.length, det.overlap, (det.lwh[0] * det.lwh[1] * det.lwh[2]) / det.num_interior, det.gt_id))
-                            # collapsed_detections[k].append(data[time][i])
+                            collapsed_detections[k].append(CollapsedDetection(det.rot, det.alpha, det.translation, det.lwh, det.mean_trajectory, det.canonical_points, det.timestamps[0, 0], det.log_id, det.length, det.overlap, (det.lwh[0] * det.lwh[1] * det.lwh[2]) / det.num_interior, det.gt_id, self._id))
+                            self._id += 1
             else:
-                # collapsed_detections[k] = [det for det in data[k]]
                 for det in data[k]:
-                    collapsed_detections[k].append(CollapsedDetection(det.rot, det.alpha, det.translation, det.lwh, det.mean_trajectory, det.canonical_points, det.timestamps[0, 0], det.log_id, det.length, det.overlap, (det.lwh[0] * det.lwh[1] * det.lwh[2]) / det.num_interior, det.gt_id))
+                    collapsed_detections[k].append(CollapsedDetection(det.rot, det.alpha, det.translation, det.lwh, det.mean_trajectory, det.canonical_points, det.timestamps[0, 0], det.log_id, det.length, det.overlap, (det.lwh[0] * det.lwh[1] * det.lwh[2]) / det.num_interior, det.gt_id, self._id))
+                    self._id += 1
         return collapsed_detections
 
 
     def mean_box(self, i, lwhs_dets, translations_dets, alphas_dets, lwhs_other, translations_other, alphas_other, matched, city_SE3_t, seq, time, overlap, pcs_dets, trajs_city_t0_other, trajs_city_t1_other, trajs_city_t0_dets, trajs_city_t1_dets, det):    
         lwh_city = [lwhs_dets[i]]
         translation_city = [translations_dets[i]]
-        alpha_city = [alphas_dets[i]]
+        # alpha_city = [alphas_dets[i]]
         
         lwh_city.extend([lwhs_other[idx] for idx in torch.where(matched)[0]])
         translation_city.extend([translations_other[idx] for idx in torch.where(matched)[0]])
-        alpha_city.extend([alphas_other[idx] for idx in torch.where(matched)[0]])
+        # alpha_city.extend([alphas_other[idx] for idx in torch.where(matched)[0]])
 
         lwh_city = torch.stack(lwh_city).mean(dim=0)
         translation_city = torch.stack(translation_city).mean(dim=0)
-        alpha_city = torch.tensor(alpha_city).mean()
+        # alpha_city = torch.tensor(alpha_city).mean()
         
-        rot = torch.tensor([
-            [torch.cos(alpha_city), -torch.sin(alpha_city), 0],
-            [torch.sin(alpha_city), torch.cos(alpha_city), 0],
-            [0, 0, 1]])
+        # rot = torch.tensor([
+        #     [torch.cos(alpha_city), -torch.sin(alpha_city), 0],
+        #     [torch.sin(alpha_city), torch.cos(alpha_city), 0],
+        #     [0, 0, 1]])
         
         # get 'point cloud' from vertices to get translation and lwh
         vertices = _create_box(translation_city, lwh_city, rot)
@@ -221,16 +259,17 @@ class Collapser():
                 [0, 0, 1]]).double()
         '''
         # take mean flow to get rotation
-        traj_t0 = [trajs_city_t0_dets[i]]
-        traj_t1 = [trajs_city_t1_dets[i]]
-        traj_t0.extend([trajs_city_t0_other[idx] for idx in torch.where(matched)[0]])
-        traj_t1.extend([trajs_city_t1_other[idx] for idx in torch.where(matched)[0]])
-        traj_t0 = torch.cat(traj_t0)
-        traj_t1 = torch.cat(traj_t1)
-        traj_t0 = city_SE3_t.inverse().transform_point_cloud(traj_t0)
-        traj_t1 = city_SE3_t.inverse().transform_point_cloud(traj_t1)
-        rot, alpha = det.get_alpha_rot_t0_to_t1(
-            traj_t0=traj_t0, traj_t1=traj_t1)
+        # traj_t0 = [trajs_city_t0_dets[i]]
+        # traj_t1 = [trajs_city_t1_dets[i]]
+        # non sense cos for current timestamp only current trajectory / rot is important
+        # traj_t0.extend([trajs_city_t0_other[idx] for idx in torch.where(matched)[0]])
+        # traj_t1.extend([trajs_city_t1_other[idx] for idx in torch.where(matched)[0]])
+        # traj_t0 = torch.cat(traj_t0)
+        # traj_t1 = torch.cat(traj_t1)
+        # traj_t0 = city_SE3_t.inverse().transform_point_cloud(traj_t0)
+        # traj_t1 = city_SE3_t.inverse().transform_point_cloud(traj_t1)
+        # rot, alpha = det.get_alpha_rot_t0_to_t1(
+        #     traj_t0=traj_t0, traj_t1=traj_t1)
         
         lwh, translation = get_rotated_center_and_lwh(vertices, rot)
         pts_density = (lwh[0] * lwh[1] * lwh[2]) / pcs_dets[i].shape[0]

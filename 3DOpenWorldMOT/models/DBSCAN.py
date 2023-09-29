@@ -16,7 +16,7 @@ class DBSCAN():
             dataset='waymo',
             flow_thresh=0.2) -> None:
 
-        self.model = sklearn.cluster.DBSCAN(min_samples=min_samples, eps=thresh)
+        self.model = sklearn.cluster.DBSCAN(min_samples=min_samples, eps=thresh, n_jobs=-1)
         self.input = input
         self.dataset = dataset
         self.flow_thresh = flow_thresh

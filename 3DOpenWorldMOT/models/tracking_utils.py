@@ -109,7 +109,8 @@ column_names_dets_wo_traj = [
     'num_interior_pts',
     'pts_density',
     'log_id',
-    'rot']
+    'rot',
+    'gt_cat']
 
 column_names_dets = column_names_dets_wo_traj + [f'{i}_{j}' for i in range(25) for j in ['x', 'y', 'z']]
 
@@ -198,11 +199,11 @@ class Track():
     
     def _get_whole_traj_and_convert_time(self, t1, av2_loader, i=-1, overlap=False, city=False):
         index = torch.where(self.detections[-1].timestamps[0]==t1)[0][0].item()
-        traj = copy.deepcopy(self._get_traj(i))[index:]
+        traj = copy.deepcopy(self._get_traj(i))[:, index:]
         cano = self._get_canonical_points()
         traj = torch.tile(
                 cano.unsqueeze(1), (1, traj.shape[1], 1)) + traj
-
+        
         t0 = self.detections[i].timestamps[0, 0].item()
         if not city:
             traj = self._convert_time(t0, t1, av2_loader, traj)
@@ -288,16 +289,17 @@ class Track():
 
 
 class InitialDetection():
-    def __init__(self, trajectory, canonical_points, timestamps, log_id, num_interior, overlap, gt_id, gt_id_box=None, rot=None, alpha=None) -> None:
+    def __init__(self, trajectory, canonical_points, timestamps, log_id, num_interior, overlap, gt_id,gt_id_box=None, rot=None, alpha=None, gt_cat=-10) -> None:
         self.trajectory = trajectory
         self.canonical_points = canonical_points
         self.timestamps = timestamps
         self.log_id = log_id
         self.num_interior = num_interior
-        self.overlap = overlap
+        # self.overlap = overlap
         self.gt_id = gt_id
+        self.gt_cat = gt_cat
         self.gt_id_box = gt_id
-        self.length = trajectory.shape[0]
+        self.length = trajectory.shape[0] if len(trajectory.shape) < 3 else trajectory.shape[1]
         self.track_id = 0
         
         if rot is not None:
@@ -321,7 +323,8 @@ class InitialDetection():
         return rot, alpha
 
     def _get_traj(self):
-        traj = self.trajectory[:, 1:self.overlap+1]
+        # traj = self.trajectory[:, 1:self.overlap+1]
+        traj = self.trajectory
         return traj
 
     def _get_traj_city(self, av2_loader, t0):
@@ -342,7 +345,7 @@ class InitialDetection():
 
     def final_detection(self):
         pts_density = (self.lwh[0] * self.lwh[1] * self.lwh[2]) / self.num_interior
-        self.final = Detection(self.rot, self.alpha, self.translation, self.lwh, self.timestamps[0, 0], self.log_id, self.num_interior, pts_density=pts_density, trajectory=self.mean_trajectory, gt_id=self.gt_id)
+        self.final = Detection(self.rot, self.alpha, self.translation, self.lwh, self.timestamps[0, 0], self.log_id, self.num_interior, pts_density=pts_density, trajectory=self.mean_trajectory, gt_id=self.gt_id, gt_cat=self.gt_cat)
         return self.final
 
 
@@ -389,7 +392,7 @@ def get_lwh(object_points):
 
 
 class Detection():
-    def __init__(self, rot, alpha, translation, lwh, timestamp, log_id, num_interior, pts_density, trajectory, gt_id) -> None:
+    def __init__(self, rot, alpha, translation, lwh, timestamp, log_id, num_interior, pts_density, trajectory, gt_id, gt_cat) -> None:
         self.rot = rot
         self.alpha = alpha
         self.translation = translation
@@ -400,6 +403,7 @@ class Detection():
         self.pts_density = pts_density
         self.trajectory = trajectory.reshape(trajectory.shape[0]*trajectory.shape[1])
         self.gt_id = gt_id
+        self.gt_cat = gt_cat
    
     @property
     def timestamps(self):
@@ -407,7 +411,7 @@ class Detection():
 
 
 class CollapsedDetection():
-    def __init__(self, rot, alpha, translation, lwh, traj, canonical_points, timestamp, log_id, num_interior, overlap, pts_density, gt_id) -> None:
+    def __init__(self, rot, alpha, translation, lwh, traj, canonical_points, timestamp, log_id, num_interior, overlap, pts_density, gt_id, gt_cat=-10) -> None:
         self.rot = rot
         self.alpha = alpha
         self.translation = translation
@@ -421,6 +425,7 @@ class CollapsedDetection():
         self.track_id = 0
         self.pts_density = pts_density
         self.gt_id = gt_id
+        self.gt_cat = gt_cat
     
     @property
     def trajectory(self):
@@ -432,7 +437,7 @@ class CollapsedDetection():
 
     def final_detection(self):
         pts_density = (self.lwh[0] * self.lwh[1] * self.lwh[2]) / self.num_interior
-        self.final = Detection(self.rot, self.alpha, self.translation, self.lwh, self.timestamp, self.log_id, self.num_interior, pts_density=pts_density, trajectory=self.traj, gt_id=self.gt_id)
+        self.final = Detection(self.rot, self.alpha, self.translation, self.lwh, self.timestamp, self.log_id, self.num_interior, pts_density=pts_density, trajectory=self.traj, gt_id=self.gt_id, gt_cat=self.gt_cat)
         return self.final
 
 def store_initial_detections(detections, seq, out_path, split, tracks=False, gt_path=None):
@@ -462,12 +467,13 @@ def store_initial_detections(detections, seq, out_path, split, tracks=False, gt_
                 timestamps=d.timestamps.numpy(),
                 log_id=d.log_id,
                 num_interior=d.num_interior,
-                overlap=d.overlap,
+                # overlap=d.overlap,
                 gt_id=d.gt_id,
                 gt_id_box=d.gt_id_box if gt_path is not None else d.gt_id,
                 track_id=d.track_id,
                 rot=d.rot.numpy(),
-                alpha=d.alpha.numpy()
+                alpha=d.alpha.numpy(),
+                gt_cat=d.gt_cat
             )
 
     print(f'Stored initial detections.....')
@@ -494,14 +500,15 @@ def load_initial_detections(out_path, split, seq=None, tracks=False, every_x_fra
             torch.atleast_2d(torch.from_numpy(d['timestamps'])),
             d['log_id'].item(),
             d['num_interior'].item(),
-            d['overlap'].item(),
+            # d['overlap'].item(),
             d['gt_id'].item(),
             d['gt_id_box'].item() if 'gt_id_box' in d.keys() else d['gt_id'].item(),
             rot=torch.from_numpy(d['rot']) if 'rot' in d.keys() else None,
-            alpha=torch.from_numpy(d['alpha']) if 'alpha' in d.keys() else None
+            alpha=torch.from_numpy(d['alpha']) if 'alpha' in d.keys() else None,
+            gt_cat=d['gt_cat'].item() if 'gt_cat' in d.keys() else -10,
         )
-        if d.lwh[0] < 0.1 or d.lwh[1] < 0.1 or d.lwh[2] < 0.1:
-            continue
+        # if d.lwh[0] < 0.1 or d.lwh[1] < 0.1 or d.lwh[2] < 0.1:
+        #     continue
         if not tracks:
             if not len(d.timestamps.shape):
                 detections[d.timestamps.item()].append(d)
@@ -669,7 +676,8 @@ def to_feather(detections, log_id, out_path, split, rank, precomp_dets=False, na
                 det.num_interior,
                 det.pts_density,
                 det.log_id,
-                det.alpha.item()] + det.trajectory.numpy().tolist()
+                det.alpha.item(),
+                det.gt_cat] + det.trajectory.numpy().tolist()
             track_vals.append(values)
     track_vals = np.asarray(track_vals)
 

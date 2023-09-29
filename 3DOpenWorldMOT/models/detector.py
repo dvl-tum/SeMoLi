@@ -54,10 +54,9 @@ class Detector3D():
         # logger.info(f"New log id {log_id}...")
     
     def get_detections(self, points, traj, clusters, timestamps, log_id,
-                       gt_instance_ids, last=False):
-        
+                       gt_instance_ids, gt_instance_cats, last=False):
         # account for padding in from DistributedTestSampler
-        if timestamps.cpu()[0, 0] in self.detections.keys():
+        if timestamps.cpu()[0, 0].item() in self.detections.keys():
             if last:
                 found = self.to_feather()
                 if not found:
@@ -76,6 +75,7 @@ class Detector3D():
         
         if str(gt_instance_ids.device) == 'cpu':
             gt_instance_ids = gt_instance_ids.to(self.rank)
+            gt_instance_cats = gt_instance_cats.to(self.rank)
         
         if str(points.device) == 'cpu':
             points = points.to(self.rank)
@@ -86,6 +86,7 @@ class Detector3D():
         for c in torch.unique(clusters):
             num_interior = torch.sum(clusters==c).item()
             gt_id = (torch.bincount(gt_instance_ids[clusters==c]).argmax()).item()
+            gt_cat = (torch.bincount(gt_instance_cats[clusters==c]).argmax()).item()
 
             # filter if cluster too small
             if num_interior < self.num_interior:
@@ -105,9 +106,10 @@ class Detector3D():
                 timestamps=timestamps.cpu(),
                 num_interior=num_interior,
                 overlap=self.overlap,
-                gt_id=gt_id))
-
-        self.detections[timestamps.cpu()[0, 0]] = detections
+                gt_id=gt_id,
+                gt_cat=gt_cat))
+        
+        self.detections[timestamps.cpu()[0, 0].item()] = detections
 
         if last:
             found = self.to_feather()

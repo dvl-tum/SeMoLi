@@ -117,6 +117,7 @@ def evaluate(
         RuntimeError: If accumulation fails.
         ValueError: If ROI pruning is enabled but a dataset directory is not specified.
     """
+    print(cfg.categories)
     if cfg.eval_only_roi_instances and cfg.dataset_dir is None:
         raise ValueError(
             "ROI pruning has been enabled, but the dataset directory has not be specified. "
@@ -256,7 +257,7 @@ def summarize_metrics(
             is_category_dts = dts["matched_category"] == category
         else:
             is_category_dts = dts["category"] == category
-
+        print(category, dts["matched_category"], dts["category"])
         # Only keep detections if they match the category and have NOT been filtered.
         is_valid_dts = np.logical_and(is_category_dts, dts["is_evaluated"])
 

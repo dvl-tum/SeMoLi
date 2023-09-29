@@ -1,6 +1,6 @@
 # @package _group_
 class: StepLR
 params:
-  step_size: 10
+  step_size: 15
   gamma: 0.7
   clip: 1e-5

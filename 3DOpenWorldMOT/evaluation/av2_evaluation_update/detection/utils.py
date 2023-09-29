@@ -27,6 +27,7 @@ from av2.evaluation.detection.constants import (
     MIN_CDS,
     AffinityType,
     CompetitionCategories,
+    CompetitionCategoriesWaymo,
     DistanceType,
     FilterMetricType,
     InterpType,
@@ -73,6 +74,9 @@ class DetectionCfg:
     max_range_m: float = 150.0
     num_recall_samples: int = 100
     tp_threshold_m: float = 2.0
+
+    def waymo_categories(self):
+        categories : Tuple[str, ...] = tuple(x.value for x in CompetitionCategoriesWaymo)
 
     @property
     def metrics_defaults(self) -> Tuple[float, ...]:
