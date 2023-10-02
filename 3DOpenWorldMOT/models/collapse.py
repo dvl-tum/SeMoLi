@@ -4,7 +4,7 @@ from pyarrow import feather
 import numpy as np
 from collections import defaultdict
 import torch
-from models.tracking_utils import InitialDetection, load_initial_detections, get_rotated_center_and_lwh, CollapsedDetection, column_names_dets_wo_traj, column_dtypes_dets_wo_traj, _create_box
+from models.tracking_utils import Detection, load_initial_detections, get_rotated_center_and_lwh, column_names_dets_wo_traj, column_dtypes_dets_wo_traj, _create_box
 from pytorch3d.ops import box3d_overlap
 import sklearn
 import matplotlib.pyplot as plt
@@ -85,7 +85,7 @@ class Collapser():
                     print(f'Num empty frames only {num_non_empty_frames}, next timestamp...')
                     for det in data[k]:
                         collapsed_detections[k].append(
-                                CollapsedDetection(
+                                Detection(
                                     det.rot, 
                                     det.alpha, 
                                     det.translation, 
@@ -134,7 +134,7 @@ class Collapser():
                             traj_t0=traj_t0, traj_t1=traj_t1)
                         lwh, translation = get_rotated_center_and_lwh(pc_city, rot)
                         traj = torch.stack([traj_t0, traj_t1])
-                        collapsed_detections[k].append(CollapsedDetection(traj, pc_city, time, seq, traj.shape[1], self.overlap))
+                        collapsed_detections[k].append(Detection(traj, pc_city, time, seq, traj.shape[1], self.overlap))
 
                 elif self.assign == 'heuristic':
                     #### ASSIGN WITH HEURISTIC
@@ -219,11 +219,11 @@ class Collapser():
                                             trajs_city_t1_dets,
                                             data[time][i]))
                         else:
-                            collapsed_detections[k].append(CollapsedDetection(det.rot, det.alpha, det.translation, det.lwh, det.mean_trajectory, det.canonical_points, det.timestamps[0, 0], det.log_id, det.length, det.overlap, (det.lwh[0] * det.lwh[1] * det.lwh[2]) / det.num_interior, det.gt_id, self._id))
+                            collapsed_detections[k].append(Detection(det.rot, det.alpha, det.translation, det.lwh, det.mean_trajectory, det.canonical_points, det.timestamps[0, 0], det.log_id, det.length, det.overlap, (det.lwh[0] * det.lwh[1] * det.lwh[2]) / det.num_interior, det.gt_id, self._id))
                             self._id += 1
             else:
                 for det in data[k]:
-                    collapsed_detections[k].append(CollapsedDetection(det.rot, det.alpha, det.translation, det.lwh, det.mean_trajectory, det.canonical_points, det.timestamps[0, 0], det.log_id, det.length, det.overlap, (det.lwh[0] * det.lwh[1] * det.lwh[2]) / det.num_interior, det.gt_id, self._id))
+                    collapsed_detections[k].append(Detection(det.rot, det.alpha, det.translation, det.lwh, det.mean_trajectory, det.canonical_points, det.timestamps[0, 0], det.log_id, det.length, det.overlap, (det.lwh[0] * det.lwh[1] * det.lwh[2]) / det.num_interior, det.gt_id, self._id))
                     self._id += 1
         return collapsed_detections
 
@@ -273,7 +273,7 @@ class Collapser():
         
         lwh, translation = get_rotated_center_and_lwh(vertices, rot)
         pts_density = (lwh[0] * lwh[1] * lwh[2]) / pcs_dets[i].shape[0]
-        return CollapsedDetection(
+        return Detection(
             rot, alpha, translation, lwh, det.mean_trajectory, det.canonical_points, time, seq, pcs_dets[i].shape[0], overlap, pts_density, det.gt_id)
 
 
@@ -303,7 +303,7 @@ class Collapser():
         traj = torch.stack([traj_t0, traj_t1])
         num_interior = traj.shape[1]
         pts_density = (lwh[0] * lwh[1] * lwh[2]) / num_interior
-        return CollapsedDetection(
+        return Detection(
             rot, alpha, translation, lwh, traj, pc, time, seq, num_interior, overlap, pts_density)
 
 

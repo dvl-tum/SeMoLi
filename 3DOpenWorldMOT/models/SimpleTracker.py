@@ -56,8 +56,21 @@ class SimpleTracker():
             alpha=0.0,
             make_cost_mat_dist=False,
             last=False):
+        out_of_bounds = False
+        if len(self.active_tracks):
+            t0 = torch.where(
+                self.ordered_timestamps==self.active_tracks[
+                    0].detections[-1].timestamps[0, 0])[0][0].item()
+            t1 = torch.where(
+                self.ordered_timestamps==timestamp)[0][0].item()
+            out_of_bounds = t1-t0 > detections[0].length-1
+            if out_of_bounds:
+                self.inactive_tracks = self.inactive_tracks + self.active_tracks
+                for i in range(len(self.inactive_tracks)):
+                    self.inactive_tracks[i].inactive_count += t1-t0
+
         # add tracks if no tracks yet, initialize tracks
-        if not len(self.active_tracks):
+        if not len(self.active_tracks) or out_of_bounds:
             self.active_tracks = list()
             for d in detections:
                 self.active_tracks.append(Track(d, self.track_id))#, self.every_x_frame, self.overlap))
@@ -276,7 +289,7 @@ class SimpleTracker():
                     time_dist = t1 - t0
                     # < cos for example if len_traj = 2, inactive_count=1, overlap=1
                     # then <= will be true but should not cos index starts at 0 not 1
-                    if time_dist < t.detections[-1].length:
+                    if time_dist < t.detections[-1].length-1:
                         trajs.extend([
                             t._get_whole_traj_and_convert_time(timestamp, self.av2_loader)])
                         cano_points.extend([
@@ -287,11 +300,12 @@ class SimpleTracker():
 
         # trajectories from canonical point of last added detections
         propagated_pos_tracks = [t.float().to(self.rank) for t in trajs]
+        propagared_bbs_trakcs = []
         traj_lens = [t.shape[1] for t in propagated_pos_tracks]
         num_tracks = len(traj_lens)
 
         # trajectories and canonical points of new detections
-        det_trajs = [t._get_traj().float().to(self.rank) for t in detections]
+        det_trajs = [t.trajectory.float().to(self.rank) for t in detections]
         det_cano_points = [t._get_canonical_points().float().to(self.rank) for t in detections]
         '''
         indices_tracks = torch.tensor([

@@ -73,10 +73,9 @@ class InitialDetProcessor():
     def register(self, log_id, split, tracks=None):
         if tracks is None:
             tracks = self.dataset(self.tracked_dets_path, self.gt_path, log_id, self.split, tracks=True).dets
-        detections = self._registration(tracks, self.av2_loader, log_id).register()
-        store_initial_detections(detections, log_id, self.tracked_dets_path, split, tracks=True)
-        detections = {k: [t.detections[i] for i in range(len(t.detections))] for k, t in detections.items()}
-        return detections
+        tracks = self._registration(tracks, self.av2_loader, log_id).register()
+        store_initial_detections(tracks, log_id, self.tracked_dets_path, split, tracks=False)
+        return tracks
 
     def collaps(self, log_id, split, detections=None):
         if detections is None:
@@ -97,17 +96,23 @@ class InitialDetProcessor():
     @staticmethod
     def eval(cfg, detector_dir, seq_list, name):
         _, detection_metric = eval_detection.eval_detection(
-                            gt_folder=os.path.join(os.getcwd(), cfg.data.data_dir),
-                            trackers_folder=detector_dir,
-                            seq_to_eval=seq_list,
-                            remove_far=True,#'80' in cfg.data.trajectory_dir,
-                            remove_non_drive='non_drive' in cfg.data.trajectory_dir,
-                            remove_non_move=cfg.data.remove_static_gt,
-                            remove_non_move_strategy=cfg.data.remove_static_strategy,
-                            remove_non_move_thresh=cfg.data.remove_static_thresh,
-                            classes_to_eval='all',
-                            debug=cfg.data.debug,
-                            name=name)
+                    gt_folder=os.path.join(os.getcwd(), cfg.data.data_dir),
+                    trackers_folder=detector_dir,
+                    split='val' if 'evaluation' in cfg.data.detection_set else 'train',
+                    seq_to_eval=seq_list,
+                    remove_far=True,#'80' in cfg.data.trajectory_dir,
+                    remove_non_drive='non_drive' in cfg.data.trajectory_dir,
+                    remove_non_move=cfg.data.remove_static_gt,
+                    remove_non_move_strategy=cfg.data.remove_static_strategy,
+                    remove_non_move_thresh=cfg.data.remove_static_thresh,
+                    filter_class=-2,
+                    only_matched_gt=False,
+                    filter_moving_first=False,
+                    filter_moving=False,
+                    use_matched_category=False,
+                    debug=cfg.data.debug,
+                    name=name)
+
         print(f'Detection metric of detections from detector_dir {detection_metric}')
 
 @hydra.main(config_path="conf", config_name="conf")   
@@ -123,29 +128,29 @@ def main(cfg):
         logger.info('Evaluating initial bounding boxes...')
         InitialDetProcessor.eval(
             cfg,
-            os.path.join(cfg.tracker_options.out_path_for_eval, 'initial', cfg.tracker_options.split),
-            os.listdir(os.path.join(cfg.tracker_options.out_path_for_eval, 'initial', cfg.tracker_options.split)),
+            os.path.join(cfg.tracker_options.out_path_for_eval, cfg.tracker_options.initial_dets, cfg.tracker_options.split),
+            os.listdir(os.path.join(cfg.tracker_options.out_path_for_eval, cfg.tracker_options.initial_dets, cfg.tracker_options.split)),
             'Initial')
-        #if cfg.tracker_options.collaps:
+    if cfg.tracker_options.collaps:
         logger.info('Evaluating collapsed bounding boxes...')
         InitialDetProcessor.eval(
             cfg,
-            os.path.join(cfg.tracker_options.out_path_for_eval, 'collapsed', cfg.tracker_options.split),
-            os.listdir(os.path.join(cfg.tracker_options.out_path_for_eval, 'collapsed', cfg.tracker_options.split)),
+            os.path.join(cfg.tracker_options.out_path_for_eval, cfg.tracker_options.collapsed_dets, cfg.tracker_options.split),
+            os.listdir(os.path.join(cfg.tracker_options.out_path_for_eval, cfg.tracker_options.collapsed_dets, cfg.tracker_options.split)),
             'Collapsed')
     if cfg.tracker_options.track:
         logger.info('Evaluating tracked bounding boxes...')
         InitialDetProcessor.eval(
             cfg,
-            os.path.join(cfg.tracker_options.out_path_for_eval, 'tracked', cfg.tracker_options.split),
-            os.listdir(os.path.join(cfg.tracker_options.out_path_for_eval, 'tracked', cfg.tracker_options.split)),
+            os.path.join(cfg.tracker_options.out_path_for_eval, cfg.tracker_options.tracked_dets, cfg.tracker_options.split),
+            os.listdir(os.path.join(cfg.tracker_options.out_path_for_eval, cfg.tracker_options.tracked_dets, cfg.tracker_options.split)),
             'Tracked')
     if cfg.tracker_options.register:
         logger.info('Evaluating registered bounding boxes...')
         InitialDetProcessor.eval(
             cfg,
-            os.path.join(cfg.tracker_options.out_path_for_eval, 'registered', cfg.tracker_options.split), 
-            os.listdir(os.path.join(cfg.tracker_options.out_path_for_eval, 'registered', cfg.tracker_options.split)),
+            os.path.join(cfg.tracker_options.out_path_for_eval, cfg.tracker_options.registered_dets, cfg.tracker_options.split), 
+            os.listdir(os.path.join(cfg.tracker_options.out_path_for_eval, cfg.tracker_options.registered_dets, cfg.tracker_options.split)),
             'Registered')
 
 
@@ -165,7 +170,7 @@ def track(rank, cfg, world_size):
     cfg.tracker_options.collapsed_dets = f'{cfg.tracker_options.collapsed_dets}/{cfg.tracker_options.model}' 
     cfg.tracker_options.tracked_dets = f'{cfg.tracker_options.tracked_dets}/{cfg.tracker_options.model}'
     cfg.tracker_options.registered_dets = f'{cfg.tracker_options.registered_dets}/{cfg.tracker_options.model}'
-
+    cfg.tracker_options.split = dataset.split
     if not cfg.multi_gpu:
         dataloader = DataLoader(
             dataset,
@@ -183,6 +188,9 @@ def track(rank, cfg, world_size):
     for data in dataloader:
         seq_name, dataset_path, gt_path, split, detection_set, percentage = data
         seq_name, dataset_path, gt_path, split, detection_set, percentage = seq_name[0], dataset_path[0], gt_path[0], split[0], detection_set[0], percentage[0]
+        if seq_name != '10017090168044687777':
+            continue
+
         loader = AV2SensorDataLoader(data_dir=Path(f'{cfg.data.data_dir}_{split}/Waymo_Converted/{split}'), labels_dir=Path(f'{cfg.data.data_dir}_{split}/Waymo_Converted/{split}'))    
         detsprocessor = InitialDetProcessor(
             tracker_type=cfg.tracker_options.tracker_type,
@@ -205,7 +213,6 @@ def track(rank, cfg, world_size):
             a_threshold=cfg.tracker_options.a_threshold,
             i_threshold=cfg.tracker_options.i_threshold,
             len_thresh=cfg.tracker_options.len_thresh)
-        print(seq_name, detection_set)
         detections = None
         tracks = None
         if cfg.tracker_options.convert_initial:

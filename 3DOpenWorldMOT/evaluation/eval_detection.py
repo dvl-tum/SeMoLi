@@ -99,7 +99,6 @@ def get_feather_files(
     
     if is_gt:
         # get file name
-        print(paths)
         split = os.path.basename(paths)
         file = 'filtered_version.feather'
         file = 'remove_non_drive_' + file if remove_non_drive else file
@@ -488,7 +487,8 @@ def eval_detection(
         filter_class=-2,
         only_matched_gt=False,
         filter_moving_first=False,
-        use_matched_category=False):
+        use_matched_category=False,
+        filter_moving=True):
 
     if not len(seq_to_eval):
         return None, np.array([0, 2, 1, 3.142, 0])
@@ -532,7 +532,7 @@ def eval_detection(
     # dts = dts[dts['height_m'] < 3]
     # dts = dts[dts['width_m'] < 4]
     # dts = dts[dts['length_m'] < 7]
-    print(f'Num dts: {dts.shape}, Num gts: {gts.shape}')
+    print(f'\t Num dts: {dts.shape}, Num gts: {gts.shape}')
 
     if just_eval:
         print("Loaded detections...")
@@ -557,7 +557,7 @@ def eval_detection(
 
     gts['category'] = [_class_dict[c] for c in gts['category']]
     dts['category'] = [_class_dict[c] for c in dts['category']]
-    print(f'Min points {min_points}, Max points {max_points}')
+    print(f' \t Min points {min_points}, Max points {max_points}')
 
     if just_eval:
         print("Loaded ground truth...")
@@ -571,7 +571,7 @@ def eval_detection(
         ['CENTER', 'IoU3D'], [2.0, 0.6], [(0.5, 1.0, 2.0, 4.0), (0.2, 0.4, 0.6, 0.8)], [8, 1]):
         # Evaluate instances.
         # Defaults to competition parameters.
-        print(f'Setting categories to Waymo categories {is_waymo}')
+        print(f' \t Setting categories to Waymo categories {is_waymo}')
         if is_waymo:
             categories : Tuple[str, ...] = tuple(x.value for x in CompetitionCategoriesWaymo)
         else:
@@ -585,8 +585,7 @@ def eval_detection(
             categories=categories
             )
         
-        print()
-        print(f"{affinity}\n")
+        print(f"\t {affinity}\n")
         dts, gts, metrics, np_tps, np_fns, _ = evaluate(
             dts_orig,
             gts_orig,
@@ -598,15 +597,16 @@ def eval_detection(
             filter_moving_first=filter_moving_first,
             use_matched_category=use_matched_category,
             _class_dict=_class_dict,
-            n_jobs=n_jobs)
+            n_jobs=n_jobs,
+            filter_moving=filter_moving)
         
-        print(f"Writing macthed detections to matched_{trackers_folder}/annotations_{affinity}.feather...")
+        print(f"\t Writing macthed detections to matched_{trackers_folder}/annotations_{affinity}.feather...")
         os.makedirs(f'matched_{trackers_folder}', exist_ok=True)
         feather.write_feather(dts, f'matched_{trackers_folder}/annotations_{affinity}.feather')
-
+        
         dts = dts[dts['is_evaluated']==1]
         gts = gts[gts['is_evaluated']==1]
-        print('shapes after', gts.shape, dts.shape)
+        print('\t Shapes after', gts.shape, dts.shape)
 
         if print_detail:
             # remove gt objects without lidar points inside
@@ -635,7 +635,7 @@ def eval_detection(
         if _filter_class == -1:
             metric = metrics.loc['AVERAGE_METRICS'].values
         else:
-            print(metrics.loc[_filter_class])
+            print('\t ', metrics.loc[_filter_class])
             metric = metrics.loc[_filter_class].values
 
         break

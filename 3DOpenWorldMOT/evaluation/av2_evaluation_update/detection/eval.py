@@ -97,6 +97,7 @@ def evaluate(
     only_matched_gt: bool = False,
     use_matched_category: bool = False,
     filter_moving_first: bool = False,
+    filter_moving: bool = True,
     _class_dict: dict = {}
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Evaluate a set of detections against the ground truth annotations.
@@ -117,7 +118,6 @@ def evaluate(
         RuntimeError: If accumulation fails.
         ValueError: If ROI pruning is enabled but a dataset directory is not specified.
     """
-    print(cfg.categories)
     if cfg.eval_only_roi_instances and cfg.dataset_dir is None:
         raise ValueError(
             "ROI pruning has been enabled, but the dataset directory has not be specified. "
@@ -132,10 +132,10 @@ def evaluate(
     else:
         _UUID_COLUMN_NAMES = UUID_COLUMN_NAMES
                 
-    if filter_moving_first:
-        print(gts['category_int'].unique())
+    if filter_moving and filter_moving_first:
         gts = gts[gts['filter_moving']]
-        print(gts['category_int'].unique())
+    elif not filter_moving:
+        gts['filter_moving'] = np.ones(gts.shape[0], dtype=bool)
 
     # Sort both the detections and annotations by lexicographic order for grouping.
     dts = dts.sort_values(list(_UUID_COLUMN_NAMES))
@@ -185,7 +185,7 @@ def evaluate(
             args = sweep_dts, sweep_gts, cfg, avm, city_SE3_ego, min_points, max_points, int(timestamp_ns), filter_class, only_matched_gt
         args_list.append(args)
 
-    logger.info("Starting evaluation ...")
+    print("\t Starting evaluation ...")
     with get_context("spawn").Pool(processes=n_jobs) as p:
         outputs: Optional[List[Tuple[NDArrayFloat, NDArrayFloat]]] = p.starmap(accumulate, args_list)
 
@@ -202,7 +202,6 @@ def evaluate(
     dts['matched_category'] = np.ones(dts.shape[0]) * -1
     dts.loc[:, METRIC_COLUMN_NAMES_DTS] = dts_metrics
     gts.loc[:, METRIC_COLUMN_NAMES_GTS] = gts_metrics
-    print(dts['matched_category'].unique())
     dts['matched_category'] = dts['matched_category'].apply(lambda x: _class_dict[x])
 
     if len([t for t in np_tps if t is not None]):
@@ -246,7 +245,7 @@ def summarize_metrics(
     )
 
     unmatched_fps_dets = dts[np.logical_and(dts["is_evaluated"], dts["matched_category"]=='UNMATCHED')].shape[0]
-    print(f"Unmatched FP detections {unmatched_fps_dets} ...")
+    print(f"\t Unmatched FP detections {unmatched_fps_dets} ...")
 
     average_precisions = pd.DataFrame({t: 0.0 for t in cfg.affinity_thresholds_m}, index=cfg.categories)
     precisions = pd.DataFrame({t: 0.0 for t in cfg.affinity_thresholds_m}, index=cfg.categories)
@@ -257,7 +256,6 @@ def summarize_metrics(
             is_category_dts = dts["matched_category"] == category
         else:
             is_category_dts = dts["category"] == category
-        print(category, dts["matched_category"], dts["category"])
         # Only keep detections if they match the category and have NOT been filtered.
         is_valid_dts = np.logical_and(is_category_dts, dts["is_evaluated"])
 
@@ -376,14 +374,14 @@ def summarize_metrics(
             # Continue if there aren't any true positives.
             if len(true_positives) == 0:
                 continue
-            print(affinity_threshold_m, "TPS: ", true_positives.sum(), "FPS: ", (~true_positives).sum(), "FNS: ", num_gts-(true_positives.sum()), "Num GT: ", num_gts)
+            print('\t', affinity_threshold_m, "TPS: ", true_positives.sum(), "FPS: ", (~true_positives).sum(), "FNS: ", num_gts-(true_positives.sum()), "Num GT: ", num_gts)
             # Compute average precision for the current threshold.
             threshold_average_precision, _ = compute_average_precision(true_positives, recall_interpolated, num_gts)
             # Record the average precision.
             average_precisions.loc[category, affinity_threshold_m] = threshold_average_precision
             precisions.loc[category, affinity_threshold_m] = true_positives.sum()/(true_positives.sum()+(~true_positives).sum())
-        print("AVERAGE PRECISIONS \n", average_precisions.loc[category])
-        print("PRECISIONS \n", precisions.loc[category])
+        print("\t AVERAGE PRECISIONS \n", average_precisions.loc[category])
+        print("\t PRECISIONS \n", precisions.loc[category])
         mean_average_precisions: NDArrayFloat = average_precisions.loc[category].to_numpy().mean()
 
         # Select only the true positives for each instance.

@@ -112,7 +112,7 @@ column_names_dets_wo_traj = [
     'rot',
     'gt_cat']
 
-column_names_dets = column_names_dets_wo_traj + [f'{i}_{j}' for i in range(25) for j in ['x', 'y', 'z']]
+column_names_dets = column_names_dets_wo_traj # + [f'{i}_{j}' for i in range(25) for j in ['x', 'y', 'z']]
 
 column_dtypes = {
     'timestamp_ns': 'int64',
@@ -143,7 +143,7 @@ column_dtypes_dets_wo_traj = {
     'gt_id': 'str',
     'num_interior_pts': 'int64'}
 
-column_dtypes_dets = {f'{i}_{j}': 'float32' for i in range(25) for j in ['x', 'y', 'z']}
+column_dtypes_dets = dict() # {f'{i}_{j}': 'float32' for i in range(25) for j in ['x', 'y', 'z']}
 column_dtypes_dets.update(column_dtypes_dets_wo_traj)
 
 
@@ -156,6 +156,7 @@ class Track():
         self.track_id = track_id
         self.log_id = detection.log_id
         self.dead = False
+        self.final = list()
 
     def add_detection(self, detection):
         self.detections.append(detection)
@@ -167,7 +168,7 @@ class Track():
             if i != len(self.detections)-1:
                 t0 = self.detections[i].timestamps[0, 0].item()
                 t1 = self.detections[i+1].timestamps[0, 0].item()
-                _range = ordered_timestamps.index(t1) - self.ordered_timestamps.index(t0)
+                _range = ordered_timestamps.index(t1) - ordered_timestamps.index(t0)
             else:
                 _range = det.trajectory.shape[1]
 
@@ -181,17 +182,17 @@ class Track():
                 points_c_time = ego_SE3_ego0.transform_point_cloud(points_c_time)
 
                 if time < det.trajectory.shape[1] - 1:
-                    mean_flow = (det.trajectory[:, time+1, :] - det.trajectory[:, time, :]).mean(axis=0)
+                    traj = det.trajectory[:, time:time+2, :]
                 else:
-                    mean_flow = (det.trajectory[:, time, :] - det.trajectory[:, time-1, :]).mean(axis=0)
+                    traj = det.trajectory[:, time-1:time+1, :]
                 
                 filled_detections.append(Detection(
-                    trajectory=mean_flow,
+                    trajectory=traj,
                     canonical_points=points_c_time,
                     timestamps=self.detections[i].timestamps[0, time],
                     log_id=det.log_id,
                     num_interior=det.num_interior))
-        
+        self.final = filled_detections 
         return filled_detections
 
     def _get_traj(self, i=-1):
@@ -259,7 +260,7 @@ class Detection():
     def __init__(self, trajectory, canonical_points, timestamps, log_id, num_interior, overlap=None, gt_id=None, gt_id_box=None, rot=None, alpha=None, gt_cat=-10, lwh=None, translation=None, pts_density=None) -> None:
         self.trajectory = trajectory
         self.canonical_points = canonical_points
-        self.timestamps = timestamps
+        self.timestamps = torch.atleast_2d(timestamps)
         self.log_id = log_id
         self.num_interior = num_interior
         # self.overlap = overlap
@@ -282,15 +283,15 @@ class Detection():
             self.lwh, self.translation = lwh, translation
         
         if pts_density is None:
-            self.pts_density = (self.lwh[0] * self.lwh[1] * self.lwh[2]) / self.num_interior
+            self.pts_density = ((self.lwh[0] * self.lwh[1] * self.lwh[2]) / self.num_interior).item()
         else:
             self.pts_density = pts_density
-
+        
         if len(self.trajectory.shape) > 2:
             self.mean_trajectory = torch.mean(self.trajectory, dim=0)
         else:
             self.mean_trajectory = self.trajectory
-        
+
     @property
     def timestamp(self):
         return self.timestamps[0, 0]
@@ -369,9 +370,9 @@ def get_lwh(object_points):
 
 def store_initial_detections(detections, seq, out_path, split, tracks=False, gt_path=None):
     p = f'{out_path}/{split}/{seq}'
-    if os.path.isdir(p):
-        shutil.rmtree(p)
-    os.makedirs(p)
+    #if os.path.isdir(p):
+    #    shutil.rmtree(p)
+    os.makedirs(p, exist_ok=True)
     
     if tracks:
         extracted_detections = dict()
@@ -391,7 +392,7 @@ def store_initial_detections(detections, seq, out_path, split, tracks=False, gt_
                 os.path.join(p, str(t) + '_' + str(j) + '.npz'),
                 trajectory=d.trajectory.numpy() if d.trajectory is not None else d.trajectory,
                 canonical_points=d.canonical_points.numpy() if d.canonical_points is not None else d.canonical_points,
-                timestamps=d.timestamps.numpy(),
+                timestamps=np.atleast_2d(d.timestamps.numpy()),
                 log_id=d.log_id,
                 num_interior=d.num_interior,
                 # overlap=d.overlap,
@@ -403,7 +404,6 @@ def store_initial_detections(detections, seq, out_path, split, tracks=False, gt_
                 gt_cat=d.gt_cat
             )
 
-    print(f'Stored initial detections.....')
 
 def load_initial_detections(out_path, split, seq=None, tracks=False, every_x_frame=1, overlap=1):
     p = f'{out_path}/{split}/{seq}'
@@ -603,7 +603,7 @@ def to_feather(detections, log_id, out_path, split, rank, precomp_dets=False, na
                 det.pts_density,
                 det.log_id,
                 det.alpha.item(),
-                det.gt_cat] + det.trajectory.numpy().tolist()
+                det.gt_cat] # + det.mean_trajectory.flatten().numpy().tolist()
             track_vals.append(values)
     track_vals = np.asarray(track_vals)
 

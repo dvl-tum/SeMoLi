@@ -12,7 +12,7 @@ class FlowRegistration():
     
     def register(self):
         detections = dict()
-        for j, track in enumerate(self.active_tracks):
+        for j, track in enumerate(self.active_tracks.values()):
             # we start from timestep with most points and then go
             # from max -> end -> start -> max
 
@@ -26,7 +26,7 @@ class FlowRegistration():
                     t1 = track.detections[i+1].timestamps[0, 0].item()
                     dt = self.ordered_timestamps.index(t1) - self.ordered_timestamps.index(t0)
                     start_in_t1 = track._convert_time(t0, t1, self.av2_loader, start_in_t0)
-                    traj_dt_in_t1 = track._convert_time(t0, t1, self.av2_loader, traj_in_t0[dt])
+                    traj_dt_in_t1 = track._convert_time(t0, t1, self.av2_loader, traj_in_t0[:, dt])
 
                     # transform points to from t0 --> t1
                     # print(start_in_t1.shape, traj_dt_in_t1.shape, start_in_t0.shape, traj_in_t0.shape, traj_in_t0[dt].shape)
@@ -43,7 +43,6 @@ class FlowRegistration():
                 track.detections[-1].lwh = lwh
                 track.detections[i].translation = translation
                 track.detections[i].num_interior = num_interior
-                track_dets.append(track.detections[i])
 
                 for i in range(len(track)-1, 0, -1):
                     t0 = track.detections[i].timestamps[0, 0].item()
@@ -56,7 +55,7 @@ class FlowRegistration():
                     track.detections[i].translation = translation
                     track.detections[i].num_interior = num_interior
                 
-            track_dets = track.fill_detections(self.av2_loader)
+            track_dets = track.fill_detections(self.av2_loader, self.ordered_timestamps)
 
             detections[j] = track_dets
         

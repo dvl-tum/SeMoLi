@@ -166,7 +166,7 @@ def accumulate(
     # `is_evaluated` boolean flag is always the last column of the array.
     dts_augmented[is_evaluated_dts, -1] = True
     gts_augmented[is_evaluated_gts, -1] = True
-
+    
     if is_evaluated_dts.sum() > 0 and is_evaluated_gts.sum() > 0:
         # Compute true positives by assigning detections and ground truths.
         dts_assignments, gts_assignments, np_tps, np_fns, keep_gts, rem_dts, dts_category = assign(
@@ -304,7 +304,7 @@ def assign(
     # that we don't care about the category
     matched_mask = keep_gts[idx_gts]
 
-    # all detections that are not matched to gt that is
+    # all detections that are matched to gt that is
     # static / wrong category / wrong pointrange
     rem_dts = np.isin(
         all_dts, idx_dts[~matched_mask])
