@@ -201,6 +201,9 @@ class Track():
     def _get_canonical_points(self, i=-1):
         return self.detections[i].canonical_points
     
+    def _get_propagated_bbs(self, propagated_pos_tracks):
+        return get_propagated_bbs(propagated_pos_tracks)
+    
     def _get_whole_traj_and_convert_time(self, t1, av2_loader, i=-1, city=False):
         index = torch.where(self.detections[-1].timestamps[0]==t1)[0][0].item()
         traj = copy.deepcopy(self._get_traj(i))[:, index:]
@@ -278,7 +281,7 @@ class Detection():
             self.rot, self.alpha = self.get_alpha_rot_t0_to_t1(0, 1, self.trajectory)
         
         if lwh is None:
-            self.lwh, self.translation = get_rotated_center_and_lwh(canonical_points, self.rot)
+            self.lwh, self.translation = self.get_rotated_center_and_lwh(canonical_points, self.rot)
         else:
             self.lwh, self.translation = lwh, translation
         
@@ -307,6 +310,19 @@ class Detection():
     def get_alpha_rot_t0_to_t1(self, t0=None, t1=None, trajectory=None, traj_t0=None, traj_t1=None):
         rot, alpha = get_alpha_rot_t0_to_t1(t0, t1, trajectory, traj_t0, traj_t1)
         return rot, alpha
+    
+    def get_rotated_center_and_lwh(self, canonical_points, rot=None, trajectory=None, traj_t0=None, traj_t1=None):
+        if rot is None:
+            rot, _ = self.get_alpha_rot_t0_to_t1(0, 1, trajectory, traj_t0, traj_t1)
+        lwh, translation = get_rotated_center_and_lwh(canonical_points, rot)
+        return lwh, translation
+    
+    def _get_propagated_bbs(self, propagated_pos=None):
+        if propagated_pos is None:
+            propagated_pos = self.trajectory + torch.tile(
+                self._get_canonical_points.unsqueeze(1),
+                (1, self.trajectory.shape[1], 1))
+        return get_propagated_bbs(propagated_pos)
 
     def _get_traj_city(self, av2_loader, t0):
         traj = self.trajectory
@@ -339,8 +355,9 @@ def get_rotated_center_and_lwh(pc, rot):
     translation = rot.T @ translation.double()
     return lwh, translation
 
+
 def get_alpha_rot_t0_to_t1(t0=None, t1=None, trajectory=None, traj_t0=None, traj_t1=None):
-    if t0 is not None:
+    if trajectory is not None:
         mean_flow = (trajectory[:, t1, :] - trajectory[:, t0, :]).mean(dim=0)
     else:
         mean_flow = (traj_t1 - traj_t0).mean(dim=0)
@@ -350,6 +367,31 @@ def get_alpha_rot_t0_to_t1(t0=None, t1=None, trajectory=None, traj_t0=None, traj
         [torch.sin(alpha), torch.cos(alpha), 0],
         [0, 0, 1]]).double()
     return rot, alpha
+
+
+def get_propagated_bbs(propagated_pos_tracks, get_trans=True, get_lwh=True, _2d=False, get_corners=False):
+    lwhs = list()
+    translations = list()
+    corners = list()
+    for t in range(propagated_pos_tracks.shape[1]):
+        t_0 = t if t != propagated_pos_tracks.shape[1]-1 else t-1
+        t_1 = t+1 if t != propagated_pos_tracks.shape[1]-1 else t
+        rot, _ = get_alpha_rot_t0_to_t1(t_0, t_1, propagated_pos_tracks)
+        lwh, translation = get_rotated_center_and_lwh(propagated_pos_tracks[:, t, :], rot)
+        if _2d:
+            lwh = lwh[:-1]
+            translation = translation[:-1]
+        lwhs.append(lwh)
+        translations.append(translation)
+        corners.append(np.stack(translation - lwh/2, translation + lwh/2))
+    return_list = list()
+    if get_trans:
+        return_list.append(translations)
+    if get_lwh:
+        return_list.append(lwh)
+    if get_corners:
+        return_list.append(corners)
+    return return_list
 
 
 def get_center(canonical_points):

@@ -4,6 +4,7 @@ import torch
 from .tracking_utils import *
 from scipy.optimize import linear_sum_assignment
 import matplotlib.pyplot as plt
+import torchvision
 
 
 class SimpleTracker():
@@ -266,7 +267,7 @@ class SimpleTracker():
 
         return re_activate, matched_tracks, matched_dets, tps, fps
 
-    def _calculate_traj_dist(self, detections, timestamp, alpha=0.0, dist='cd'):
+    def _calculate_traj_dist(self, detections, timestamp, alpha=0.0, dist='bb_iou_2d'):
         # get detections and canonical points of last x frames 
         # and convert to current time for all active tracks
         trajs = [t._get_whole_traj_and_convert_time(
@@ -300,7 +301,8 @@ class SimpleTracker():
 
         # trajectories from canonical point of last added detections
         propagated_pos_tracks = [t.float().to(self.rank) for t in trajs]
-        propagared_bbs_trakcs = []
+        propagared_bbs_tracks = [
+            get_propagated_bbs(ppt, _2d=True, get_corners=True) for ppt in propagated_pos_tracks]
         traj_lens = [t.shape[1] for t in propagated_pos_tracks]
         num_tracks = len(traj_lens)
 
@@ -318,6 +320,8 @@ class SimpleTracker():
         propagated_pos_dets = [
             torch.tile(det_cano_points[i].unsqueeze(1), (1, det_trajs[i].shape[1], 1)) + det_trajs[i] \
                 for i in range(len(det_trajs))]
+        propagared_bbs_dets = [
+            get_propagated_bbs(ppd, _2d=True, get_corners=True) for ppd in propagated_pos_dets]
 
         # initialize position distances and trajectory distances
         chamferDist = pytorch3d.loss.chamfer_distance
@@ -325,6 +329,10 @@ class SimpleTracker():
         mean_dist = torch.zeros(len(propagated_pos_dets), num_tracks)
         for k in range(len(propagated_pos_dets)):
             for i in range(num_tracks):
+                l2_center_2d = self.pdist(propagared_bbs_tracks[i][1], 
+                                       propagared_bbs_dets[k][1][:propagared_bbs_tracks[i].shape[1]])
+                bb_iou_2d = torchvision.ops.box_iou(propagared_bbs_tracks[i][2], 
+                                       propagared_bbs_dets[k][1][:propagared_bbs_tracks[i].shape[2]])
                 cd_dist_track = chamferDist(
                         propagated_pos_tracks[i].permute(1, 0, 2), propagated_pos_dets[k][:, :propagated_pos_tracks[i].shape[1]].permute(1, 0, 2))[0]
                 # for t in range(propagated_pos_tracks[i].shape[1]):
@@ -334,8 +342,13 @@ class SimpleTracker():
                 cd_dists[k, i] = cd_dist_track
         if dist == 'cd':
             dists = cd_dists
-        else:
+        elif dist == 'mean_point':
             dists = mean_dist
+        elif dist == '2dIoU':
+            dist = bb_iou_2d
+        elif dist == 'L2Center':
+            dist = l2_center_2d
+
         return dists, \
             len(self.active_tracks), \
                 len(trajs) - len(self.active_tracks), \
