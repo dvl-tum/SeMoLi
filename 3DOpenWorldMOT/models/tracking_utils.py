@@ -1,3 +1,4 @@
+from pytorch3d.ops import knn_points
 import shutil
 import torch
 import os
@@ -204,7 +205,7 @@ class Track():
     def _get_propagated_bbs(self, propagated_pos_tracks):
         return get_propagated_bbs(propagated_pos_tracks)
     
-    def _get_whole_traj_and_convert_time(self, t1, av2_loader, i=-1, city=False):
+    def _get_whole_traj_and_convert_time(self, t1, av2_loader, i=-1, city=False, max_time=25):
         index = torch.where(self.detections[-1].timestamps[0]==t1)[0][0].item()
         traj = copy.deepcopy(self._get_traj(i))[:, index:]
         cano = self._get_canonical_points()
@@ -217,7 +218,7 @@ class Track():
         else:
             traj = self._convert_city(t0, av2_loader, traj)
 
-        return traj
+        return traj[:, :max_time, :]
     
     def _get_canonical_points_and_convert_time(self, t1, av2_loader, i=-1, city=False):
         canonical_points = copy.deepcopy(self._get_canonical_points(i=i))
@@ -347,7 +348,7 @@ def get_rotated_center_and_lwh(pc, rot):
     
     pc = pc @ rot.T # + (-translation.double() @ rot.T)
     translation = get_center(pc)
-    translation = translation.cpu()
+    translation = translation.to(pc.device)
     # rot.T @ translation not needed since taken from already rotated pc
     pc = pc + (-translation.double())
     lwh = get_lwh(pc)
@@ -377,18 +378,22 @@ def get_propagated_bbs(propagated_pos_tracks, get_trans=True, get_lwh=True, _2d=
         t_0 = t if t != propagated_pos_tracks.shape[1]-1 else t-1
         t_1 = t+1 if t != propagated_pos_tracks.shape[1]-1 else t
         rot, _ = get_alpha_rot_t0_to_t1(t_0, t_1, propagated_pos_tracks)
-        lwh, translation = get_rotated_center_and_lwh(propagated_pos_tracks[:, t, :], rot)
+        rot = rot.to(propagated_pos_tracks.device)
+        lwh, translation = get_rotated_center_and_lwh(propagated_pos_tracks[:, t, :].double(), rot)
         if _2d:
             lwh = lwh[:-1]
             translation = translation[:-1]
         lwhs.append(lwh)
         translations.append(translation)
-        corners.append(np.stack(translation - lwh/2, translation + lwh/2))
+        corners.append(torch.cat([translation - lwh/2, translation + lwh/2]))
+    translations = torch.stack(translations)
+    lwhs = torch.stack(lwhs)
+    corners = torch.stack(corners)
     return_list = list()
     if get_trans:
         return_list.append(translations)
     if get_lwh:
-        return_list.append(lwh)
+        return_list.append(lwhs)
     if get_corners:
         return_list.append(corners)
     return return_list
@@ -671,3 +676,7 @@ def to_feather(detections, log_id, out_path, split, rank, precomp_dets=False, na
     feather.write_feather(df, write_path)
     return True
 
+
+def outlier_removal(pc, threshold=0.1, kNN=10):
+    nn_dists, nn_idx, nn = knn_points(pc, pc, kNN=kNN)
+    return pc[nn_dists[0,:,1:].mean(1) < threshold][None,...]

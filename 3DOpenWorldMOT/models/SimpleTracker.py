@@ -46,7 +46,7 @@ class SimpleTracker():
         self.tps = 0
         self.fns = 0
         self.fps = 0
-        
+        print(len(active_tracks), len({t.track_id: t for t in active_tracks if len(t) > self.len_thresh}), [len(t) for t in active_tracks]) 
         return {t.track_id: t for t in active_tracks if len(t) > self.len_thresh}
 
     def associate_timestamp(
@@ -102,9 +102,12 @@ class SimpleTracker():
 
         gt_id_detections = [d.gt_id for d in detections]
         gt_id_tracks = [t.detections[-1].gt_id for t in self.active_tracks] + \
-            [t.detections[-1].gt_id for t in self.inactive_tracks] 
-        gt_matches = sum([1 for gt_id_d in gt_id_detections if gt_id_d in gt_id_tracks])
-        
+            [self.inactive_tracks[i].detections[-1].gt_id for i in inactive_tracks_to_use] 
+        gt_matches = sum([1 for gt_id_d in gt_id_detections if gt_id_d in gt_id_tracks and gt_id_d != 0])
+        gt_cat_detections = [d.gt_cat for d in detections]
+        gt_cat_tracks = [t.detections[-1].gt_cat for t in self.active_tracks] + \
+            [self.inactive_tracks[i].detections[-1].gt_cat for i in inactive_tracks_to_use]
+ 
         # match detections and tracks
         if matching == 'greedy':
             re_activate, matched_tracks, matched_dets, tps, fps = self.greedy(
@@ -126,7 +129,9 @@ class SimpleTracker():
                 active_first=True,
                 timestamp=timestamp,
                 gt_id_tracks=gt_id_tracks,
-                gt_id_detections=gt_id_detections)
+                gt_id_detections=gt_id_detections,
+                gt_cat_tracks=gt_cat_tracks,
+                gt_cat_detections=gt_cat_detections)
         
         fns = gt_matches - tps
         self.tps += tps
@@ -190,7 +195,9 @@ class SimpleTracker():
             active_first=False,
             timestamp=None,
             gt_id_tracks=None,
-            gt_id_detections=None):
+            gt_id_detections=None,
+            gt_cat_tracks=None,
+            gt_cat_detections=None):
         re_activate = list()
         matched_tracks = list()
         matched_dets = list()
@@ -212,8 +219,11 @@ class SimpleTracker():
                     inactive_idx = inactive_tracks_to_use[cid-num_act]
                     self.inactive_tracks[inactive_idx].add_detection(detections[rid])
                     re_activate.append(inactive_idx)
-                tps = tps + 1 if gt_id_tracks[cid] == gt_id_detections[rid] else tps
-                fps = fps + 1 if gt_id_tracks[cid] != gt_id_detections[rid] else fps
+                t_fg = gt_id_tracks[cid] != 0
+                d_fg = gt_id_detections[rid] != 0
+                tps = tps + 1 if gt_id_tracks[cid] == gt_id_detections[rid] and t_fg and d_fg else tps
+                fps = fps + 1 if gt_id_tracks[cid] != gt_id_detections[rid] or ~t_fg or ~d_fg else fps
+        
         return re_activate, matched_tracks, matched_dets, tps, fps
 
     def greedy(
@@ -267,11 +277,11 @@ class SimpleTracker():
 
         return re_activate, matched_tracks, matched_dets, tps, fps
 
-    def _calculate_traj_dist(self, detections, timestamp, alpha=0.0, dist='bb_iou_2d'):
+    def _calculate_traj_dist(self, detections, timestamp, alpha=0.0, dist='L2Center', max_time=25): # L2Center, 2dIoU
         # get detections and canonical points of last x frames 
         # and convert to current time for all active tracks
         trajs = [t._get_whole_traj_and_convert_time(
-            timestamp, self.av2_loader) for t in self.active_tracks]
+            timestamp, self.av2_loader, max_time=max_time) for t in self.active_tracks]
         cano_points = [t._get_canonical_points_and_convert_time(
             timestamp, self.av2_loader).float().to(self.rank) for t in self.active_tracks]
 
@@ -292,7 +302,7 @@ class SimpleTracker():
                     # then <= will be true but should not cos index starts at 0 not 1
                     if time_dist < t.detections[-1].length-1:
                         trajs.extend([
-                            t._get_whole_traj_and_convert_time(timestamp, self.av2_loader)])
+                            t._get_whole_traj_and_convert_time(timestamp, self.av2_loader, max_time=max_time)])
                         cano_points.extend([
                             t._get_canonical_points_and_convert_time(timestamp, self.av2_loader).float().to(self.rank)])
                         inactive_tracks_to_use.append(i)
@@ -327,12 +337,14 @@ class SimpleTracker():
         chamferDist = pytorch3d.loss.chamfer_distance
         cd_dists = torch.zeros(len(propagated_pos_dets), num_tracks)
         mean_dist = torch.zeros(len(propagated_pos_dets), num_tracks)
+        bb_iou_2d = torch.zeros(len(propagated_pos_dets), num_tracks)
+        l2_center_2d = torch.zeros(len(propagated_pos_dets), num_tracks)
         for k in range(len(propagated_pos_dets)):
             for i in range(num_tracks):
-                l2_center_2d = self.pdist(propagared_bbs_tracks[i][1], 
-                                       propagared_bbs_dets[k][1][:propagared_bbs_tracks[i].shape[1]])
-                bb_iou_2d = torchvision.ops.box_iou(propagared_bbs_tracks[i][2], 
-                                       propagared_bbs_dets[k][1][:propagared_bbs_tracks[i].shape[2]])
+                l2_center_2d[k, i] = self.pdist(propagared_bbs_tracks[i][1], 
+                                       propagared_bbs_dets[k][1][:propagated_pos_tracks[i].shape[1]]).mean()
+                bb_iou_2d[k, i] = 1 - torch.diagonal(torchvision.ops.box_iou(propagared_bbs_tracks[i][2], 
+                                       propagared_bbs_dets[k][2][:propagated_pos_tracks[i].shape[1]])).mean()
                 cd_dist_track = chamferDist(
                         propagated_pos_tracks[i].permute(1, 0, 2), propagated_pos_dets[k][:, :propagated_pos_tracks[i].shape[1]].permute(1, 0, 2))[0]
                 # for t in range(propagated_pos_tracks[i].shape[1]):
@@ -340,16 +352,19 @@ class SimpleTracker():
                 mean_dist[k, i] = self.pdist(propagated_pos_tracks[i].permute(1, 0, 2).mean(dim=1),
                         propagated_pos_dets[k][:, :propagated_pos_tracks[i].shape[1]].permute(1, 0, 2).mean(dim=1)).mean()
                 cd_dists[k, i] = cd_dist_track
+                print(l2_center_2d[k, i], bb_iou_2d[k, i])
+        
         if dist == 'cd':
             dists = cd_dists
         elif dist == 'mean_point':
             dists = mean_dist
         elif dist == '2dIoU':
-            dist = bb_iou_2d
+            dists = bb_iou_2d
         elif dist == 'L2Center':
-            dist = l2_center_2d
+            dists = l2_center_2d
 
         return dists, \
             len(self.active_tracks), \
                 len(trajs) - len(self.active_tracks), \
                     inactive_tracks_to_use
+

@@ -31,8 +31,8 @@ keep_detections: False
 continue_from_existing: True
 
 tracker_options: # Extra options for the tracker
-  a_threshold: 2.0
-  i_threshold: 2.0
+  a_threshold: 0.9
+  i_threshold: 0.9
   len_thresh: 2
   matching: 'greedy'
   alpha: 0.95
