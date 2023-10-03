@@ -976,6 +976,7 @@ class GNNLoss(nn.Module):
         loss = 0
         log_dict = dict()
         same_graph = data['batch'][edge_index[0, :]] == data['batch'][edge_index[1, :]]
+        all_prediction = (data['batch'] != data['batch']) * -1
         
         if self.bce_loss:
             point_instances = data.point_instances
@@ -1005,6 +1006,11 @@ class GNNLoss(nn.Module):
                             ~(data.point_instances_mov[edge_index[1, :]] != 0), 
                             data.point_instances[edge_index[1, :]] != 0)),
                     point_mask)
+
+                all_prediction[torch.logical_and(
+                            ~(data.point_instances_mov != 0), 
+                            data.point_instances != 0), :] = -1
+
             if (self.ignore_edges_between_background and mode == 'train') or (self.use_node_score and mode != 'train'):
                 # setting edges that do not belong to object to zero
                 # --> instance 0 is no object
@@ -1013,6 +1019,9 @@ class GNNLoss(nn.Module):
                         data.point_instances[edge_index[0, :]] == 0,
                         data.point_instances[edge_index[1, :]] == 0),
                     point_mask)
+
+                all_prediction[data.point_instances == 0 ==
+                        (data.point_instances == 0).unsqueeze(1)] = -1
             '''
             if self.use_node_score and mode != 'train':
                 logits_rounded_node = self.sigmoid(node_logits.clone().detach()).squeeze()
@@ -1027,6 +1036,7 @@ class GNNLoss(nn.Module):
             point_instances = point_instances[~point_mask].float()
             point_categories = point_categories[~point_mask]
             point_categories1 = point_categories1[~point_mask]
+            edge_index = edge_index[:, ~point_mask]
             
             if edge_logits.shape[0] == 0:
                 return None, None, None, None
@@ -1065,7 +1075,13 @@ class GNNLoss(nn.Module):
             hist_edge = np.histogram(logits_rounded.cpu().numpy(), bins=10, range=(0., 1.))
             logits_rounded[logits_rounded>0.5] = 1
             logits_rounded[logits_rounded<=0.5] = 0
-            correct = logits_rounded == point_instances.squeeze()
+            # correct = logits_rounded == point_instances.squeeze()
+
+            all_edges = torch.where(all_prediction != -1)
+            all_point_instances = data.point_instances[all_edges[0]] == data.point_instances[all_edges[1]]
+            all_prediction[edge_index[0, :], edge_index[1, :]] = logits_rounded
+            all_prediction = all_prediction[all_edges[0], all_edges[1]]
+            correct == all_prediction == all_point_instances
             
             # overall
             if correct.shape[0]:
