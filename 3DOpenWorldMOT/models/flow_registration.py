@@ -79,7 +79,7 @@ class FlowRegistration():
                     track.detections[i-1].translation = translation #dets[i-1].translation #translation
                     track.detections[i-1].num_interior = num_interior
 
-            track.fill_detections(self.av2_loader, self.ordered_timestamps, max_time=5)
+            # track.fill_detections(self.av2_loader, self.ordered_timestamps, max_time=5)
             if visualize:
                 self.visualize(dets, track.detections, track.track_id, start_in_t0)
             track_dets = track.detections

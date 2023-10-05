@@ -30,7 +30,8 @@ class InitialDetProcessor():
     def __init__(self, tracker_type, tracker_params, registration_type, collaps_type,
                  every_x_frame, overlap, av2_loader, rank, track_data_path, initial_dets_path, 
                  collapsed_dets_path, tracked_dets_path, registered_dets_path, gt_path, split,
-                 detection_set, percentage, a_threshold, i_threshold, len_thresh, outlier_threshold, outlier_kNN, max_time_track):
+                 detection_set, percentage, a_threshold, i_threshold, len_thresh, outlier_threshold,
+                 outlier_kNN, max_time_track, filter_by_width):
         self.every_x_frame = every_x_frame
         self.overlap = overlap
         self.av2_loader = av2_loader
@@ -54,6 +55,7 @@ class InitialDetProcessor():
         self.outlier_threshold = outlier_threshold
         self.outlier_kNN = outlier_kNN
         self.max_time_track = max_time_track
+        self.filter_by_width = filter_by_width
 
     def track(self, log_id, split, detections=None):
         tracker = self._tracker(
@@ -66,7 +68,8 @@ class InitialDetProcessor():
             self.a_threshold,
             self.i_threshold,
             self.len_thresh,
-            self.max_time_track)
+            self.max_time_track,
+            self.filter_by_width)
 
         # detections = self.dataset(self.collapsed_dets_path, self.gt_path, log_id, self.split).dets
         if detections is None:
@@ -92,7 +95,20 @@ class InitialDetProcessor():
         return detections
     
     def get_initial_dets(self, log_id, split):
-        return self.dataset(self.initial_dets_path, self.gt_path, log_id, self.split).dets
+        detections = self.dataset(self.initial_dets_path, self.gt_path, log_id, self.split).dets
+        if self.filter_by_width:
+            detections_new = dict()
+            for i, timestamp in enumerate(sorted(detections.keys())):
+                dets = detections[timestamp]
+                # filter by width
+                detections_new_time = list()
+                for d in dets:
+                    if d.lwh[1] < 5:
+                        detections_new_time.append(d)
+                if len(detections_new_time):
+                    detections_new[timestamp] = detections_new_time
+            detections = detections_new
+        return detections
 
     def to_feather(self, detections, log_id, out_path, split):
         to_feather(detections, log_id, out_path, self.split, self.rank, precomp_dets=False)
@@ -132,7 +148,7 @@ def main(cfg):
     cfg.tracker_options.collapsed_dets = f'{cfg.tracker_options.collapsed_dets}/{cfg.tracker_options.model}' 
     cfg.tracker_options.tracked_dets = f'{cfg.tracker_options.tracked_dets}/{cfg.tracker_options.model}'
     cfg.tracker_options.registered_dets = f'{cfg.tracker_options.registered_dets}/{cfg.tracker_options.model}'
-    threshs = [0.5, 0.6, 0.7, 0.8, 0.9]
+    threshs = [0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
     lens = [2, 4, 6, 8, 10]
     max_times = [-1, 1, 3, 5, 9, 11, 13, 15, 17, 19, 21, 23]
     cfg.tracker_options.convert_initial = True
@@ -146,9 +162,12 @@ def main(cfg):
                 print(f"\n \n{m} {l} {t} \n")
                 results_df = _main(cfg, max_time=m, results_df=results_df)
                 cfg.tracker_options.convert_initial = False
-                shutil.rmtree(os.path.join(
+                if os.path.isdir(os.path.join(
                     cfg.tracker_options.track_data_path,
-                    cfg.tracker_options.tracked_dets))
+                    cfg.tracker_options.tracked_dets)):
+                    shutil.rmtree(os.path.join(
+                        cfg.tracker_options.track_data_path,
+                        cfg.tracker_options.tracked_dets))
 
     print('\n\n\n')
     print(results_df)
@@ -264,7 +283,8 @@ def track(rank, cfg, world_size):
             len_thresh=cfg.tracker_options.len_thresh,
             outlier_threshold=cfg.tracker_options.outlier_threshold,
             outlier_kNN=cfg.tracker_options.outlier_kNN,
-            max_time_track=cfg.tracker_options.max_time_track)
+            max_time_track=cfg.tracker_options.max_time_track,
+            filter_by_width=cfg.tracker_options.filter_by_width)
         detections = None
         tracks = None
         if cfg.tracker_options.convert_initial:

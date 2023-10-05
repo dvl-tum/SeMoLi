@@ -12,7 +12,7 @@ import matplotlib
 
 
 class SimpleTracker():
-    def __init__(self, every_x_frame, overlap, av2_loader, log_id, rank, logger, a_threshold=0.8, i_threshold=0.8, len_thresh=5, max_time=5):
+    def __init__(self, every_x_frame, overlap, av2_loader, log_id, rank, logger, a_threshold=0.8, i_threshold=0.8, len_thresh=5, max_time=5, filter_by_width=False):
         self.active_tracks = list()
         self.inactive_tracks = list()
         # self.every_x_frame = every_x_frame
@@ -31,6 +31,7 @@ class SimpleTracker():
         self.logger = logger
         self.len_thresh = len_thresh
         self.max_time = max_time
+        self.filter_by_width = filter_by_width
     
     def associate(self, detections):
         # per timestampdetections
@@ -39,13 +40,14 @@ class SimpleTracker():
         for i, timestamp in enumerate(sorted(detections.keys())):
             dets = detections[timestamp]
             # filter by width
-            detections_new = list()
-            for d in dets:
-                if d.lwh[1] < 5:
-                    detections_new.append(d)
-                else:
-                    pass #print(d.lwh)
-            dets = detections_new
+            if self.filter_by_width:
+                detections_new = list()
+                for d in dets:
+                    if d.lwh[1] < 5:
+                        detections_new.append(d)
+                    else:
+                        pass #print(d.lwh)
+                dets = detections_new
             if len(dets) == 0:
                 continue
             try:
