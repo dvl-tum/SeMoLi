@@ -1013,6 +1013,7 @@ class GNNLoss(nn.Module):
                     data.point_instances[edge_index[0, :]] != 0)] = False
             
             point_mask = torch.zeros(point_instances.shape[0], dtype=bool).to(self.rank)
+            all_edges_mask = torch.zeros(all_edges.shape[1], dtype=bool).to(self.rank)
             # if ignoring predictions for static edges in loss, get static edge filter
             if self.ignore_stat_edges:
                 point_mask = torch.logical_or(
@@ -1026,14 +1027,15 @@ class GNNLoss(nn.Module):
                     point_mask)
                 
                 # filter moving objects from all predictions
-                idx_mask = torch.logical_and(
-                        ~(data.point_instances_mov[all_edges[0, :]] != 0), 
-                        data.point_instances[all_edges[0, :]] != 0)
-                idx_mask = torch.logical_and(
-                        idx_mask, torch.logical_and(
-                            ~(data.point_instances_mov[all_edges[1  , :]] != 0), 
-                            data.point_instances[all_edges[1, :]] != 0))
-                all_edges = all_edges[:, ~idx_mask]
+                all_edges_mask = torch.logical_or(
+                    torch.logical_and(
+                        torch.logical_and(
+                            ~(data.point_instances_mov[all_edges[0, :]] != 0), 
+                            data.point_instances[all_edges[0, :]] != 0),
+                        torch.logical_and(
+                                ~(data.point_instances_mov[all_edges[1  , :]] != 0), 
+                                data.point_instances[all_edges[1, :]] != 0)),
+                    all_edges_mask)
 
             if self.ignore_edges_between_background:
                 # setting edges that do not belong to object to zero
@@ -1045,10 +1047,11 @@ class GNNLoss(nn.Module):
                     point_mask)
                 
                 # filter background edges from all predictions
-                idx_mask = torch.logical_and(
+                all_edges_mask = torch.logical_or(
+                    torch.logical_and(
                         data.point_instances[all_edges[0, :]] == 0,
-                        data.point_instances[all_edges[1, :]] == 0)
-                all_edges = all_edges[:, ~idx_mask]
+                        data.point_instances[all_edges[1, :]] == 0),
+                    all_edges_mask)
             
             '''
             if self.use_node_score and self.node_loss and mode != 'train':
@@ -1118,6 +1121,7 @@ class GNNLoss(nn.Module):
             
             # comment out if not all
             all_size = [data['batch'].shape[0], data['batch'].shape[0]]
+            all_edges = all_edges[:, ~all_edges_mask]
             all_prediction = torch.ones(all_edges.shape[1]).to(logits_rounded.device) * -1
             point_instances = data.point_instances[all_edges[0, :]] == data.point_instances[all_edges[1, :]]
             point_categories = data.point_categories[all_edges[0, :]]
