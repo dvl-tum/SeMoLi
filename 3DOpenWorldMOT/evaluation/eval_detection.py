@@ -626,7 +626,7 @@ def eval_detection(
         if _filter_class == -1:
             metric = metrics.loc['AVERAGE_METRICS'].values
         else:
-            print('\t ', metrics.loc[_filter_class].values)
+            print('\tDetection metrics: ', metrics.loc[_filter_class].values)
             metric = metrics.loc[_filter_class].values
 
         break
