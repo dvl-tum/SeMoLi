@@ -976,7 +976,18 @@ class GNNLoss(nn.Module):
         loss = 0
         log_dict = dict()
         same_graph = data['batch'][edge_index[0, :]] == data['batch'][edge_index[1, :]]
-        all_prediction = (data['batch'] != data['batch']) * -1
+        
+        batch_idx = data._slice_dict['pc_list']
+        idxs = list()
+        for i in range(batch_idx.shape[0]-1):
+            sample = data['batch'][batch_idx[i]:batch_idx[i+1]]
+            idxs.append(torch.stack(torch.where(sample == sample.unsqueeze(1))) + batch_idx[i])
+        idxs = torch.cat(idxs, dim=1)
+        
+        all_prediction = torch.sparse_coo_tensor(
+                idxs,
+                torch.ones(idxs.shape[1])*-1,
+                (data['batch'].shape[0], data['batch'].shape[0])) 
         
         if self.bce_loss:
             point_instances = data.point_instances
@@ -1006,10 +1017,21 @@ class GNNLoss(nn.Module):
                             ~(data.point_instances_mov[edge_index[1, :]] != 0), 
                             data.point_instances[edge_index[1, :]] != 0)),
                     point_mask)
-
-                all_prediction[torch.logical_and(
-                            ~(data.point_instances_mov != 0), 
-                            data.point_instances != 0), :] = -1
+                
+                # filter moving objects from all predictions
+                all_prediction = all_prediction.coalesce()
+                sparse_idx = all_prediction.indices()
+                idx_mask = torch.logical_and(
+                        ~(data.point_instances_mov[sparse_idx[0, :]] != 0), 
+                        data.point_instances[sparse_idx[0, :]] != 0)
+                idx_mask = torch.logical_and(
+                        idx_mask, torch.logical_and(
+                            ~(data.point_instances_mov[sparse_idx[1  , :]] != 0), 
+                            data.point_instances[sparse_idx[1, :]] != 0))
+                all_prediction = torch.sparse_coo_tensor(
+                        all_prediction.indices()[:, ~idx_mask],
+                        all_prediction.values()[~idx_mask],
+                        all_prediction.size())
 
             if (self.ignore_edges_between_background and mode == 'train') or (self.use_node_score and mode != 'train'):
                 # setting edges that do not belong to object to zero
@@ -1019,18 +1041,37 @@ class GNNLoss(nn.Module):
                         data.point_instances[edge_index[0, :]] == 0,
                         data.point_instances[edge_index[1, :]] == 0),
                     point_mask)
-
-                all_prediction[data.point_instances == 0 ==
-                        (data.point_instances == 0).unsqueeze(1)] = -1
-            '''
-            if self.use_node_score and mode != 'train':
+                
+                # filter background edges from all predictions
+                # all_prediction = all_prediction.coalesce()
+                sparse_idx = all_prediction._indices()
+                idx_mask = torch.logical_and(
+                        data.point_instances[sparse_idx[0, :]] == 0,
+                        data.point_instances[sparse_idx[1, :]] == 0)
+                all_prediction = torch.sparse_coo_tensor(
+                        sparse_idx[:, ~idx_mask],
+                        all_prediction._values()[~idx_mask],
+                        all_prediction.size())
+            
+            if self.use_node_score and self.node_loss and mode != 'train':
                 logits_rounded_node = self.sigmoid(node_logits.clone().detach()).squeeze()
                 point_mask = torch.logical_or(
                     torch.logical_or(
                         logits_rounded_node[edge_index[0, :]] < self.use_node_score,
                         logits_rounded_node[edge_index[1, :]] < self.use_node_score),
                     point_mask)
-            '''
+                
+                # filter edges that would be filtered out by node score
+                # all_prediction = all_prediction.coalesce()
+                sparse_idx = all_prediction._indices()
+                idx_mask = torch.logical_or(
+                        logits_rounded_node[sparse_idx[0, :]] < self.use_node_score,
+                        logits_rounded_node[sparse_idx[1, :]] < self.use_node_score)
+                all_prediction = torch.sparse_coo_tensor(
+                        sparse_idx[:, ~idx_mask],
+                        all_prediction._values()[~idx_mask],
+                        all_prediction.size())
+
             # filter edge logits, point instances and point categories
             edge_logits = edge_logits[~point_mask]
             point_instances = point_instances[~point_mask].float()
@@ -1076,12 +1117,29 @@ class GNNLoss(nn.Module):
             logits_rounded[logits_rounded>0.5] = 1
             logits_rounded[logits_rounded<=0.5] = 0
             # correct = logits_rounded == point_instances.squeeze()
+            
+            # comment out if not all
+            print(all_prediction.shape)
+            # all_prediction = all_prediction.coalesce()
+            all_size = all_prediction.size()
+            all_edges = all_prediction._indices()
+            all_prediction = all_prediction._values()
+            point_instances = data.point_instances[all_edges[0, :]] == data.point_instances[all_edges[1, :]]
+            point_categories = data.point_categories[all_edges[0, :]]
+            point_categories1 = data.point_categories[all_edges[1, :]]
+            
+            # set predictions to rounded logits
+            logits_rounded[logits_rounded == 1] = 2
+            all_prediction = torch.sparse_coo_tensor(
+                    torch.hstack([all_edges, edge_index]),
+                    torch.cat([all_prediction, logits_rounded]),
+                    all_size)
+            all_prediction = all_prediction.coalesce()
+            all_prediction = all_prediction.values()
+            all_prediction[all_prediction == -1] = 0
 
-            all_edges = torch.where(all_prediction != -1)
-            all_point_instances = data.point_instances[all_edges[0]] == data.point_instances[all_edges[1]]
-            all_prediction[edge_index[0, :], edge_index[1, :]] = logits_rounded
-            all_prediction = all_prediction[all_edges[0], all_edges[1]]
-            correct == all_prediction == all_point_instances
+            # get correct mask
+            correct = all_prediction == point_instances
             
             # overall
             if correct.shape[0]:
