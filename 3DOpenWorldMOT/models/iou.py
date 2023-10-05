@@ -2,6 +2,9 @@ import numpy as np
 import torch
 from cuda_op.cuda_ext import sort_v
 EPSLION = 1e-8
+
+## https://github.com/Jiahao-Ma/2D-3D-IoUs
+
 # TODO: Convert the box (x, y, w, h, alpha) to 4corners (x1,y1,x2,y2,x3,y3,x4,y4).
 def boxes2corners(boxes:torch.Tensor):
     """
@@ -15,17 +18,28 @@ def boxes2corners(boxes:torch.Tensor):
     w = boxes[..., 2:3]
     h = boxes[..., 3:4]
     alpha = boxes[..., 4::5]
+
     tx = torch.Tensor([0.5, -0.5, -0.5, 0.5]).unsqueeze(0).unsqueeze(0).to(boxes.device)
     tx = tx * w
     ty = torch.Tensor([0.5, 0.5, -0.5, -0.5]).unsqueeze(0).unsqueeze(0).to(boxes.device)
     ty = ty * h
     # (B, N, 4, 2)
-    txty = torch.stack([tx, ty], dim=-1)
-    cos = torch.cos(alpha)
-    sin = torch.sin(alpha)
+    txty = torch.stack([tx, ty], dim=-1).float()
+
+    # (B, N, 2, 2) counter clockwise
+    rotate = torch.zeros([txty.shape[0], txty.shape[1], 2, 2])
+    rotate[:, :, 0, 0] = torch.cos(alpha).squeeze()
+    rotate[:, :, 1, 1] = torch.cos(alpha).squeeze()
+    rotate[:, :, 0, 1] = torch.sin(alpha).squeeze()
+    rotate[:, :, 1, 0] = -torch.sin(alpha).squeeze()
+    rotate = rotate.to(device=boxes.device).float()
+
     # (2, 2) counter clockwise
-    rotate = torch.Tensor([[cos, sin],
-                           [-sin, cos]]).to(device=boxes.device)
+    # cos = torch.cos(alpha)
+    # sin = torch.sin(alpha)
+    # rotate = torch.Tensor([[cos, sin],
+    #                        [-sin, cos]]).to(device=boxes.device)
+    
     # rotate
     txty = txty @ rotate
     # (B, N, 4, 2)
@@ -175,7 +189,7 @@ def calculate_area(vertices, sorted_index):
     return area, selected
 
 #TODO: Package all.
-def IoUs2D(box1, box2):
+def IoUs2D(box1, box2, return_iou_only=True):
     """
         Calculate the ious of rotated boxes 
         Args:
@@ -193,7 +207,7 @@ def IoUs2D(box1, box2):
 
     vertices, masks = build_vertices(corners1, corners2, inters, c1_in_2, c2_in_1, mask_inters)
 
-    sorted_index = sort_vertices(vertices, masks)
+    sorted_index = sort_vertices(vertices.float(), masks)
     
     overlap, _ = calculate_area(vertices, sorted_index)
 
@@ -201,6 +215,8 @@ def IoUs2D(box1, box2):
     area2 = box2[..., 2] * box2[..., 3]
     union = area1 + area2 - overlap
     ious = overlap / union
+    if return_iou_only:
+        return ious
     return ious, corners1, corners2, union
 
 def IoU3D(box3d1:torch.Tensor, box3d2:torch.Tensor):

@@ -20,6 +20,7 @@ import matplotlib as mpl
 from torch import multiprocessing as mp
 import pandas as pd
 from scipy.spatial.transform import Rotation
+import matplotlib
 
 
 _class_dict_argo = {
@@ -360,26 +361,7 @@ def visualize_whole(df, gf, name, base_dir='../../../'):
             to_use = ddf
         else:
             to_use = gdf
-        
-        '''for i, timestamp in enumerate(sorted(to_use['timestamp_ns'].unique())):
-            city_SE3_ego = loader.get_city_SE3_ego(seq, int(timestamp))
-            time_gdf = to_use[to_use['timestamp_ns'] == timestamp]
-            gdf_city = city_SE3_ego.transform_point_cloud(
-                        time_gdf[['tx_m', 'ty_m', 'tz_m']].values)
-            if not gdf_city.shape[0]:
-                continue
-            mins = np.min(gdf_city, axis=0)
-            maxs = np.max(gdf_city, axis=0)
-            lims_mins.append(mins)
-            lims_maxs.append(maxs)
-        lims_mins = np.vstack(lims_mins)
-        lims_maxs = np.vstack(lims_maxs)
-        mins = np.min(lims_mins, axis=0)
-        maxs = np.max(lims_maxs, axis=0)
-        x_lim = (mins[0] - 10,
-                 maxs[0] + 10)
-        y_lim = (mins[1] - 10,
-                 maxs[1] + 10)'''
+
         # visualize for every timestamp
         for i, timestamp in enumerate(set(sorted(gdf['timestamp_ns'].unique().tolist()+ddf['timestamp_ns'].unique().tolist()))):
             if i % 10 == 0:
@@ -391,10 +373,6 @@ def visualize_whole(df, gf, name, base_dir='../../../'):
             time_gdf = gdf[gdf['timestamp_ns'] == timestamp]
             ddf_ego = time_ddf[['tx_m', 'ty_m', 'tz_m']].values
             gdf_ego = time_gdf[['tx_m', 'ty_m', 'tz_m']].values
-            '''ddf_city = city_SE3_ego.transform_point_cloud(
-                        time_ddf[['tx_m', 'ty_m', 'tz_m']].values)
-            gdf_city = city_SE3_ego.transform_point_cloud(
-                        time_gdf[['tx_m', 'ty_m', 'tz_m']].values)'''
 
             # visualize detections
             fig, ax = plt.subplots()
@@ -405,7 +383,9 @@ def visualize_whole(df, gf, name, base_dir='../../../'):
                 y_0 = ddf_ego[j, 1]-0.5*row['width_m']
 
                 mat = quat_to_mat(np.array([row['qw'], row['qx'], row['qy'], row['qz']]))
-                alpha = np.arccos(mat[0, 0])
+                alpha = Rotation.from_matrix(mat).as_euler('xyz')[2]
+                t = matplotlib.transforms.Affine2D().rotate_around(ddf_ego[j, 0], ddf_ego[j, 1], alpha) + ax.transData
+                # alpha = row['rot']
                 rect = patches.Rectangle(
                     (x_0, y_0),
                     row['length_m'],
@@ -413,7 +393,7 @@ def visualize_whole(df, gf, name, base_dir='../../../'):
                     linewidth=1,
                     edgecolor='black',
                     facecolor='none',
-                    angle=alpha)
+                    transform=t)
 
                 ax.add_patch(rect)
                 j += 1
@@ -440,7 +420,9 @@ def visualize_whole(df, gf, name, base_dir='../../../'):
                 y_0 = gdf_ego[j, 1]-0.5*row['width_m']
 
                 mat = quat_to_mat(np.array([row['qw'], row['qx'], row['qy'], row['qz']]))
-                alpha = np.arccos(mat[0, 0])
+                # alpha = np.arccos(mat[0, 0])
+                alpha = Rotation.from_matrix(mat).as_euler('xyz')[2]
+                t = matplotlib.transforms.Affine2D().rotate_around(gdf_ego[j, 0], gdf_ego[j, 1], alpha) + ax.transData
                 rect = patches.Rectangle(
                     (x_0, y_0),
                     row['length_m'],
@@ -448,7 +430,7 @@ def visualize_whole(df, gf, name, base_dir='../../../'):
                     linewidth=1,
                     edgecolor=color,
                     facecolor='none',
-                    angle=alpha)
+                    transform=t)
 
                 ax.add_patch(rect)
                 j += 1
@@ -514,7 +496,7 @@ def eval_detection(
         seq_list=seq_to_eval,
         loader=loader,
         gt_folder=gt_folder)
-    
+
     if just_eval:
         print("Loaded ground truth...")
     
@@ -532,7 +514,8 @@ def eval_detection(
     # dts = dts[dts['height_m'] < 3]
     # dts = dts[dts['width_m'] < 4]
     # dts = dts[dts['length_m'] < 7]
-    print(f'\t Num dts: {dts.shape}, Num gts: {gts.shape}')
+    if print_detail:
+        print(f'\t Num dts: {dts.shape}, Num gts: {gts.shape}')
 
     if just_eval:
         print("Loaded detections...")
@@ -557,7 +540,8 @@ def eval_detection(
 
     gts['category'] = [_class_dict[c] for c in gts['category']]
     dts['category'] = [_class_dict[c] for c in dts['category']]
-    print(f' \t Min points {min_points}, Max points {max_points}')
+    if print_detail:
+        print(f' \t Min points {min_points}, Max points {max_points}')
 
     if just_eval:
         print("Loaded ground truth...")
@@ -569,9 +553,14 @@ def eval_detection(
     dts_orig = dts
     for affinity, tp_thresh, threshs, n_jobs in zip(
         ['CENTER', 'IoU3D'], [2.0, 0.6], [(0.5, 1.0, 2.0, 4.0), (0.2, 0.4, 0.6, 0.8)], [8, 1]):
+        
+        if affinity == 'CENTER':
+            continue
+
         # Evaluate instances.
         # Defaults to competition parameters.
-        print(f' \t Setting categories to Waymo categories {is_waymo}')
+        if print_detail:
+            print(f' \t Setting categories to Waymo categories {is_waymo}')
         if is_waymo:
             categories : Tuple[str, ...] = tuple(x.value for x in CompetitionCategoriesWaymo)
         else:
@@ -584,9 +573,9 @@ def eval_detection(
             affinity_thresholds_m=threshs,
             categories=categories
             )
-        
+
         print(f"\t {affinity}\n")
-        dts, gts, metrics, np_tps, np_fns, _ = evaluate(
+        dts, gts, metrics, np_tps, np_fns, _, all_results_df = evaluate(
             dts_orig,
             gts_orig,
             cfg=competition_cfg,
@@ -600,13 +589,15 @@ def eval_detection(
             n_jobs=n_jobs,
             filter_moving=filter_moving)
         
-        print(f"\t Writing macthed detections to matched_{trackers_folder}/annotations_{affinity}.feather...")
+        if print_detail:
+            print(f"\t Writing macthed detections to matched_{trackers_folder}/annotations_{affinity}.feather...")
         os.makedirs(f'matched_{trackers_folder}', exist_ok=True)
         feather.write_feather(dts, f'matched_{trackers_folder}/annotations_{affinity}.feather')
         
         dts = dts[dts['is_evaluated']==1]
         gts = gts[gts['is_evaluated']==1]
-        print('\t Shapes after', gts.shape, dts.shape)
+        if print_detail:
+            print('\t Shapes after', dts.shape, gts.shape)
 
         if print_detail:
             # remove gt objects without lidar points inside
@@ -635,18 +626,19 @@ def eval_detection(
         if _filter_class == -1:
             metric = metrics.loc['AVERAGE_METRICS'].values
         else:
-            print('\t ', metrics.loc[_filter_class])
+            print('\t ', metrics.loc[_filter_class].values)
             metric = metrics.loc[_filter_class].values
 
         break
   
-    return metrics, metric
+    return metrics, metric, all_results_df
 
 
 if __name__ == '__main__':
     name ='just_eval'
     gt_folder = '/dvlresearch/jenny/Waymo_Converted_GT'
     gt_folder = '/workspace/Waymo_Converted_train/Waymo_Converted'
+    gt_folder = '/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/download_for_vis/Waymo_Converted'
     # gt_folder = '../../../../datasets/Argoverse2'
 
     min_points = -1
@@ -657,11 +649,9 @@ if __name__ == '__main__':
     split = 'train'
     detections = 'detector'
     orig_split = 'train' if detections != 'evaluation' else 'val'
-    for t in os.listdir(f'out/detections_{split}_{detections}'): #class_dict.keys():
-        if 'RECOMPUTE_REMOVE_BUG_HEADING_90' not in t:
-            continue
+    for t in os.listdir(f'tracks/tracks_for_eval/initial_dets'): #class_dict.keys():
         print(t)
-        tracker_dir = f'out/detections_{split}_{detections}/{t}/{split}_{detections}'
+        tracker_dir = f'tracks/tracks_for_eval/tracked_dets/{t}/train'
         print(tracker_dir)
         # seq = '16473613811052081539'
         # seq_list = [seq]
@@ -680,7 +670,7 @@ if __name__ == '__main__':
             remove_non_move_thresh=1.0,
             debug=False,
             just_eval=True,
-            visualize=False,
+            visualize=True,
             name=name,
             min_points=min_points,
             max_points=max_points,
@@ -689,7 +679,8 @@ if __name__ == '__main__':
             filter_class=c,
             only_matched_gt=False,
             filter_moving_first=False,
-            use_matched_category=True)
+            use_matched_category=False,
+            filter_moving=True)
         
         print(detection_metric, '\n')
         print()

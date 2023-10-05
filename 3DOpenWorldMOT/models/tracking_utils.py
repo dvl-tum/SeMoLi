@@ -163,38 +163,44 @@ class Track():
         self.detections.append(detection)
         detection.track_id = self.track_id
     
-    def fill_detections(self, av2_loader, ordered_timestamps):
+    def fill_detections(self, av2_loader, ordered_timestamps, max_time):
         filled_detections = list()
         for i, det in enumerate(self.detections):
+            filled_detections.append(det)
             if i != len(self.detections)-1:
                 t0 = self.detections[i].timestamps[0, 0].item()
                 t1 = self.detections[i+1].timestamps[0, 0].item()
                 _range = ordered_timestamps.index(t1) - ordered_timestamps.index(t0)
             else:
-                _range = det.trajectory.shape[1]
+                _range = max_time if max_time != -1 else det.trajectory.shape[1]-1 
 
             city_SE3_ego0 = av2_loader.get_city_SE3_ego(self.log_id, det.timestamps[0, 0].item())
-
-            for time in range(_range):
+            for time in range(1, _range):
                 points_c_time = det.canonical_points + det.trajectory[:, time, :]
-
                 city_SE3_ego = av2_loader.get_city_SE3_ego(self.log_id, det.timestamps[0, time].item())
                 ego_SE3_ego0 = city_SE3_ego.inverse().compose(city_SE3_ego0)
                 points_c_time = ego_SE3_ego0.transform_point_cloud(points_c_time)
 
                 if time < det.trajectory.shape[1] - 1:
-                    traj = det.trajectory[:, time:time+2, :]
+                    traj = det.trajectory[:, time:, :]
                 else:
-                    traj = det.trajectory[:, time-1:time+1, :]
+                    traj = det.trajectory[:, time-1:, :]
                 
                 filled_detections.append(Detection(
                     trajectory=traj,
                     canonical_points=points_c_time,
-                    timestamps=self.detections[i].timestamps[0, time],
+                    timestamps=self.detections[i].timestamps[0, time:],
                     log_id=det.log_id,
-                    num_interior=det.num_interior))
-        self.final = filled_detections 
-        return filled_detections
+                    num_interior=det.num_interior,
+                    gt_id=det.gt_id,
+                    gt_cat=det.gt_cat,
+                    lwh=det.lwh))
+
+        self.detections = filled_detections
+    
+    def _sort_dets(self):
+        by_time = {d.timestamps[0, 0]: d for d in self.detections}
+        self.detections = [by_time[k] for k in sorted(list(by_time.keys()))]
 
     def _get_traj(self, i=-1):
         return self.detections[i].trajectory
@@ -281,10 +287,11 @@ class Detection():
         else:
             self.rot, self.alpha = self.get_alpha_rot_t0_to_t1(0, 1, self.trajectory)
         
-        if lwh is None:
-            self.lwh, self.translation = self.get_rotated_center_and_lwh(canonical_points, self.rot)
-        else:
-            self.lwh, self.translation = lwh, translation
+        if lwh is None or translation is None:
+            _lwh, _translation = self.get_rotated_center_and_lwh(canonical_points, self.rot)
+        
+        self.lwh = lwh if lwh is not None else _lwh
+        self.translation = translation if translation is not None else _translation
         
         if pts_density is None:
             self.pts_density = ((self.lwh[0] * self.lwh[1] * self.lwh[2]) / self.num_interior).item()
@@ -370,14 +377,16 @@ def get_alpha_rot_t0_to_t1(t0=None, t1=None, trajectory=None, traj_t0=None, traj
     return rot, alpha
 
 
-def get_propagated_bbs(propagated_pos_tracks, get_trans=True, get_lwh=True, _2d=False, get_corners=False):
+def get_propagated_bbs(propagated_pos_tracks, get_trans=True, get_lwh=True, _2d=False, get_corners=True, get_alphas=True, get_xylwa=True):
     lwhs = list()
     translations = list()
     corners = list()
+    alphas = list()
+    xylwa = list()
     for t in range(propagated_pos_tracks.shape[1]):
         t_0 = t if t != propagated_pos_tracks.shape[1]-1 else t-1
         t_1 = t+1 if t != propagated_pos_tracks.shape[1]-1 else t
-        rot, _ = get_alpha_rot_t0_to_t1(t_0, t_1, propagated_pos_tracks)
+        rot, alpha = get_alpha_rot_t0_to_t1(t_0, t_1, propagated_pos_tracks)
         rot = rot.to(propagated_pos_tracks.device)
         lwh, translation = get_rotated_center_and_lwh(propagated_pos_tracks[:, t, :].double(), rot)
         if _2d:
@@ -386,17 +395,25 @@ def get_propagated_bbs(propagated_pos_tracks, get_trans=True, get_lwh=True, _2d=
         lwhs.append(lwh)
         translations.append(translation)
         corners.append(torch.cat([translation - lwh/2, translation + lwh/2]))
+        alphas.append(alpha)
+        xylwa.append(torch.cat([translation, lwh, alpha.unsqueeze(0)]))
     translations = torch.stack(translations)
     lwhs = torch.stack(lwhs)
     corners = torch.stack(corners)
-    return_list = list()
+    alphas = torch.stack(alphas)
+    xylwa = torch.stack(xylwa)
+    return_dict = dict()
     if get_trans:
-        return_list.append(translations)
+        return_dict['translation'] = translations
     if get_lwh:
-        return_list.append(lwhs)
+        return_dict['lwh'] = lwhs
     if get_corners:
-        return_list.append(corners)
-    return return_list
+        return_dict['corners'] = corners
+    if get_alphas:
+        return_dict['alphas'] = alphas
+    if get_xylwa:
+        return_dict['xylwa'] = xylwa
+    return return_dict
 
 
 def get_center(canonical_points):
@@ -454,7 +471,6 @@ def store_initial_detections(detections, seq, out_path, split, tracks=False, gt_
 
 def load_initial_detections(out_path, split, seq=None, tracks=False, every_x_frame=1, overlap=1):
     p = f'{out_path}/{split}/{seq}'
-    
     detections = defaultdict(list)
     if tracks:
         detections = defaultdict(dict)
@@ -678,5 +694,8 @@ def to_feather(detections, log_id, out_path, split, rank, precomp_dets=False, na
 
 
 def outlier_removal(pc, threshold=0.1, kNN=10):
-    nn_dists, nn_idx, nn = knn_points(pc, pc, kNN=kNN)
-    return pc[nn_dists[0,:,1:].mean(1) < threshold][None,...]
+    nn_dists, nn_idx, nn = knn_points(
+        pc.unsqueeze(0).float(),
+        pc.unsqueeze(0).float(),
+        K=kNN)
+    return pc[nn_dists[0,:,1:].mean(1) < threshold]

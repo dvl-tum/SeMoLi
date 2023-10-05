@@ -31,9 +31,11 @@ keep_detections: False
 continue_from_existing: True
 
 tracker_options: # Extra options for the tracker
-  a_threshold: 0.9
-  i_threshold: 0.9
+  a_threshold: 0.5
+  i_threshold: 0.5
   len_thresh: 2
+  outlier_threshold: 0.5
+  outlier_kNN: 10
   matching: 'greedy'
   alpha: 0.95
   overlap: 5
@@ -53,6 +55,7 @@ tracker_options: # Extra options for the tracker
   registration_type: 'Flow'
   collaps_type: 'SimpleCollaps'
   out_path_for_eval: '/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/tracks/tracks_for_eval'
+  max_time_track: -1 # set max_time to -1 --> take all
 
 
 detection_options:                                                                       

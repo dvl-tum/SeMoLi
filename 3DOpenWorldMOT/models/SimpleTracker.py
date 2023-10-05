@@ -5,10 +5,14 @@ from .tracking_utils import *
 from scipy.optimize import linear_sum_assignment
 import matplotlib.pyplot as plt
 import torchvision
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+from .iou import IoUs2D
+import matplotlib
 
 
 class SimpleTracker():
-    def __init__(self, every_x_frame, overlap, av2_loader, log_id, rank, logger, a_threshold=0.8, i_threshold=0.8, len_thresh=5):
+    def __init__(self, every_x_frame, overlap, av2_loader, log_id, rank, logger, a_threshold=0.8, i_threshold=0.8, len_thresh=5, max_time=5):
         self.active_tracks = list()
         self.inactive_tracks = list()
         # self.every_x_frame = every_x_frame
@@ -26,11 +30,24 @@ class SimpleTracker():
         self.rank = rank
         self.logger = logger
         self.len_thresh = len_thresh
+        self.max_time = max_time
     
     def associate(self, detections):
         # per timestampdetections
+        # 1552440195762604, 1552440196162525, 1552440196062571
+        
         for i, timestamp in enumerate(sorted(detections.keys())):
             dets = detections[timestamp]
+            # filter by width
+            detections_new = list()
+            for d in dets:
+                if d.lwh[1] < 5:
+                    detections_new.append(d)
+                else:
+                    pass #print(d.lwh)
+            dets = detections_new
+            if len(dets) == 0:
+                continue
             try:
                 time = timestamp.item()
             except:
@@ -42,11 +59,25 @@ class SimpleTracker():
                 last=len(detections)==i+1)
         
         self.active_tracks += self.inactive_tracks
-        self.logger.info(f'TPA: {self.tps}, FNA: {self.fns}, FPS: {self.fps}')
+        self.logger.info(f'TPA: {self.tps}, FNA: {self.fns}, FPS: {self.fps}, Pr: {self.tps/(self.tps+self.fps)}, Re: {self.tps/(self.tps+self.fns)}')
         self.tps = 0
         self.fns = 0
         self.fps = 0
-        print(len(active_tracks), len({t.track_id: t for t in active_tracks if len(t) > self.len_thresh}), [len(t) for t in active_tracks]) 
+
+        print(len(active_tracks), \
+              len({t.track_id: t for t in active_tracks if len(t) > self.len_thresh}), \
+                [len(t) for t in active_tracks], \
+                    [t.detections[-1].gt_id for t in active_tracks])
+        
+        self.active_tracks = [t for t in active_tracks if len(t) > self.len_thresh]
+
+        #for track in self.active_tracks:    
+        #    track.fill_detections(self.av2_loader, self.ordered_timestamps.numpy().tolist(), self.max_time)
+
+        print(len(active_tracks), \
+              len({t.track_id: t for t in active_tracks if len(t) > self.len_thresh}), \
+                [len(t) for t in active_tracks], \
+                    [t.detections[-1].gt_id for t in active_tracks]) 
         return {t.track_id: t for t in active_tracks if len(t) > self.len_thresh}
 
     def associate_timestamp(
@@ -57,6 +88,7 @@ class SimpleTracker():
             alpha=0.0,
             make_cost_mat_dist=False,
             last=False):
+
         out_of_bounds = False
         if len(self.active_tracks):
             t0 = torch.where(
@@ -203,13 +235,13 @@ class SimpleTracker():
         matched_dets = list()
         fps = 0
         tps = 0
-        rids, cids = solve_dense(cost_mat)
+        rids, cids = solve_dense(cost_mat[2])
         for rid, cid in zip(rids, cids):
             # check if active or inactive track and get threshold
             act = cid < num_act
             thresh = self.a_threshold if act else self.i_threshold
             # match only of cost smaller than threshold
-            if cost_mat[rid, cid] < thresh:
+            if cost_mat[2][rid, cid] < thresh:
                 matched_dets.append(rid)
                 # if matched to inactive track, reactivate
                 if act:
@@ -219,10 +251,11 @@ class SimpleTracker():
                     inactive_idx = inactive_tracks_to_use[cid-num_act]
                     self.inactive_tracks[inactive_idx].add_detection(detections[rid])
                     re_activate.append(inactive_idx)
-                t_fg = gt_id_tracks[cid] != 0
+                # tp only if we are not matching noise objects
                 d_fg = gt_id_detections[rid] != 0
-                tps = tps + 1 if gt_id_tracks[cid] == gt_id_detections[rid] and t_fg and d_fg else tps
-                fps = fps + 1 if gt_id_tracks[cid] != gt_id_detections[rid] or ~t_fg or ~d_fg else fps
+                tps = tps + 1 if gt_id_tracks[cid] == gt_id_detections[rid] and d_fg else tps
+                fps = fps + 1 if gt_id_tracks[cid] != gt_id_detections[rid] else fps
+                # print(gt_id_tracks[cid] == gt_id_detections[rid], gt_id_tracks[cid], gt_id_detections[rid], gt_cat_tracks[cid], gt_cat_detections[rid], cost_mat[0][rid, cid], cost_mat[1][rid, cid], cost_mat[2][rid, cid], cost_mat[3][rid, cid], cost_mat[4][rid, cid])
         
         return re_activate, matched_tracks, matched_dets, tps, fps
 
@@ -277,11 +310,11 @@ class SimpleTracker():
 
         return re_activate, matched_tracks, matched_dets, tps, fps
 
-    def _calculate_traj_dist(self, detections, timestamp, alpha=0.0, dist='L2Center', max_time=25): # L2Center, 2dIoU
+    def _calculate_traj_dist(self, detections, timestamp, alpha=0.0, dist='L2Center', visualize=False): # L2Center, 2dIoU
         # get detections and canonical points of last x frames 
         # and convert to current time for all active tracks
         trajs = [t._get_whole_traj_and_convert_time(
-            timestamp, self.av2_loader, max_time=max_time) for t in self.active_tracks]
+            timestamp, self.av2_loader, max_time=self.max_time) for t in self.active_tracks]
         cano_points = [t._get_canonical_points_and_convert_time(
             timestamp, self.av2_loader).float().to(self.rank) for t in self.active_tracks]
 
@@ -300,9 +333,14 @@ class SimpleTracker():
                     time_dist = t1 - t0
                     # < cos for example if len_traj = 2, inactive_count=1, overlap=1
                     # then <= will be true but should not cos index starts at 0 not 1
-                    if time_dist < t.detections[-1].length-1:
+                    if self.max_time != -1:
+                        max_time = self.max_time 
+                    else:
+                        max_time = t.detections[-1].length-1
+                        
+                    if time_dist < max_time:
                         trajs.extend([
-                            t._get_whole_traj_and_convert_time(timestamp, self.av2_loader, max_time=max_time)])
+                            t._get_whole_traj_and_convert_time(timestamp, self.av2_loader, max_time=self.max_time)])
                         cano_points.extend([
                             t._get_canonical_points_and_convert_time(timestamp, self.av2_loader).float().to(self.rank)])
                         inactive_tracks_to_use.append(i)
@@ -319,14 +357,6 @@ class SimpleTracker():
         # trajectories and canonical points of new detections
         det_trajs = [t.trajectory.float().to(self.rank) for t in detections]
         det_cano_points = [t._get_canonical_points().float().to(self.rank) for t in detections]
-        '''
-        indices_tracks = torch.tensor([
-            j for i in range(len(propagated_pos_tracks)) for j in range(propagated_pos_tracks[i].shape[1])])
-        indices_time = torch.tensor([
-            i for i in range(len(propagated_pos_tracks)) for j in range(propagated_pos_tracks[i].shape[1])])
-        propagated_pos_tracks = [
-            propagated_pos_tracks[i][:, j, :] for i in range(num_tracks) for j in range(propagated_pos_tracks[i].shape[1])]
-        '''
         propagated_pos_dets = [
             torch.tile(det_cano_points[i].unsqueeze(1), (1, det_trajs[i].shape[1], 1)) + det_trajs[i] \
                 for i in range(len(det_trajs))]
@@ -339,21 +369,45 @@ class SimpleTracker():
         mean_dist = torch.zeros(len(propagated_pos_dets), num_tracks)
         bb_iou_2d = torch.zeros(len(propagated_pos_dets), num_tracks)
         l2_center_2d = torch.zeros(len(propagated_pos_dets), num_tracks)
+        lw_change_2d = torch.zeros(len(propagated_pos_dets), num_tracks)
+        if visualize:
+            os.makedirs('/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/Visualization_tracks', exist_ok=True)
+            fig, ax = plt.subplots()
+        device = det_trajs[0].device
         for k in range(len(propagated_pos_dets)):
+            if visualize:
+                self.add_patch(ax, propagared_bbs_dets[k])
             for i in range(num_tracks):
-                l2_center_2d[k, i] = self.pdist(propagared_bbs_tracks[i][1], 
-                                       propagared_bbs_dets[k][1][:propagated_pos_tracks[i].shape[1]]).mean()
-                bb_iou_2d[k, i] = 1 - torch.diagonal(torchvision.ops.box_iou(propagared_bbs_tracks[i][2], 
-                                       propagared_bbs_dets[k][2][:propagated_pos_tracks[i].shape[1]])).mean()
+                if visualize:
+                    self.add_patch(ax, propagared_bbs_tracks[i], color='red')
+                weight = torch.arange(traj_lens[i])
+                weight = torch.exp(-weight)/torch.exp(-weight).sum()
+                weight = torch.ones(traj_lens[i])
+                weight = weight.to(device)
+                lw_change_2d[k, i] = (weight.float().unsqueeze(1) * torch.abs(propagared_bbs_tracks[i]['lwh']-\
+                                      propagared_bbs_dets[k]['lwh'][:traj_lens[i]]).float()).mean()
+                l2_center_2d[k, i] = (weight * self.pdist(propagared_bbs_tracks[i]['translation'], 
+                                       propagared_bbs_dets[k]['translation'][:traj_lens[i]])).mean()
+                
+                # bb_iou_2d[k, i] = 1 - (weight * torch.diagonal(torchvision.ops.box_iou(propagared_bbs_tracks[i]['corners'], 
+                #                        propagared_bbs_dets[k]['corners'][:traj_lens[i]]))).mean()
+                
+                bb_iou_2d[k, i] = 1 - (weight * IoUs2D(propagared_bbs_tracks[i]['xylwa'].unsqueeze(0), 
+                                       propagared_bbs_dets[k]['xylwa'][:traj_lens[i]].unsqueeze(0))).mean()
+                
                 cd_dist_track = chamferDist(
-                        propagated_pos_tracks[i].permute(1, 0, 2), propagated_pos_dets[k][:, :propagated_pos_tracks[i].shape[1]].permute(1, 0, 2))[0]
-                # for t in range(propagated_pos_tracks[i].shape[1]):
-                #     print(propagated_pos_tracks[i].permute(1, 0, 2)[t].mean(), propagated_pos_dets[k][:, :propagated_pos_tracks[i].shape[1]].permute(1, 0, 2)[t].mean())
-                mean_dist[k, i] = self.pdist(propagated_pos_tracks[i].permute(1, 0, 2).mean(dim=1),
-                        propagated_pos_dets[k][:, :propagated_pos_tracks[i].shape[1]].permute(1, 0, 2).mean(dim=1)).mean()
+                        propagated_pos_tracks[i].permute(1, 0, 2), propagated_pos_dets[k][:, :traj_lens[i]].permute(1, 0, 2))[0]
+                # for t in range(traj_lens[i]):
+                #     print(propagated_pos_tracks[i].permute(1, 0, 2)[t].mean(), propagated_pos_dets[k][:, :traj_lens[i]].permute(1, 0, 2)[t].mean())
+                mean_dist[k, i] = (weight * self.pdist(propagated_pos_tracks[i].permute(1, 0, 2).mean(dim=1),
+                        propagated_pos_dets[k][:, :traj_lens[i]].permute(1, 0, 2).mean(dim=1))).mean()
                 cd_dists[k, i] = cd_dist_track
-                print(l2_center_2d[k, i], bb_iou_2d[k, i])
-        
+        if visualize:
+            ax.axis('equal')
+            plt.savefig(
+                f'/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/Visualization_tracks/frame_{timestamp}.jpg', dpi=1000)
+            plt.close()
+
         if dist == 'cd':
             dists = cd_dists
         elif dist == 'mean_point':
@@ -362,9 +416,25 @@ class SimpleTracker():
             dists = bb_iou_2d
         elif dist == 'L2Center':
             dists = l2_center_2d
-
-        return dists, \
+        # bb_iou_2d = (bb_iou_2d + l2_center_2d+lw_change_2d)/3
+        return [cd_dists, mean_dist, bb_iou_2d, l2_center_2d, lw_change_2d], \
             len(self.active_tracks), \
                 len(trajs) - len(self.active_tracks), \
                     inactive_tracks_to_use
 
+    def add_patch(self, ax, propagared_bbs, color='black'):
+        j = 0
+        for loc, lwh, rot in zip(propagared_bbs['translation'], propagared_bbs['lwh'], propagared_bbs['alphas']):
+            plt.scatter(loc[0].cpu(), loc[1].cpu(), color=color, marker='o', s=2)
+            loc_0 = loc-0.5*lwh
+            t = matplotlib.transforms.Affine2D().rotate_around(loc[0].cpu(), loc[1].cpu(), rot.cpu()) + ax.transData
+            rect = patches.Rectangle(
+                loc_0.cpu(),
+                lwh[0].cpu(),
+                lwh[1].cpu(),
+                linewidth=1,
+                edgecolor=color,
+                facecolor='none',
+                transfromation=t)
+
+            ax.add_patch(rect)

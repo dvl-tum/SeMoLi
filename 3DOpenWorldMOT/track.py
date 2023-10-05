@@ -14,6 +14,7 @@ import torch.multiprocessing as mp
 import torch.distributed as dist
 from torch.utils.data import DataLoader
 from evaluation import eval_detection
+import shutil
 
 
 logger = logging.getLogger("Model")
@@ -29,7 +30,7 @@ class InitialDetProcessor():
     def __init__(self, tracker_type, tracker_params, registration_type, collaps_type,
                  every_x_frame, overlap, av2_loader, rank, track_data_path, initial_dets_path, 
                  collapsed_dets_path, tracked_dets_path, registered_dets_path, gt_path, split,
-                 detection_set, percentage, a_threshold, i_threshold, len_thresh):
+                 detection_set, percentage, a_threshold, i_threshold, len_thresh, outlier_threshold, outlier_kNN, max_time_track):
         self.every_x_frame = every_x_frame
         self.overlap = overlap
         self.av2_loader = av2_loader
@@ -50,6 +51,9 @@ class InitialDetProcessor():
         self.a_threshold = a_threshold
         self.i_threshold = i_threshold
         self.len_thresh = len_thresh
+        self.outlier_threshold = outlier_threshold
+        self.outlier_kNN = outlier_kNN
+        self.max_time_track = max_time_track
 
     def track(self, log_id, split, detections=None):
         tracker = self._tracker(
@@ -61,7 +65,8 @@ class InitialDetProcessor():
             logger,
             self.a_threshold,
             self.i_threshold,
-            self.len_thresh)
+            self.len_thresh,
+            self.max_time_track)
 
         # detections = self.dataset(self.collapsed_dets_path, self.gt_path, log_id, self.split).dets
         if detections is None:
@@ -73,7 +78,8 @@ class InitialDetProcessor():
     def register(self, log_id, split, tracks=None):
         if tracks is None:
             tracks = self.dataset(self.tracked_dets_path, self.gt_path, log_id, self.split, tracks=True).dets
-        tracks = self._registration(tracks, self.av2_loader, log_id).register()
+        tracks = self._registration(
+            tracks, self.av2_loader, log_id, self.outlier_threshold, self.outlier_kNN).register()
         store_initial_detections(tracks, log_id, self.tracked_dets_path, split, tracks=False)
         return tracks
 
@@ -95,8 +101,9 @@ class InitialDetProcessor():
 
     @staticmethod
     def eval(cfg, detector_dir, seq_list, name):
-        _, detection_metric = eval_detection.eval_detection(
-                    gt_folder=os.path.join(os.getcwd(), cfg.data.data_dir),
+        print(os.path.join(os.getcwd(), cfg.data.data_dir + '_train/Waymo_Converted'))
+        _, detection_metric, all_results_df = eval_detection.eval_detection(
+                    gt_folder=os.path.join(os.getcwd(), cfg.data.data_dir + '_train/Waymo_Converted'),
                     trackers_folder=detector_dir,
                     split='val' if 'evaluation' in cfg.data.detection_set else 'train',
                     seq_to_eval=seq_list,
@@ -113,46 +120,90 @@ class InitialDetProcessor():
                     debug=cfg.data.debug,
                     name=name)
 
-        print(f'Detection metric of detections from detector_dir {detection_metric}')
+        # print(f'Detection metric of detections from detector_dir {detection_metric}')
+        return all_results_df
+
 
 @hydra.main(config_path="conf", config_name="conf")   
-def main(cfg):    
+def main(cfg):
+    import pandas as pd
+    results_df = pd.DataFrame(columns=['dets', 'thresh', 'len', 'max time', 'pr 0.2', 'pr 0.4', 'pr 0.6', 'pr 0.8', 'map 0.2', 'map 0.4', 'map 0.6', 'map 0.8', 'tps 0.2', 'tps 0.4', 'tps 0.6', 'tps 0.8', 'fps 0.2', 'fps 0.4', 'fps 0.6', 'fps 0.8', 'fns 0.2', 'fns 0.4', 'fns 0.6', 'fns 0.8', 'num gt'])
+    cfg.tracker_options.initial_dets = f'{cfg.tracker_options.initial_dets}/{cfg.tracker_options.model}'
+    cfg.tracker_options.collapsed_dets = f'{cfg.tracker_options.collapsed_dets}/{cfg.tracker_options.model}' 
+    cfg.tracker_options.tracked_dets = f'{cfg.tracker_options.tracked_dets}/{cfg.tracker_options.model}'
+    cfg.tracker_options.registered_dets = f'{cfg.tracker_options.registered_dets}/{cfg.tracker_options.model}'
+    threshs = [0.5, 0.6, 0.7, 0.8, 0.9]
+    lens = [2, 4, 6, 8, 10]
+    max_times = [-1, 1, 3, 5, 9, 11, 13, 15, 17, 19, 21, 23]
+    cfg.tracker_options.convert_initial = True
+    for m in max_times:
+        for l in lens:
+            for t in threshs:
+                cfg.tracker_options.a_threshold = t
+                cfg.tracker_options.i_threshold = t
+                cfg.tracker_options.len_thresh = l
+                cfg.tracker_options.max_time_track = m
+                print(f"\n \n{m} {l} {t} \n")
+                results_df = _main(cfg, max_time=m, results_df=results_df)
+                cfg.tracker_options.convert_initial = False
+                shutil.rmtree(os.path.join(
+                    cfg.tracker_options.track_data_path,
+                    cfg.tracker_options.tracked_dets))
+
+    print('\n\n\n')
+    print(results_df)
+    results_df.to_csv('/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/track_reg_results.csv')
+
+def _main(cfg, max_time, results_df):
+    cfg.tracker_options.max_time_track = max_time
     if cfg.multi_gpu:
         world_size = torch.cuda.device_count()
         in_args = (cfg, world_size)
         mp.spawn(track, args=in_args, nprocs=world_size, join=True)
     else:
         track(1, cfg, world_size=1)
+
+    params = [cfg.tracker_options.a_threshold,
+              cfg.tracker_options.len_thresh,
+              cfg.tracker_options.max_time_track]
     
     if cfg.tracker_options.convert_initial:
         logger.info('Evaluating initial bounding boxes...')
-        InitialDetProcessor.eval(
+        all_results_df = InitialDetProcessor.eval(
             cfg,
             os.path.join(cfg.tracker_options.out_path_for_eval, cfg.tracker_options.initial_dets, cfg.tracker_options.split),
             os.listdir(os.path.join(cfg.tracker_options.out_path_for_eval, cfg.tracker_options.initial_dets, cfg.tracker_options.split)),
             'Initial')
+        results_df.loc[len(results_df.index)] = ['initial'] + params + all_results_df.loc['TYPE_VECHICLE'].values.tolist()
+
     if cfg.tracker_options.collaps:
         logger.info('Evaluating collapsed bounding boxes...')
-        InitialDetProcessor.eval(
+        all_results_df = InitialDetProcessor.eval(
             cfg,
             os.path.join(cfg.tracker_options.out_path_for_eval, cfg.tracker_options.collapsed_dets, cfg.tracker_options.split),
             os.listdir(os.path.join(cfg.tracker_options.out_path_for_eval, cfg.tracker_options.collapsed_dets, cfg.tracker_options.split)),
             'Collapsed')
+        results_df.loc[len(results_df.index)] = ['collapsed'] + params + all_results_df.loc['TYPE_VECHICLE'].values.tolist()
+
     if cfg.tracker_options.track:
         logger.info('Evaluating tracked bounding boxes...')
-        InitialDetProcessor.eval(
+        all_results_df = InitialDetProcessor.eval(
             cfg,
             os.path.join(cfg.tracker_options.out_path_for_eval, cfg.tracker_options.tracked_dets, cfg.tracker_options.split),
             os.listdir(os.path.join(cfg.tracker_options.out_path_for_eval, cfg.tracker_options.tracked_dets, cfg.tracker_options.split)),
             'Tracked')
+        results_df.loc[len(results_df.index)] = ['tracked'] + params + all_results_df.loc['TYPE_VECHICLE'].values.tolist()
+
     if cfg.tracker_options.register:
         logger.info('Evaluating registered bounding boxes...')
-        InitialDetProcessor.eval(
+        all_results_df = InitialDetProcessor.eval(
             cfg,
             os.path.join(cfg.tracker_options.out_path_for_eval, cfg.tracker_options.registered_dets, cfg.tracker_options.split), 
             os.listdir(os.path.join(cfg.tracker_options.out_path_for_eval, cfg.tracker_options.registered_dets, cfg.tracker_options.split)),
             'Registered')
-
+        results_df.loc[len(results_df.index)] = ['registered'] + params + all_results_df.loc['TYPE_VECHICLE'].values.tolist()
+        
+    return results_df
 
 def track(rank, cfg, world_size):
     if cfg.multi_gpu:
@@ -160,17 +211,14 @@ def track(rank, cfg, world_size):
         os.environ['MASTER_PORT'] = '12355'
         torch.cuda.set_device(rank)
         dist.init_process_group('nccl', rank=rank, world_size=world_size)
-    cfg.tracker_options.initial_dets = f'{cfg.tracker_options.initial_dets}/{cfg.tracker_options.model}'
     dataset = MOT3DTrackDataset(
         os.path.join(cfg.tracker_options.track_data_path, cfg.tracker_options.initial_dets),
         cfg.data.data_dir,
         cfg.data.detection_set,
         cfg.data.percentage_data_val,
         cfg.data.debug)
-    cfg.tracker_options.collapsed_dets = f'{cfg.tracker_options.collapsed_dets}/{cfg.tracker_options.model}' 
-    cfg.tracker_options.tracked_dets = f'{cfg.tracker_options.tracked_dets}/{cfg.tracker_options.model}'
-    cfg.tracker_options.registered_dets = f'{cfg.tracker_options.registered_dets}/{cfg.tracker_options.model}'
     cfg.tracker_options.split = dataset.split
+
     if not cfg.multi_gpu:
         dataloader = DataLoader(
             dataset,
@@ -189,9 +237,9 @@ def track(rank, cfg, world_size):
         seq_name, dataset_path, gt_path, split, detection_set, percentage = data
         seq_name, dataset_path, gt_path, split, detection_set, percentage = seq_name[0], dataset_path[0], gt_path[0], split[0], detection_set[0], percentage[0]
 
-        print(seq_name)
         if seq_name != '10023947602400723454':
             continue
+
         loader = AV2SensorDataLoader(data_dir=Path(f'{cfg.data.data_dir}_{split}/Waymo_Converted/{split}'), labels_dir=Path(f'{cfg.data.data_dir}_{split}/Waymo_Converted/{split}'))    
         detsprocessor = InitialDetProcessor(
             tracker_type=cfg.tracker_options.tracker_type,
@@ -213,7 +261,10 @@ def track(rank, cfg, world_size):
             percentage=percentage,
             a_threshold=cfg.tracker_options.a_threshold,
             i_threshold=cfg.tracker_options.i_threshold,
-            len_thresh=cfg.tracker_options.len_thresh)
+            len_thresh=cfg.tracker_options.len_thresh,
+            outlier_threshold=cfg.tracker_options.outlier_threshold,
+            outlier_kNN=cfg.tracker_options.outlier_kNN,
+            max_time_track=cfg.tracker_options.max_time_track)
         detections = None
         tracks = None
         if cfg.tracker_options.convert_initial:
@@ -236,6 +287,6 @@ def track(rank, cfg, world_size):
 
 
 if __name__ == "__main__":
-    main()
+        main()
 
         
