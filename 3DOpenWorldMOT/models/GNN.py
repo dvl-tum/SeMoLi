@@ -935,6 +935,7 @@ class GNNLoss(nn.Module):
             ignore_stat_nodes=0,
             ignore_edges_between_background=0,
             classification_is_moving_node=0,
+            classification_is_moving_edge=0,
             use_node_score=False) -> None:
         super().__init__()
         
@@ -954,7 +955,12 @@ class GNNLoss(nn.Module):
         self.ignore_stat_nodes = ignore_stat_nodes
         self.ignore_edges_between_background = ignore_edges_between_background
         self.classification_is_moving_node = classification_is_moving_node
+        self.classification_is_moving_edge = classification_is_moving_edge
+        
         assert self.classification_is_moving_node != self.ignore_stat_nodes, "Can only either ignore static objects or classify as moving object or not a moving object"
+        assert self.classification_is_moving_edge != self.ignore_edges_between_background, "Can not ignore background when classifying moving vs static edges"
+        assert self.classification_is_moving_edge != self.ignore_stat_edges, "Can not ignore static edges when classifying moving vs static edges"
+        
         self.sigmoid = torch.nn.Sigmoid()
         self.use_node_score = use_node_score
 
@@ -1004,10 +1010,16 @@ class GNNLoss(nn.Module):
             # --> instance 0 is no object
             point_instances[data.point_instances[edge_index[0, :]] == 0] = False
             point_instances = point_instances.to(self.rank)
+
+            # if using moving vs non-moving / background as training objective
+            if (self.classification_is_moving_edge and mode == 'train') or (self.use_node_score and mode != 'train'):
+                point_instances[torch.logical_and(
+                    ~(data.point_instances_mov[edge_index[0, :]] != 0), 
+                    data.point_instances[edge_index[0, :]] != 0)] = False
             
             point_mask = torch.zeros(point_instances.shape[0], dtype=bool).to(self.rank)
             # if ignoring predictions for static edges in loss, get static edge filter
-            if (self.ignore_stat_edges and mode == 'train') or (self.use_node_score and mode != 'train'):
+            if self.ignore_stat_edges:
                 point_mask = torch.logical_or(
                     torch.logical_and(
                         torch.logical_and(
@@ -1019,8 +1031,7 @@ class GNNLoss(nn.Module):
                     point_mask)
                 
                 # filter moving objects from all predictions
-                all_prediction = all_prediction.coalesce()
-                sparse_idx = all_prediction.indices()
+                sparse_idx = all_prediction._indices()
                 idx_mask = torch.logical_and(
                         ~(data.point_instances_mov[sparse_idx[0, :]] != 0), 
                         data.point_instances[sparse_idx[0, :]] != 0)
@@ -1029,11 +1040,11 @@ class GNNLoss(nn.Module):
                             ~(data.point_instances_mov[sparse_idx[1  , :]] != 0), 
                             data.point_instances[sparse_idx[1, :]] != 0))
                 all_prediction = torch.sparse_coo_tensor(
-                        all_prediction.indices()[:, ~idx_mask],
-                        all_prediction.values()[~idx_mask],
+                        sparse_idx[:, ~idx_mask],
+                        all_prediction._values()[~idx_mask],
                         all_prediction.size())
 
-            if (self.ignore_edges_between_background and mode == 'train') or (self.use_node_score and mode != 'train'):
+            if self.ignore_edges_between_background:
                 # setting edges that do not belong to object to zero
                 # --> instance 0 is no object
                 point_mask = torch.logical_or(
@@ -1043,7 +1054,6 @@ class GNNLoss(nn.Module):
                     point_mask)
                 
                 # filter background edges from all predictions
-                # all_prediction = all_prediction.coalesce()
                 sparse_idx = all_prediction._indices()
                 idx_mask = torch.logical_and(
                         data.point_instances[sparse_idx[0, :]] == 0,
@@ -1053,6 +1063,7 @@ class GNNLoss(nn.Module):
                         all_prediction._values()[~idx_mask],
                         all_prediction.size())
             
+            '''
             if self.use_node_score and self.node_loss and mode != 'train':
                 logits_rounded_node = self.sigmoid(node_logits.clone().detach()).squeeze()
                 point_mask = torch.logical_or(
@@ -1062,7 +1073,6 @@ class GNNLoss(nn.Module):
                     point_mask)
                 
                 # filter edges that would be filtered out by node score
-                # all_prediction = all_prediction.coalesce()
                 sparse_idx = all_prediction._indices()
                 idx_mask = torch.logical_or(
                         logits_rounded_node[sparse_idx[0, :]] < self.use_node_score,
@@ -1071,6 +1081,7 @@ class GNNLoss(nn.Module):
                         sparse_idx[:, ~idx_mask],
                         all_prediction._values()[~idx_mask],
                         all_prediction.size())
+            '''
 
             # filter edge logits, point instances and point categories
             edge_logits = edge_logits[~point_mask]
