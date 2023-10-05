@@ -992,7 +992,7 @@ class GNNLoss(nn.Module):
         
         all_prediction = torch.sparse_coo_tensor(
                 idxs,
-                torch.ones(idxs.shape[1])*-1,
+                torch.ones(idxs.shape[1]).to(idxs.device)*-1,
                 (data['batch'].shape[0], data['batch'].shape[0])) 
         
         if self.bce_loss:
