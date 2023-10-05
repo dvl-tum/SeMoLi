@@ -986,7 +986,7 @@ class GNNLoss(nn.Module):
         
         all_prediction = torch.sparse_coo_tensor(
                 idxs,
-                torch.ones(idxs.shape[1])*-1,
+                torch.ones(idxs.shape[1]).to(idxs.device)*-1,
                 (data['batch'].shape[0], data['batch'].shape[0])) 
         
         if self.bce_loss:
@@ -1019,8 +1019,8 @@ class GNNLoss(nn.Module):
                     point_mask)
                 
                 # filter moving objects from all predictions
-                all_prediction = all_prediction.coalesce()
-                sparse_idx = all_prediction.indices()
+                # all_prediction = all_prediction.coalesce()
+                sparse_idx = all_prediction._indices()
                 idx_mask = torch.logical_and(
                         ~(data.point_instances_mov[sparse_idx[0, :]] != 0), 
                         data.point_instances[sparse_idx[0, :]] != 0)
@@ -1029,8 +1029,8 @@ class GNNLoss(nn.Module):
                             ~(data.point_instances_mov[sparse_idx[1  , :]] != 0), 
                             data.point_instances[sparse_idx[1, :]] != 0))
                 all_prediction = torch.sparse_coo_tensor(
-                        all_prediction.indices()[:, ~idx_mask],
-                        all_prediction.values()[~idx_mask],
+                        sparse_idx[:, ~idx_mask],
+                        all_prediction._values()[~idx_mask],
                         all_prediction.size())
 
             if (self.ignore_edges_between_background and mode == 'train') or (self.use_node_score and mode != 'train'):
