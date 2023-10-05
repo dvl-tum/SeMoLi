@@ -838,7 +838,6 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
 
 
 def train(rank, cfg, world_size):
-    print("AAAAHHH")
     if cfg.half_precision:
         scaler = torch.cuda.amp.GradScaler()
     else:

@@ -956,10 +956,10 @@ class GNNLoss(nn.Module):
         self.ignore_edges_between_background = ignore_edges_between_background
         self.classification_is_moving_node = classification_is_moving_node
         self.classification_is_moving_edge = classification_is_moving_edge
-        
+        print(self.classification_is_moving_edge) 
         assert self.classification_is_moving_node != self.ignore_stat_nodes, "Can only either ignore static objects or classify as moving object or not a moving object"
-        assert self.classification_is_moving_edge != self.ignore_edges_between_background, "Can not ignore background when classifying moving vs static edges"
-        assert self.classification_is_moving_edge != self.ignore_stat_edges, "Can not ignore static edges when classifying moving vs static edges"
+        assert ~self.classification_is_moving_edge or (self.classification_is_moving_edge != self.ignore_edges_between_background), "Can not ignore background when classifying moving vs static edges"
+        assert ~self.classification_is_moving_edge or (self.classification_is_moving_edge != self.ignore_stat_edges), "Can not ignore static edges when classifying moving vs static edges"
         
         self.sigmoid = torch.nn.Sigmoid()
         self.use_node_score = use_node_score
@@ -1117,23 +1117,29 @@ class GNNLoss(nn.Module):
             # correct = logits_rounded == point_instances.squeeze()
             
             # comment out if not all
-            print(all_edges.shape)
-            all_size = (data['batch'].size, data['batch'].size)
-            all_prediction = torch.ones(all_edges.shape[1]) * -1
+            all_size = [data['batch'].shape[0], data['batch'].shape[0]]
+            all_prediction = torch.ones(all_edges.shape[1]).to(logits_rounded.device) * -1
             point_instances = data.point_instances[all_edges[0, :]] == data.point_instances[all_edges[1, :]]
             point_categories = data.point_categories[all_edges[0, :]]
             point_categories1 = data.point_categories[all_edges[1, :]]
             
             # set predictions to rounded logits
             logits_rounded[logits_rounded == 1] = 2
-            all_prediction = torch.sparse_coo_tensor(
-                    torch.hstack([all_edges, edge_index]),
-                    torch.cat([all_prediction, logits_rounded]),
+            prediction = torch.sparse_coo_tensor(
+                    edge_index,
+                    logits_rounded,
                     all_size)
-            all_prediction = all_prediction.coalesce()
-            all_prediction = all_prediction.values()
+            all_prediction = torch.sparse_coo_tensor(
+                    all_edges,
+                    all_prediction,
+                    all_size)
+            print(all_prediction, prediction, all_edges.shape, point_instances.shape)
+            all_prediction = all_prediction + prediction
+            print(all_prediction.shape)
+            all_prediction = all_prediction._values()
+            print(all_prediction.shape)
             all_prediction[all_prediction == -1] = 0
-
+            print(all_prediction.shape)
             # get correct mask
             correct = all_prediction == point_instances
             
