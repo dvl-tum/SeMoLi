@@ -982,14 +982,7 @@ class GNNLoss(nn.Module):
         loss = 0
         log_dict = dict()
         same_graph = data['batch'][edge_index[0, :]] == data['batch'][edge_index[1, :]]
-        
-        batch_idx = data._slice_dict['pc_list']
-        all_edges = list()
-        for i in range(batch_idx.shape[0]-1):
-            sample = data['batch'][batch_idx[i]:batch_idx[i+1]]
-            all_edges.append(torch.stack(torch.where(sample == sample.unsqueeze(1))) + batch_idx[i])
-        all_edges = torch.cat(all_edges, dim=1)
-        
+                
         if self.bce_loss:
             point_instances = data.point_instances
             point_categories = data.point_categories[edge_index[0, :]]
@@ -1013,7 +1006,6 @@ class GNNLoss(nn.Module):
                     data.point_instances[edge_index[0, :]] != 0)] = False
             
             point_mask = torch.zeros(point_instances.shape[0], dtype=bool).to(self.rank)
-            all_edges_mask = torch.zeros(all_edges.shape[1], dtype=bool).to(self.rank)
             # if ignoring predictions for static edges in loss, get static edge filter
             if self.ignore_stat_edges:
                 point_mask = torch.logical_or(
@@ -1025,17 +1017,6 @@ class GNNLoss(nn.Module):
                             ~(data.point_instances_mov[edge_index[1, :]] != 0), 
                             data.point_instances[edge_index[1, :]] != 0)),
                     point_mask)
-                
-                # filter moving objects from all predictions
-                all_edges_mask = torch.logical_or(
-                    torch.logical_and(
-                        torch.logical_and(
-                            ~(data.point_instances_mov[all_edges[0, :]] != 0), 
-                            data.point_instances[all_edges[0, :]] != 0),
-                        torch.logical_and(
-                                ~(data.point_instances_mov[all_edges[1  , :]] != 0), 
-                                data.point_instances[all_edges[1, :]] != 0)),
-                    all_edges_mask)
 
             if self.ignore_edges_between_background:
                 # setting edges that do not belong to object to zero
@@ -1045,13 +1026,6 @@ class GNNLoss(nn.Module):
                         data.point_instances[edge_index[0, :]] == 0,
                         data.point_instances[edge_index[1, :]] == 0),
                     point_mask)
-                
-                # filter background edges from all predictions
-                all_edges_mask = torch.logical_or(
-                    torch.logical_and(
-                        data.point_instances[all_edges[0, :]] == 0,
-                        data.point_instances[all_edges[1, :]] == 0),
-                    all_edges_mask)
             
             '''
             if self.use_node_score and self.node_loss and mode != 'train':
@@ -1117,35 +1091,7 @@ class GNNLoss(nn.Module):
             hist_edge = np.histogram(logits_rounded.cpu().numpy(), bins=10, range=(0., 1.))
             logits_rounded[logits_rounded>0.5] = 1
             logits_rounded[logits_rounded<=0.5] = 0
-            # correct = logits_rounded == point_instances.squeeze()
-            
-            # comment out if not all
-            all_size = [data['batch'].shape[0], data['batch'].shape[0]]
-            all_edges = all_edges[:, ~all_edges_mask]
-            all_prediction = torch.ones(all_edges.shape[1]).to(logits_rounded.device) * -1
-            point_instances = data.point_instances[all_edges[0, :]] == data.point_instances[all_edges[1, :]]
-            point_categories = data.point_categories[all_edges[0, :]]
-            point_categories1 = data.point_categories[all_edges[1, :]]
-            
-            # set predictions to rounded logits
-            logits_rounded[logits_rounded == 1] = 2
-            prediction = torch.sparse_coo_tensor(
-                    edge_index,
-                    logits_rounded,
-                    all_size)
-            all_prediction = torch.sparse_coo_tensor(
-                    all_edges,
-                    all_prediction,
-                    all_size)
-            print(all_prediction, prediction, all_edges.shape, point_instances.shape)
-            all_prediction = all_prediction + prediction
-            print(all_prediction.shape)
-            all_prediction = all_prediction._values()
-            print(all_prediction.shape)
-            all_prediction[all_prediction == -1] = 0
-            print(all_prediction.shape)
-            # get correct mask
-            correct = all_prediction == point_instances
+            correct = logits_rounded == point_instances.squeeze()
             
             # overall
             if correct.shape[0]:
