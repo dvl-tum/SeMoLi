@@ -49,4 +49,5 @@ loss_hyperparams:
     ignore_stat_nodes: 0
     ignore_edges_between_background: 0
     classification_is_moving_node: 0
+    classification_is_moving_edge: 0
     use_node_score: ${models.hyperparams.use_node_score}

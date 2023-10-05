@@ -984,16 +984,11 @@ class GNNLoss(nn.Module):
         same_graph = data['batch'][edge_index[0, :]] == data['batch'][edge_index[1, :]]
         
         batch_idx = data._slice_dict['pc_list']
-        idxs = list()
+        all_edges = list()
         for i in range(batch_idx.shape[0]-1):
             sample = data['batch'][batch_idx[i]:batch_idx[i+1]]
-            idxs.append(torch.stack(torch.where(sample == sample.unsqueeze(1))) + batch_idx[i])
-        idxs = torch.cat(idxs, dim=1)
-        
-        all_prediction = torch.sparse_coo_tensor(
-                idxs,
-                torch.ones(idxs.shape[1]).to(idxs.device)*-1,
-                (data['batch'].shape[0], data['batch'].shape[0])) 
+            all_edges.append(torch.stack(torch.where(sample == sample.unsqueeze(1))) + batch_idx[i])
+        all_edges = torch.cat(all_edges, dim=1)
         
         if self.bce_loss:
             point_instances = data.point_instances
@@ -1031,18 +1026,14 @@ class GNNLoss(nn.Module):
                     point_mask)
                 
                 # filter moving objects from all predictions
-                sparse_idx = all_prediction._indices()
                 idx_mask = torch.logical_and(
-                        ~(data.point_instances_mov[sparse_idx[0, :]] != 0), 
-                        data.point_instances[sparse_idx[0, :]] != 0)
+                        ~(data.point_instances_mov[all_edges[0, :]] != 0), 
+                        data.point_instances[all_edges[0, :]] != 0)
                 idx_mask = torch.logical_and(
                         idx_mask, torch.logical_and(
-                            ~(data.point_instances_mov[sparse_idx[1  , :]] != 0), 
-                            data.point_instances[sparse_idx[1, :]] != 0))
-                all_prediction = torch.sparse_coo_tensor(
-                        sparse_idx[:, ~idx_mask],
-                        all_prediction._values()[~idx_mask],
-                        all_prediction.size())
+                            ~(data.point_instances_mov[all_edges[1  , :]] != 0), 
+                            data.point_instances[all_edges[1, :]] != 0))
+                all_edges = all_edges[:, ~idx_mask]
 
             if self.ignore_edges_between_background:
                 # setting edges that do not belong to object to zero
@@ -1054,14 +1045,10 @@ class GNNLoss(nn.Module):
                     point_mask)
                 
                 # filter background edges from all predictions
-                sparse_idx = all_prediction._indices()
                 idx_mask = torch.logical_and(
-                        data.point_instances[sparse_idx[0, :]] == 0,
-                        data.point_instances[sparse_idx[1, :]] == 0)
-                all_prediction = torch.sparse_coo_tensor(
-                        sparse_idx[:, ~idx_mask],
-                        all_prediction._values()[~idx_mask],
-                        all_prediction.size())
+                        data.point_instances[all_edges[0, :]] == 0,
+                        data.point_instances[all_edges[1, :]] == 0)
+                all_edges = all_edges[:, ~idx_mask]
             
             '''
             if self.use_node_score and self.node_loss and mode != 'train':
@@ -1130,11 +1117,9 @@ class GNNLoss(nn.Module):
             # correct = logits_rounded == point_instances.squeeze()
             
             # comment out if not all
-            print(all_prediction.shape)
-            # all_prediction = all_prediction.coalesce()
-            all_size = all_prediction.size()
-            all_edges = all_prediction._indices()
-            all_prediction = all_prediction._values()
+            print(all_edges.shape)
+            all_size = (data['batch'].size, data['batch'].size)
+            all_prediction = torch.ones(all_edges.shape[1]) * -1
             point_instances = data.point_instances[all_edges[0, :]] == data.point_instances[all_edges[1, :]]
             point_categories = data.point_categories[all_edges[0, :]]
             point_categories1 = data.point_categories[all_edges[1, :]]
