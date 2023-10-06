@@ -214,10 +214,10 @@ def evaluate(
         np_fns = None
 
     # Compute summary metrics.
-    metrics, fps = summarize_metrics(dts, gts, cfg, use_matched_category)
+    metrics, fps, all_results_df = summarize_metrics(dts, gts, cfg, use_matched_category)
     metrics.loc["AVERAGE_METRICS"] = metrics.mean()
     metrics = metrics.round(NUM_DECIMALS)
-    return dts, gts, metrics, np_tps, np_fns, fps
+    return dts, gts, metrics, np_tps, np_fns, fps, all_results_df
 
 
 def summarize_metrics(
@@ -250,6 +250,8 @@ def summarize_metrics(
     average_precisions = pd.DataFrame({t: 0.0 for t in cfg.affinity_thresholds_m}, index=cfg.categories)
     precisions = pd.DataFrame({t: 0.0 for t in cfg.affinity_thresholds_m}, index=cfg.categories)
     fps = 0
+    all_results_df = pd.DataFrame({f'{met} {t}': 0.0 for met in ['pr', 'ap', 'tps', 'fps', 'fns'] for t in cfg.affinity_thresholds_m}, index=cfg.categories)
+    all_results_df['num gt'] = np.zeros(all_results_df.shape[0])
     for category in cfg.categories:
         # Find detections that have the current category.
         if use_matched_category:
@@ -375,13 +377,20 @@ def summarize_metrics(
             if len(true_positives) == 0:
                 continue
             print('\t', affinity_threshold_m, "TPS: ", true_positives.sum(), "FPS: ", (~true_positives).sum(), "FNS: ", num_gts-(true_positives.sum()), "Num GT: ", num_gts)
+            all_results_df.loc[category, f'tps {affinity_threshold_m}'] = true_positives.sum()
+            all_results_df.loc[category, f'fps {affinity_threshold_m}'] = (~true_positives).sum()
+            all_results_df.loc[category, f'fns {affinity_threshold_m}'] = num_gts-(true_positives.sum())
+            all_results_df.loc[category, f'num gt'] = num_gts
             # Compute average precision for the current threshold.
             threshold_average_precision, _ = compute_average_precision(true_positives, recall_interpolated, num_gts)
             # Record the average precision.
             average_precisions.loc[category, affinity_threshold_m] = threshold_average_precision
             precisions.loc[category, affinity_threshold_m] = true_positives.sum()/(true_positives.sum()+(~true_positives).sum())
-        print("\t AVERAGE PRECISIONS \n", average_precisions.loc[category])
-        print("\t PRECISIONS \n", precisions.loc[category])
+            all_results_df.loc[category, f'pr {affinity_threshold_m}'] = true_positives.sum()/(true_positives.sum()+(~true_positives).sum())
+            all_results_df.loc[category, f'ap {affinity_threshold_m}'] = threshold_average_precision
+
+        print("\t AVERAGE PRECISIONS ", average_precisions.loc[category].values)
+        print("\t PRECISIONS ", precisions.loc[category].values)
         mean_average_precisions: NDArrayFloat = average_precisions.loc[category].to_numpy().mean()
 
         # Select only the true positives for each instance.
@@ -408,4 +417,4 @@ def summarize_metrics(
         summary.loc[category] = np.array([mean_average_precisions, *tp_errors, cds])
 
     # Return the summary.
-    return summary, fps
+    return summary, fps, all_results_df
