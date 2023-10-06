@@ -441,12 +441,13 @@ class ClusterGNN(MessagePassing):
         num_objects = x1.shape[0]
         traj_dim = x1.shape[1]
         pos_dim = x2.shape[1]
+        print(x1.shape, x2.shape)
         node_dim = 0
         # JUST FOR GRAPH CONST
         if '_MTOT_' in _type:
-            node_attr.append(x1.view(traj_dim, -1, pos_dim))
+            node_attr.append(x1.view(num_objects, -1, pos_dim))
         if  '_MDOT_' in _type:
-            node_attr.append(x1.view(traj_dim, -1, pos_dim)+x2.unsqueeze(1))
+            node_attr.append(x1.view(num_objects, -1, pos_dim)+x2.unsqueeze(1))
         
         # FOR GRAPH CONST AND NODES
         if '_P_' in _type:
@@ -456,7 +457,7 @@ class ClusterGNN(MessagePassing):
             node_attr.append(x1)
             node_dim += traj_dim
         if '_PT_' in _type:
-            node_attr.append((x1.view(traj_dim, -1, pos_dim)+x2.unsqueeze(1)).view(traj_dim, -1))
+            node_attr.append((x1.view(num_objects, -1, pos_dim)+x2.unsqueeze(1)).view(num_objects, -1))
             node_dim += traj_dim
         if '_MMMV_' in _type:
             _node_attr = x1.view(num_objects, -1, pos_dim)
