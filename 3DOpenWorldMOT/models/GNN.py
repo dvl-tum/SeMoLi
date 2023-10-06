@@ -514,34 +514,11 @@ class ClusterGNN(MessagePassing):
             if not recompute:
                 continue
 
-            '''
-            # get indices up to max_num_neighbors per node --> knn neighbors
-            num_neighbors = min(int(max_num_neighbors*1.5), dist.shape[0])
-            idxs_0 = torch.tile(torch.arange(dist.shape[0]).unsqueeze(1).to(self.rank), (1, num_neighbors)).flatten()
-            dist = torch.nn.PairwiseDistance(X[:, 0, :])
-            idxs_1 = dist.topk(k=num_neighbors, dim=1, largest=False).indices.flatten()
-            X_time_0 = X[idxs_0]
-            X_time_1 = X[idxs_1]
-            '''
-
             # get distances between nodes
             if self.graph_construction == 'traj' or self.graph_construction == 'pos' or self.graph_construction == 'MMMV' or self.graph_construction == 'postraj':
                 dist = torch.from_numpy(sklearn.metrics.pairwise_distances(X.cpu().numpy(), metric=metric)).to(self.rank)
             
             else:
-                '''
-                # get indices up to max_num_neighbors per node --> knn neighbors
-                num_neighbors = min(int(max_num_neighbors*1.5), dist.shape[0])
-                idxs_0 = torch.tile(torch.arange(dist.shape[0]).unsqueeze(1).to(self.rank), (1, num_neighbors)).flatten()
-                dist = torch.from_numpy(sklearn.metrics.pairwise_distances(X[:, 0, :].cpu().numpy(), metric=metric)).to(self.rank)
-                idxs_1 = dist.topk(k=num_neighbors, dim=1, largest=False).indices.flatten()
-                X_time_0 = X[idxs_0]
-                X_time_1 = X[idxs_1]
-                
-                # following two lines are faster but cuda oom
-                dist = torch.cdist(X_time_0, X_time_1)
-                dist = dist.mean(dim=0)
-                '''
                 dist = torch.zeros(X.shape[0], X.shape[0]).to(self.rank)
                 for t in range(X.shape[1]):
                     dist += torch.cdist(X[:, t, :].unsqueeze(0),X[:, t, :].unsqueeze(0)).squeeze()
@@ -616,25 +593,6 @@ class ClusterGNN(MessagePassing):
                         graph_attr, self.r, max_num_neighbors=k, batch_idx=batch_idx, type='radius', batch=data['batch'], data=data)
                 else:
                     edge_index = radius_graph(graph_attr, self.r, data['batch'], max_num_neighbors=k)
-            '''
-            if self.my_graph and len(graph_attr.shape) == 2:
-                from torch_geometric.data import Data as PyGData
-                import os
-                # DataBatch(pc_list=[40615, 3], traj=[40615, 25, 3], timestamps=[4, 25], point_categories_mov=[40615], point_instances_mov=[40615], point_categories=[40615], point_instances=[40615], log_id=[4], batch=[40615], path=[4], ptr=[5])
-                for i, (start, end) in enumerate(zip(batch_idx[:-1], batch_idx[1:])):
-                    name = data['path'][i].split('_')[-1]
-                    p = f'/workspace/result/all_egocomp_margin0.6_width25_{self.graph_construction}/{name}'
-                    if os.path.isfile(p):
-                        continue
-                    print('save')
-                    sample_edge = edge_index[:, torch.logical_and(
-                                edge_index[0, :] >= start,
-                                edge_index[1, :] < end)]
-                    d = PyGData(
-                            sample_edge - sample_edge.min())
-                    os.makedirs(os.path.dirname(p), exist_ok=True)
-                    torch.save(d, p)
-                '''
         else:
             edge_index = data['edge_index']
         
