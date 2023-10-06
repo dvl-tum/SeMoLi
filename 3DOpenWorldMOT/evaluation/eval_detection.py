@@ -554,8 +554,8 @@ def eval_detection(
     for affinity, tp_thresh, threshs, n_jobs in zip(
         ['CENTER', 'IoU3D'], [2.0, 0.6], [(0.5, 1.0, 2.0, 4.0), (0.2, 0.4, 0.6, 0.8)], [8, 1]):
         
-        if affinity == 'CENTER':
-            continue
+        # if affinity == 'CENTER':
+        #     continue
 
         # Evaluate instances.
         # Defaults to competition parameters.
@@ -652,6 +652,7 @@ if __name__ == '__main__':
     for t in os.listdir(f'tracks/tracks_for_eval/initial_dets'): #class_dict.keys():
         print(t)
         tracker_dir = f'tracks/tracks_for_eval/tracked_dets/{t}/train'
+        tracker_dir = '/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/out/detections_val_gnn/INITIAL_DETS_OLD_MODEL_ORACLE_0.1_0.1_all_egocomp_margin0.6_width25_oraclenode_oracleedge_64_64_64_64_0.5_3.5_0.5_4_3.162277660168379e-06_0.0031622776601683794_16000_16000__NS_MG_32_2.0_LN___P___MMMDPTT___MMMV_/val_gnn'
         print(tracker_dir)
         # seq = '16473613811052081539'
         # seq_list = [seq]
@@ -670,7 +671,7 @@ if __name__ == '__main__':
             remove_non_move_thresh=1.0,
             debug=False,
             just_eval=True,
-            visualize=True,
+            visualize=False,
             name=name,
             min_points=min_points,
             max_points=max_points,
