@@ -454,7 +454,7 @@ class ClusterGNN(MessagePassing):
             node_attr.append(x1.view(num_objects, -1, pos_dim))
         if  '_MDOT_' in _type:
             node_attr.append(x1.view(num_objects, -1, pos_dim)+x2.unsqueeze(1))
-        
+
         # FOR GRAPH CONST AND NODES
         if '_P_' in _type:
             node_attr.append(x2)
@@ -596,13 +596,13 @@ class ClusterGNN(MessagePassing):
             if self.graph == 'knn':
                 if self.my_graph and len(graph_attr.shape) != 2:
                     edge_index = self.get_graph(
-                        graph_attr, self.r, max_num_neighbors=k, batch_idx=batch_idx, type='knn', batch=data['batch'], data=data)
+                        graph_attr, self.r, max_num_neighbors=k, batch_idx=batch_idx, type='knn')
                 else:
                     edge_index = knn_graph(x=graph_attr, k=k, batch=data['batch'])
             elif self.graph == 'radius':
                 if self.my_graph and len(graph_attr.shape) != 2:
                     edge_index = self.get_graph(
-                        graph_attr, self.r, max_num_neighbors=k, batch_idx=batch_idx, type='radius', batch=data['batch'], data=data)
+                        graph_attr, self.r, max_num_neighbors=k, batch_idx=batch_idx, type='radius')
                 else:
                     edge_index = radius_graph(graph_attr, self.r, data['batch'], max_num_neighbors=k)
         else:
