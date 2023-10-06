@@ -255,7 +255,9 @@ class ClusterGNN(MessagePassing):
             augment=False,
             rank=0,
             gradient_checkpointing=False, 
-            remove_non_move_thresh=1.0):
+            remove_non_move_thresh=1.0,
+            classification_is_moving_edge=False,
+            classification_is_moving_node=False):
         super().__init__(aggr='mean')
         self.k = k
         self.k_eval = k_eval
@@ -321,11 +323,7 @@ class ClusterGNN(MessagePassing):
                 skip_node_update=skip_node_update))
             _node_dim = node_dim_hid
             _edge_dim = edge_dim_hid
-        '''layers.append(ClusterLayer(
-            in_channel_node=_node_dim,
-            in_channel_edge=_edge_dim,
-            out_channel_node=node_dim,
-            out_channel_edge=edge_dim))'''
+
         self.layers = SevInpSequential(gradient_checkpointing, layers)
 
         self.final = nn.Linear(_edge_dim, 1)
@@ -346,6 +344,8 @@ class ClusterGNN(MessagePassing):
         self.dataset = dataset
         self.remove_non_move_thresh = remove_non_move_thresh
         self.gradient_checkpointing = gradient_checkpointing
+        self.classification_is_moving_node = classification_is_moving_node
+        self.classification_is_moving_edge = classification_is_moving_edge
 
         self.opts = rama_py.multicut_solver_options("PD")
         self.opts.sanitize_graph = True
@@ -353,8 +353,13 @@ class ClusterGNN(MessagePassing):
 
         self.rank = rank
 
-    def initial_edge_attributes(self, x1, x2, edge_index, point_normals=None, distance='euclidean', timestamps=None, batch=None):
+    def initial_edge_attributes(self, x1, x2, edge_index, timestamps=None, batch=None):
         """
+        x1 = N x 3
+        x2 = N x 3*T
+
+        ----
+
         DP = diffpos
         DT = difftraj
         DTDP = difftraj_diffpos
@@ -418,11 +423,11 @@ class ClusterGNN(MessagePassing):
             edge_attr.append(get_mean_min_max(get_per_time_vel_diff(x1, timestamps, batch, self.dataset, edge_index, pos_dim), num_edges))
             edge_dim += 3
         
-        edge_attr = torch.stack(edge_attr).squeeze()
+        edge_attr = torch.stack(edge_attr).squeeze().float()
 
         return edge_attr, edge_dim
     
-    def initial_node_attributes(self, x1, x2, _type, point_normals=None, timestamps=None, batch=None):
+    def initial_node_attributes(self, x1, x2, _type, timestamps=None, batch=None):
         """
         x1 = N x 3
         x2 = N x 3*T
@@ -477,49 +482,21 @@ class ClusterGNN(MessagePassing):
             node_attr.append(_node_attr)
             node_dim += 3
         
-        node_attr = torch.stack(node_attr).squeeze()
+        node_attr = torch.stack(node_attr).squeeze().float()
 
         return node_attr, node_dim
     
-    def get_graph(self, node_attr, r=5, max_num_neighbors=16, batch_idx=None, type='radius', metric='euclidean', batch=None, data=None):
+    def get_graph(self, node_attr, r=5, max_num_neighbors=16, batch_idx=None, type='radius', metric='euclidean'):
         # my graph
         _idxs_0, _idxs_1 = list(), list()
         for ith, (start, end) in enumerate(zip(batch_idx[:-1], batch_idx[1:])):
             # iterate over frames in batch
             X = node_attr[start:end]
-            # check edge_idx
-            name = data['path'][ith].split('_')[-1]
-            p = f'/workspace/result/all_egocomp_margin0.6_width25_{self.graph_construction}/{name}' 
-            recompute = True
-            if os.path.isfile(p):
-                edge_idx = torch.load(p, map_location='cpu')['x'].to(self.rank)
-                try:
-                    # print(f'got it {p}')
-                    has_len = len(edge_idx)
-                    data['edge_index'] = edge_idx
-                    if edge_idx.min() != 0:
-                        edge_idx = edge_idx - edge_idx.min()
-                        # d = PyGData(edge_idx)
-                        # torch.save(d, p)
-                    idxs_0 = edge_idx[0, :]
-                    idxs_1 = edge_idx[1, :]
-                    
-                    idxs_0 += start
-                    idxs_1 += start
-                    _idxs_0.append(idxs_0)
-                    _idxs_1.append(idxs_1)
-                    
-                    recompute = False
-                except:
-                    recompute = True
-            
-            if not recompute:
-                continue
 
             # get distances between nodes
-            if self.graph_construction == 'traj' or self.graph_construction == 'pos' or self.graph_construction == 'MMMV' or self.graph_construction == 'postraj':
-                dist = torch.from_numpy(sklearn.metrics.pairwise_distances(X.cpu().numpy(), metric=metric)).to(self.rank)
-            
+            if self.graph_construction in ['_T_', '_P_', '_MMMV_', '_PT_']:
+                dist = torch.from_numpy(
+                    sklearn.metrics.pairwise_distances(X.cpu().numpy(), metric=metric)).to(self.rank)
             else:
                 dist = torch.zeros(X.shape[0], X.shape[0]).to(self.rank)
                 for t in range(X.shape[1]):
@@ -541,10 +518,14 @@ class ClusterGNN(MessagePassing):
                 idx = torch.where(dist<r)[0]
                 idxs_0, idxs_1 = idxs_0[idx], idxs_1[idx]
             
+            # store precomputed edges
+            # name = data['path'][ith].split('_')[-1]
+            # p = f'/workspace/result/all_egocomp_margin0.6_width25_{self.graph_construction}/{name}' 
             # if not os.path.isfile(p):
             #     d = PyGData(torch.vstack([idxs_0, idxs_1]))
             #     os.makedirs(os.path.dirname(p), exist_ok=True)
             #     torch.save(d, p)
+
             idxs_0 += start
             idxs_1 += start            
             _idxs_0.append(idxs_0)
@@ -559,6 +540,7 @@ class ClusterGNN(MessagePassing):
     
     def velocity_augment(self, data):
         for instance in data['point_instances'].unique():
+            # don't augment background velocity
             if instance == 0:
                 continue
 
@@ -585,28 +567,28 @@ class ClusterGNN(MessagePassing):
         '''
         clustering: 'heuristic' / 'correlation'
         '''
-        # cchange velovity of objects
-        if not eval and self.augment:
-            self.velocity_augment(data)
-
-        data = data.to(self.rank)
-        batch_idx = data._slice_dict['pc_list']
-        traj = data['traj']
-        if traj.shape[0] == 0:
+        # if no points return
+        if data['traj'].shape[0] == 0:
             return [None, None], list(), None, None
         
-        traj = traj.view(traj.shape[0], -1)
-        pc = data['pc_list']
-        if 'pc_normals' in [k for k in data.keys]:
-            point_normals = data['pc_normals']
-        else:
-            point_normals = None
+        # augment data by changing velovity of objects
+        if not eval and self.augment:
+            self.velocity_augment(data)
         
-        node_attr, node_dim = self.initial_node_attributes(traj, pc, self.node_attr, point_normals, data['timestamps'], data['batch'])
+        # extract data
+        data = data.to(self.rank)
+        batch_idx = data._slice_dict['pc_list']
+        traj = data['traj'].view(data['traj'].shape[0], -1)
+        pc = data['pc_list']
+        
+        # get initial node attributed ans attirbutes to construct the grap
+        node_attr, _ = self.initial_node_attributes(
+            traj, pc, self.node_attr, data['timestamps'], data['batch'])
         if self.node_attr == self.graph_construction:
             graph_attr = node_attr
         else:
-            graph_attr, _ = self.initial_node_attributes(traj, pc, self.graph_construction, point_normals, data['timestamps'], data['batch'])
+            graph_attr, _ = self.initial_node_attributes(
+                traj, pc, self.graph_construction, data['timestamps'], data['batch'])
         
         # get edges using knn graph (for computational feasibility)
         k = self.k if not eval else self.k_eval
@@ -626,40 +608,33 @@ class ClusterGNN(MessagePassing):
         else:
             edge_index = data['edge_index']
 
+        # if there are no edges in pc --> very sparse?!
         if edge_index.shape[1] == 0:
-            print("EEEMPTY")
             return [None, None], torch.tensor(list(range(pc.shape[0]))), None
         
-        edge_attr, edge_dim = self.initial_edge_attributes(traj, pc, edge_index, point_normals)
+        # get initial edge attributes
+        edge_attr, _ = self.initial_edge_attributes(traj, pc, edge_index, batch=data['batch'])
 
-        edge_attr = edge_attr.float()
-        node_attr = node_attr.float()
-        
+        # forward pass thourgh layers
         node_attr, edge_index, edge_attr = self.layers(node_attr, edge_index, edge_attr)
 
+        # either use edge features or dot product of node features
         src, dst = edge_index
-        # computes per edge index by computing dot product between node features
         if not use_edge_att:
             score = (node_attr[src] * node_attr[dst]).sum(dim=-1)
-        # directly uses edge attirbutes
         else:
             score = self.final(edge_attr)
         if self.use_node_score:
             node_score = self.final_node(node_attr)
         else:
             node_score = None
-
+        
+        # return if we have nans in forward pass
         if torch.any(torch.isnan(score)):
             print('Having nan during forward pass...')
             return [torch.nan, torch.nan], edge_index, None
-        '''
-        pc_vis = pc[:batch_idx[1]]
-        edge_mask = torch.logical_or(
-            torch.logical_and(edge_index[0] >= batch_idx[0], edge_index[1] < batch_idx[1]),
-            torch.logical_and(edge_index[1] >= batch_idx[0], edge_index[0] < batch_idx[1]))
-        self.visualize(torch.arange(pc_vis.shape[0]), edge_index[:, edge_mask], pc_vis, torch.ones(pc_vis.shape[0]), '00000', mode='before', name='General')
-        quit() 
-        '''
+
+        # evaluate correlation clustering
         if eval and corr_clustering:
             _score = self.sigmoid(score)
             if self.use_node_score:
@@ -695,28 +670,34 @@ class ClusterGNN(MessagePassing):
         i, (start, end) = iter_data
         edge_index, _node_score, _score, data, score, node_score, pc, rama_cuda, name = self.args
 
+        # get edge index and scores for current graph
         edge_mask = torch.logical_or(
             torch.logical_and(edge_index[0] >= start, edge_index[1] < end),
             torch.logical_and(edge_index[1] >= start, edge_index[0] < end))
         graph_edge_index = edge_index[:, edge_mask]
         src, dst = graph_edge_index
-        # graph_edge_index = graph_edge_index - start
         if self.use_node_score:
             graph_node_score = _node_score[start:end]
         graph_edge_score = _score[edge_mask]
 
+        # set oracle scores edge
         if self.oracle_edge:
             graph_edge_score[data['point_instances'][src] == data['point_instances'][dst]] = 1
             graph_edge_score[data['point_instances'][src] != data['point_instances'][dst]] = 0
             graph_edge_score[data['point_instances'][src] <= 0] = 0
-            graph_edge_score[data['point_instances'][dst] <= 0] = 0
+            if self.classification_is_moving_edge:
+                graph_edge_score[~data['point_instances_mov'][src]] = 0
+            
             score[edge_mask] = graph_edge_score
             score[score == 0] = -10
             score[score == 1] = 10
-
+        
+        # set oracle scores node
         if self.oracle_node and self.use_node_score:
             graph_node_score[data['point_categories'][start:end]>0] = 1
             graph_node_score[data['point_categories'][start:end]<=0] = 0
+            if self.classification_is_moving_node:
+                graph_node_score[~data['point_instances_mov'][start:end]] = 0
 
             node_score[start:end] = graph_node_score
             node_score[node_score == 0] = -10
@@ -727,8 +708,8 @@ class ClusterGNN(MessagePassing):
             graph_edge_index = graph_edge_index[:, (graph_edge_score > self.filter_edges).squeeze()]
             graph_edge_score = graph_edge_score[(graph_edge_score > self.filter_edges).squeeze()]
         
+        # filter egdes using node score to make problem smaller
         graph_edge_index = graph_edge_index - start.item()
-
         if self.use_node_score:
             graph_edge_score = graph_edge_score[torch.logical_and(
                 graph_node_score[graph_edge_index[0]] > self.use_node_score, 
@@ -747,6 +728,7 @@ class ClusterGNN(MessagePassing):
         _edge_index[0, :] = mapping[graph_edge_index[0, :]]
         _edge_index[1, :] = mapping[graph_edge_index[1, :]]
 
+        # solve correlation clustering
         try:
             rama_out = rama_cuda(
                 [e[0] for e in _edge_index.T.cpu().numpy()],
@@ -755,6 +737,7 @@ class ClusterGNN(MessagePassing):
                 self.opts)
             mapped_clusters = torch.tensor(rama_out[0]).to(self.rank).int()
         except:
+            print('Could not resolve rama...')
             mapped_clusters = torch.arange(edges.shape[0]).to(self.rank).int()
 
         # map back 
@@ -763,28 +746,16 @@ class ClusterGNN(MessagePassing):
         clusters = torch.ones(end.item()-start.item()) * - 1
         clusters = clusters.int().to(self.rank)
         clusters[edges] = mapped_clusters
-        clusters = clusters.cpu().numpy().tolist()
+        clusters = clusters.cpu().numpy()
 
-        # filter out nodes thatare classified as non-objects
-        '''if self.use_node_score > 0:
-            clusters = torch.tensor(clusters)
-            clusters[(graph_node_score.cpu() < self.use_node_score).squeeze()] = -1
-            clusters = clusters.numpy()'''
-
+        # if clusters are < min_samples set to rubbish
         _clusters = defaultdict(list)
         for iter, c in enumerate(clusters):
             _clusters[c].append(iter)
-
-        cluster_assignment_new = dict()
         for c, node_list in _clusters.items():
             if len(node_list) < self.min_samples:
                 for n in node_list:
-                    cluster_assignment_new[n] = -1
-            else:
-                for n in node_list:
-                    cluster_assignment_new[n] = c
-
-        clusters = np.array([cluster_assignment_new[k] for k in sorted(cluster_assignment_new.keys())])
+                    clusters[n] = -1
         
         return clusters
 
@@ -823,12 +794,6 @@ class ClusterGNN(MessagePassing):
         G.add_edges_from(edge_indices.T.cpu().numpy())
 
         colors = [(0.999, 0.999, 0.999)] * nodes.shape[0]
-        '''
-        for i, (c, node_list) in enumerate(clusters.items()):
-            for node in node_list:
-                colors[node] = rgb_colors[i]
-            col_dict[c] = rgb_colors[i]
-        '''
 
         # save graph
         labels = {n.item(): str(n.item()) for n in nodes}
@@ -946,18 +911,16 @@ class GNNLoss(nn.Module):
             # --> instance 0 is no object
             point_instances[data.point_instances[edge_index[0, :]] == 0] = False
             point_instances = point_instances.to(self.rank)
-            # print('is there something?!', torch.where(point_instances))
-            # print(data.point_instances_mov[edge_index[0, :]].shape)
-            print(torch.where(data.point_instances_mov)[0].shape)
-            # quit()
+
             # if using moving vs non-moving / background as training objective
-            if (self.classification_is_moving_edge and mode == 'train'):
+            if self.classification_is_moving_edge:
                 point_instances[torch.logical_and(
                     ~(data.point_instances_mov[edge_index[0, :]] != 0), 
                     data.point_instances[edge_index[0, :]] != 0)] = False
-            # print('is there something 2?!', torch.where(point_instances)) 
+                
+            # if ignoring edges between static object or edges between background during training 
+            # --> requires any kind of node classification!!
             point_mask = torch.zeros(point_instances.shape[0], dtype=bool).to(self.rank)
-            # if ignoring predictions for static edges in loss, get static edge filter
             if self.ignore_stat_edges:
                 point_mask = torch.logical_or(
                     torch.logical_and(
@@ -968,36 +931,14 @@ class GNNLoss(nn.Module):
                             ~(data.point_instances_mov[edge_index[1, :]] != 0), 
                             data.point_instances[edge_index[1, :]] != 0)),
                     point_mask)
-            # print('is there something3?!', torch.where(point_instances[~point_mask]))
+
             if self.ignore_edges_between_background:
-                # setting edges that do not belong to object to zero
-                # --> instance 0 is no object
                 point_mask = torch.logical_or(
                     torch.logical_and(
                         data.point_instances[edge_index[0, :]] == 0,
                         data.point_instances[edge_index[1, :]] == 0),
                     point_mask)
             
-            '''
-            if self.use_node_score and self.node_loss and mode != 'train':
-                logits_rounded_node = self.sigmoid(node_logits.clone().detach()).squeeze()
-                point_mask = torch.logical_or(
-                    torch.logical_or(
-                        logits_rounded_node[edge_index[0, :]] < self.use_node_score,
-                        logits_rounded_node[edge_index[1, :]] < self.use_node_score),
-                    point_mask)
-                
-                # filter edges that would be filtered out by node score
-                sparse_idx = all_prediction._indices()
-                idx_mask = torch.logical_or(
-                        logits_rounded_node[sparse_idx[0, :]] < self.use_node_score,
-                        logits_rounded_node[sparse_idx[1, :]] < self.use_node_score)
-                all_prediction = torch.sparse_coo_tensor(
-                        sparse_idx[:, ~idx_mask],
-                        all_prediction._values()[~idx_mask],
-                        all_prediction.size())
-            '''
-            # print('is there something4?!', torch.where(point_instances[~point_mask]))
             # filter edge logits, point instances and point categories
             edge_logits = edge_logits[~point_mask]
             point_instances = point_instances[~point_mask].float()
@@ -1043,7 +984,7 @@ class GNNLoss(nn.Module):
             logits_rounded[logits_rounded>0.5] = 1
             logits_rounded[logits_rounded<=0.5] = 0
             correct = logits_rounded == point_instances.squeeze()
-            # print(torch.where(correct), torch.where(point_instances), torch.where(logits_rounded))    
+
             # overall
             if correct.shape[0]:
                 log_dict[f'{mode} accuracy edge'] = torch.zeros(6).to(self.rank) 

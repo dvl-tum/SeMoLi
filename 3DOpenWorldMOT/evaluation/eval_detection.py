@@ -659,7 +659,7 @@ if __name__ == '__main__':
         seq_list = os.listdir(tracker_dir)
         min_points = m
         max_points = m+5 if m <= 25 and m != -1 else 1000000
-        _, detection_metric = eval_detection(
+        _, detection_metric, _ = eval_detection(
             gt_folder=gt_folder,
             trackers_folder=tracker_dir,
             split=orig_split,

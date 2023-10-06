@@ -22,6 +22,8 @@ hyperparams:
     dataset: ${data.dataset_name}
     ignore_stat_edges: ${models.loss_hyperparams.ignore_stat_edges}
     ignore_stat_nodes: ${models.loss_hyperparams.ignore_stat_nodes}
+    classification_is_moving_node: ${models.loss_hyperparams.classification_is_moving_node}
+    classification_is_moving_edge: ${models.loss_hyperparams.classification_is_moving_edge}
     filter_edges: -1
     layer_norm: False
     batch_norm: False
