@@ -561,13 +561,17 @@ class ClusterGNN(MessagePassing):
         for instance in data['point_instances'].unique():
             if instance == 0:
                 continue
-            torch.randint(0, 1)
+
+            # should we augment and if yes which scale
+            do_augment = torch.randint(2, (1,))
             scale = torch.rand(1)*10
+            if not do_augment:
+                continue
+
+            # augment and adapt moving mask
             instance_mask = data['point_instances'] == instance
-            data['traj'][instance_mask] = data['traj'][instance_mask] * scale
-            print(data['traj'][instance_mask].mean(dim=0).shape)
-            quit()
-            dist = torch.linalg.norm(data['traj'][instance_mask].mean(dim=0)[:, 1, :-1])
+            data['traj'][instance_mask] = data['traj'][instance_mask] * scale.to(data['traj'].device)
+            dist = torch.linalg.norm(data['traj'][instance_mask][:, 1, :-1].mean(dim=0))
             if not 'waymo' in self.dataset:
                 diff_time = (
                     data['timestamps'][0, 1]-data['timestamps'][0, 0]) / np.power(10, 9)
@@ -575,9 +579,7 @@ class ClusterGNN(MessagePassing):
                 diff_time = (
                     data['timestamps'][0, 1]-data['timestamps'][0, 0]) / np.power(10, 6)
             vel = dist/diff_time
-            data.point_instances_mov[instance_mask] = vel > self.remove_non_move_thresh
-
-
+            data['point_instances_mov'][instance_mask] = vel > self.remove_non_move_thresh
 
     def forward(self, data, eval=False, use_edge_att=True, name='General', corr_clustering=False):
         '''
