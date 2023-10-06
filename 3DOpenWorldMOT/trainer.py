@@ -94,8 +94,8 @@ def load_model(cfg, checkpoints_dir, logger, rank=0):
             drop = "_DR_" if cfg.models.hyperparams.drop_out else ""
             augment = "_AU_" if cfg.models.hyperparams.augment else ""
 
-            # name = cfg.models.hyperparams.graph_construction + '_' + cfg.models.hyperparams.edge_attr + "_" + cfg.models.hyperparams.node_attr + node + my_graph # + cluster
-            name = node + my_graph + layer_norm + batch_norm + drop + augment # + cluster
+            name = cfg.models.hyperparams.graph_construction + '_' + cfg.models.hyperparams.edge_attr + "_" + cfg.models.hyperparams.node_attr
+            name = node + my_graph + layer_norm + batch_norm + drop + augment + '_' + name
             name = f'{cfg.data.num_points_eval}' + "_" + name if not cfg.data.use_all_points_eval else name
             name = f'{cfg.data.num_points}' + "_" + name if not cfg.data.use_all_points else name
             name = f'{cfg.training.optim.base_lr}' + "_" + name
@@ -443,7 +443,7 @@ def train_one_epoch(model, cfg, epoch, logger, optimizer, train_loader,\
             if cfg.wandb and log_after:
                 wandb.log({'train bce loss node per epoch': node_loss, "epoch": epoch})
         if 'train accuracy edge' in log_dict.keys():
-            logger.info(f'train accuracy edge per epoch (all / neg / pos): {set(edge_acc.values())}')
+            logger.info(f'train accuracy edge per epoch (all / neg / pos): {edge_acc}')
             if cfg.wandb and log_after:
                 for k, v in edge_acc.items():
                     wandb.log({f'train accuracy {k} edge per epoch': v, "epoch": epoch})
@@ -453,7 +453,7 @@ def train_one_epoch(model, cfg, epoch, logger, optimizer, train_loader,\
                 for k, v in per_class_edge_acc.items():
                     wandb.log({f'train accuracy connected to class {k} edge per epoch': v, "epoch": epoch})
         if 'train accuracy node' in log_dict.keys():
-            logger.info(f'train accuracy node per epoch (all / neg / pos): {set(node_acc.values())}')
+            logger.info(f'train accuracy node per epoch (all / neg / pos): {node_acc}')
             if cfg.wandb and log_after:
                 for k, v in node_acc.items():
                     wandb.log({f'train accuracy {k} node per epoch': v, "epoch": epoch})
@@ -707,7 +707,7 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
                     if cfg.wandb and log_after:
                         wandb.log({'eval bce loss node per epoch': node_loss, "epoch": epoch})
                 if 'eval accuracy edge' in log_dict.keys():
-                    logger.info(f'eval accuracy edge per epoch (all / neg / pos): {set(edge_acc.values())}')
+                    logger.info(f'eval accuracy edge per epoch (all / neg / pos): {edge_acc}')
                     if cfg.wandb and log_after:
                         for k, v in edge_acc.items():
                             wandb.log({f'eval accuracy {k} edge per epoch': v, "epoch": epoch})
@@ -717,7 +717,7 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
                         for k, v in per_class_edge_acc.items():
                             wandb.log({f'eval accuracy class {k} edge per epoch': v, "epoch": epoch})
                 if 'eval accuracy node' in log_dict.keys():
-                    logger.info(f'eval accuracy node per epoch (all / neg / pos): {set(node_acc.values())}')
+                    logger.info(f'eval accuracy node per epoch (all / neg / pos): {node_acc}')
                     if cfg.wandb and log_after:
                         for k, v in node_acc.items():
                             wandb.log({f'eval accuracy {k} node per epoch': v, "epoch": epoch})
@@ -994,6 +994,8 @@ def train(rank, cfg, world_size):
             do_corr_clustering = do_corr_clustering or cfg.just_eval
             # do corr clustering in last epoch always
             # do_corr_clustering = do_corr_clustering or epoch == cfg.training.epochs - 
+            # do corr clustering if oracle node or edge
+            do_corr_clustering = do_corr_clustering or cfg.models.hyperparams.oracle_node or cfg.models.hyperparams.oracle_edge
 
             model, optimizer, criterion, best_metric = eval_one_epoch(
                 model,
