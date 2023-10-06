@@ -28,9 +28,12 @@ class FocalLoss(nn.CrossEntropyLoss):
 def sigmoid_focal_loss(
     inputs: torch.Tensor,
     targets: torch.Tensor,
+    velocity: torch.Tensor = torch.zeros(1),
+    vel_ranges: dict = dict(),
     alpha: float = 0.25,
     gamma: float = 2,
     reduction: str = "none",
+    weight_velocity: bool = False,
 ) -> torch.Tensor:
     """
     Loss used in RetinaNet for dense detection: https://arxiv.org/abs/1708.02002.
@@ -62,10 +65,19 @@ def sigmoid_focal_loss(
     p_t = p * targets + (1 - p) * (1 - targets)
     loss = ce_loss * ((1 - p_t) ** gamma)
 
-    if alpha >= 0:
+    if alpha >= 0 and not weight_velocity:
         alpha_t = alpha * targets + (1 - alpha) * (1 - targets)
         loss = alpha_t * loss
-    
+
+    elif weight_velocity:
+        weight = torch.ones(targets.shape[0])
+        keys = list(vel_ranges.keys())
+        for i in range(len(vel_ranges)-1):
+            weight[torch.logical_and(
+                velocity>vel_ranges[keys[i]],
+                velocity>vel_ranges[keys[i+1]])] = vel_ranges[keys[i]]
+        loss = weight.to(loss.device) * loss
+
     # Check reduction option and return loss accordingly
     if reduction == "none":
         pass
