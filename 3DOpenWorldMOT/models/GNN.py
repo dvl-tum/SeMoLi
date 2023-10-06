@@ -23,6 +23,7 @@ import pickle
 import wandb
 import copy
 import torch.utils.checkpoint as checkpoint
+import torch_cluster
 
 
 rgb_colors = {}
@@ -352,6 +353,7 @@ class ClusterGNN(MessagePassing):
         self.opts.verbose = False
 
         self.rank = rank
+        self.pdist = torch.nn.PairwiseDistance()
 
     def initial_edge_attributes(self, x1, x2, edge_index, timestamps=None, batch=None):
         """
@@ -486,7 +488,7 @@ class ClusterGNN(MessagePassing):
 
         return node_attr, node_dim
     
-    def get_graph(self, node_attr, r=5, max_num_neighbors=16, batch_idx=None, type='radius', metric='euclidean'):
+    def get_graph(self, node_attr, r=5, max_num_neighbors=16, batch_idx=None, type='radius', metric='euclidean', fast=False):
         # my graph
         _idxs_0, _idxs_1 = list(), list()
         for ith, (start, end) in enumerate(zip(batch_idx[:-1], batch_idx[1:])):
@@ -494,27 +496,42 @@ class ClusterGNN(MessagePassing):
             X = node_attr[start:end]
 
             # get distances between nodes
-            if self.graph_construction in ['_T_', '_P_', '_MMMV_', '_PT_']:
-                dist = torch.from_numpy(
-                    sklearn.metrics.pairwise_distances(X.cpu().numpy(), metric=metric)).to(self.rank)
+            if fast:
+                x_shape = X.shape
+                num_neighbors = min(65, x_shape[0])
+                knn_0 = torch_cluster.knn(X[:, 0, :], X[:, 0, :], k=num_neighbors)
+                knn_0 = knn_0.view(2, x_shape[0], -1)[:, :, 1:]
+                idx = knn_0.reshape(2, -1)
+                dist = self.pdist(
+                    X[idx[0], :, :].view(-1, x_shape[2]), X[idx[1], :, :].view(-1, x_shape[2]))
+                dist = dist.view(-1, x_shape[1])
+                dist = dist.mean(dim=1).view(x_shape[0], -1)
             else:
-                dist = torch.zeros(X.shape[0], X.shape[0]).to(self.rank)
-                for t in range(X.shape[1]):
-                    dist += torch.cdist(X[:, t, :].unsqueeze(0),X[:, t, :].unsqueeze(0)).squeeze()
-                dist = dist / X.shape[1]
-
-            # set diagonal elements to 0to have no self-loops
-            dist.fill_diagonal_(100)
+                try:
+                    dist = torch.cdist(X ,X[:, t, :]).mean(dim=1)
+                except:
+                    dist = torch.zeros(X.shape[0], X.shape[0]).to(self.rank)
+                    for t in range(X.shape[1]):
+                        dist += torch.cdist(X[:, t, :].unsqueeze(0),X[:, t, :].unsqueeze(0)).squeeze()
+                    dist = dist / X.shape[1]
 
             # get indices up to max_num_neighbors per node --> knn neighbors
             num_neighbors = min(max_num_neighbors, dist.shape[0])
-            idxs_0 = torch.tile(torch.arange(dist.shape[0]).unsqueeze(1).to(self.rank), (1, num_neighbors)).flatten()
-            idxs_1 = dist.topk(k=num_neighbors, dim=1, largest=False).indices.flatten()
+            if fast:
+                idxs_0 = torch.tile(torch.arange(dist.shape[0]).unsqueeze(1).to(self.rank), (1, num_neighbors)).flatten()
+                _idxs_1 = dist.topk(k=num_neighbors, dim=1, largest=False).indices.flatten()
+                idxs_1 = knn_0[1, idxs_0, _idxs_1]
+            else:
+                # set diagonal elements to 0to have no self-loops
+                dist.fill_diagonal_(100)
+                idxs_0 = torch.tile(torch.arange(dist.shape[0]).unsqueeze(1).to(self.rank), (1, num_neighbors)).flatten()
+                idxs_1 = dist.topk(k=num_neighbors, dim=1, largest=False).indices.flatten()
+                _idxs_1 = idxs_1
 
             # if radius graph, filter nodes that are within radius 
             # but don't exceed max num neighbors
             if type == 'radius':
-                dist = dist[idxs_0, idxs_1]
+                dist = dist[idxs_0, _idxs_1]
                 idx = torch.where(dist<r)[0]
                 idxs_0, idxs_1 = idxs_0[idx], idxs_1[idx]
             

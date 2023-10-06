@@ -629,7 +629,7 @@ def eval_detection(
             print('\tDetection metrics: ', metrics.loc[_filter_class].values)
             metric = metrics.loc[_filter_class].values
 
-        break
+        # break
   
     return metrics, metric, all_results_df
 
