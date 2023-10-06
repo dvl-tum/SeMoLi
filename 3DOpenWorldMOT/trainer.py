@@ -742,6 +742,8 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
                 out = os.path.join(experiment_dir + name,  detector.split)
                 for _rank in os.listdir(experiment_dir + name):
                     rank_path = os.path.join(experiment_dir + name, _rank, detector.split)
+                    if not os.path.isdir(rank_path):
+                        continue
                     for log_id in os.listdir(rank_path):
                         df = feather.read_feather(os.path.join(rank_path, log_id, 'annotations.feather'))
                         write_path = os.path.join(out, log_id, 'annotations.feather')
@@ -766,7 +768,7 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
                 logger.info(f'Evaluating detection performance...')
                 
                 # evaluate detection
-                _, detection_metric = eval_detection.eval_detection(
+                _, detection_metric, _ = eval_detection.eval_detection(
                     gt_folder=os.path.join(os.getcwd(), cfg.data.data_dir),
                     trackers_folder=detector_dir,
                     split='val' if 'evaluation' in cfg.data.detection_set else 'train',

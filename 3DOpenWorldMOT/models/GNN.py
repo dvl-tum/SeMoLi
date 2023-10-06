@@ -441,7 +441,6 @@ class ClusterGNN(MessagePassing):
         num_objects = x1.shape[0]
         traj_dim = x1.shape[1]
         pos_dim = x2.shape[1]
-        print(x1.shape, x2.shape)
         node_dim = 0
         # JUST FOR GRAPH CONST
         if '_MTOT_' in _type:
@@ -673,7 +672,6 @@ class ClusterGNN(MessagePassing):
                 _node_score = self.sigmoid(node_score)
             else:
                 _node_score = None
-
             if self.clustering == 'correlation':
                 multiprocessing = False
                 data_loader = enumerate(zip(batch_idx[:-1], batch_idx[1:]))
@@ -693,7 +691,6 @@ class ClusterGNN(MessagePassing):
             else:
                 print('Invalid clustering choice')
                 quit()
-
             return [score, node_score], all_clusters, edge_index, None
         elif eval:
             return [score, node_score], [[]*len(batch_idx[:-1])], edge_index, None
@@ -719,7 +716,6 @@ class ClusterGNN(MessagePassing):
             graph_edge_score[data['point_instances'][src] != data['point_instances'][dst]] = 0
             graph_edge_score[data['point_instances'][src] <= 0] = 0
             graph_edge_score[data['point_instances'][dst] <= 0] = 0
-
             score[edge_mask] = graph_edge_score
             score[score == 0] = -10
             score[score == 1] = 10
@@ -915,8 +911,7 @@ class GNNLoss(nn.Module):
         self.ignore_edges_between_background = ignore_edges_between_background
         self.classification_is_moving_node = classification_is_moving_node
         self.classification_is_moving_edge = classification_is_moving_edge
-        print(self.classification_is_moving_edge) 
-        assert self.classification_is_moving_node != self.ignore_stat_nodes, "Can only either ignore static objects or classify as moving object or not a moving object"
+        assert ~self.classification_is_moving_node or (self.classification_is_moving_node != self.ignore_stat_nodes), "Can only either ignore static objects or classify as moving object or not a moving object"
         assert ~self.classification_is_moving_edge or (self.classification_is_moving_edge != self.ignore_edges_between_background), "Can not ignore background when classifying moving vs static edges"
         assert ~self.classification_is_moving_edge or (self.classification_is_moving_edge != self.ignore_stat_edges), "Can not ignore static edges when classifying moving vs static edges"
         
@@ -957,13 +952,16 @@ class GNNLoss(nn.Module):
             # --> instance 0 is no object
             point_instances[data.point_instances[edge_index[0, :]] == 0] = False
             point_instances = point_instances.to(self.rank)
-
+            # print('is there something?!', torch.where(point_instances))
+            # print(data.point_instances_mov[edge_index[0, :]].shape)
+            print(torch.where(data.point_instances_mov)[0].shape)
+            # quit()
             # if using moving vs non-moving / background as training objective
-            if (self.classification_is_moving_edge and mode == 'train') or (self.use_node_score and mode != 'train'):
+            if (self.classification_is_moving_edge and mode == 'train'):
                 point_instances[torch.logical_and(
                     ~(data.point_instances_mov[edge_index[0, :]] != 0), 
                     data.point_instances[edge_index[0, :]] != 0)] = False
-            
+            # print('is there something 2?!', torch.where(point_instances)) 
             point_mask = torch.zeros(point_instances.shape[0], dtype=bool).to(self.rank)
             # if ignoring predictions for static edges in loss, get static edge filter
             if self.ignore_stat_edges:
@@ -976,7 +974,7 @@ class GNNLoss(nn.Module):
                             ~(data.point_instances_mov[edge_index[1, :]] != 0), 
                             data.point_instances[edge_index[1, :]] != 0)),
                     point_mask)
-
+            # print('is there something3?!', torch.where(point_instances[~point_mask]))
             if self.ignore_edges_between_background:
                 # setting edges that do not belong to object to zero
                 # --> instance 0 is no object
@@ -1005,7 +1003,7 @@ class GNNLoss(nn.Module):
                         all_prediction._values()[~idx_mask],
                         all_prediction.size())
             '''
-
+            # print('is there something4?!', torch.where(point_instances[~point_mask]))
             # filter edge logits, point instances and point categories
             edge_logits = edge_logits[~point_mask]
             point_instances = point_instances[~point_mask].float()
@@ -1051,7 +1049,7 @@ class GNNLoss(nn.Module):
             logits_rounded[logits_rounded>0.5] = 1
             logits_rounded[logits_rounded<=0.5] = 0
             correct = logits_rounded == point_instances.squeeze()
-            
+            # print(torch.where(correct), torch.where(point_instances), torch.where(logits_rounded))    
             # overall
             if correct.shape[0]:
                 log_dict[f'{mode} accuracy edge'] = torch.zeros(6).to(self.rank) 
