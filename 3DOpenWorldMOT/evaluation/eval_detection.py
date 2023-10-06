@@ -553,9 +553,6 @@ def eval_detection(
     dts_orig = dts
     for affinity, tp_thresh, threshs, n_jobs in zip(
         ['CENTER', 'IoU3D'], [2.0, 0.6], [(0.5, 1.0, 2.0, 4.0), (0.2, 0.4, 0.6, 0.8)], [8, 1]):
-        
-        if affinity == 'CENTER':
-            continue
 
         # Evaluate instances.
         # Defaults to competition parameters.
@@ -651,14 +648,14 @@ if __name__ == '__main__':
     orig_split = 'train' if detections != 'evaluation' else 'val'
     for t in os.listdir(f'tracks/tracks_for_eval/initial_dets'): #class_dict.keys():
         print(t)
-        tracker_dir = f'tracks/tracks_for_eval/tracked_dets/{t}/train'
+        tracker_dir = f'/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/m59iURZnSJmGWVJ5lmqE1Q/3DOpenWorldMOT/3DOpenWorldMOT/out/detections_val_gnn/INITIAL_DETS_OLD_MODEL_ORACLE_0.1_0.1_all_egocomp_margin0.6_width25_oraclenode_oracleedge_64_64_64_64_0.5_3.5_0.5_4_3.162277660168379e-06_0.0031622776601683794_16000_16000__NS_MG_32_2.0_LN___P___MMMDPTT___MMMV_/val_gnn'
         print(tracker_dir)
         # seq = '16473613811052081539'
         # seq_list = [seq]
         seq_list = os.listdir(tracker_dir)
         min_points = m
         max_points = m+5 if m <= 25 and m != -1 else 1000000
-        _, detection_metric = eval_detection(
+        _, detection_metric, _ = eval_detection(
             gt_folder=gt_folder,
             trackers_folder=tracker_dir,
             split=orig_split,

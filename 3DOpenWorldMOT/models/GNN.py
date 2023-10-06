@@ -255,7 +255,9 @@ class ClusterGNN(MessagePassing):
             augment=False,
             rank=0,
             gradient_checkpointing=False, 
-            remove_non_move_thresh=1.0):
+            remove_non_move_thresh=1.0,
+            classification_is_moving_edge=False,
+            classification_is_moving_node=False):
         super().__init__(aggr='mean')
         self.k = k
         self.k_eval = k_eval
@@ -346,6 +348,8 @@ class ClusterGNN(MessagePassing):
         self.dataset = dataset
         self.remove_non_move_thresh = remove_non_move_thresh
         self.gradient_checkpointing = gradient_checkpointing
+        self.classification_is_moving_node = classification_is_moving_node
+        self.classification_is_moving_edge = classification_is_moving_edge
 
         self.opts = rama_py.multicut_solver_options("PD")
         self.opts.sanitize_graph = True
@@ -709,7 +713,9 @@ class ClusterGNN(MessagePassing):
             graph_edge_score[data['point_instances'][src] == data['point_instances'][dst]] = 1
             graph_edge_score[data['point_instances'][src] != data['point_instances'][dst]] = 0
             graph_edge_score[data['point_instances'][src] <= 0] = 0
-            graph_edge_score[data['point_instances'][dst] <= 0] = 0
+            if self.classification_is_moving_edge:
+                graph_edge_score[~data['point_instances_mov'][src]] = 0
+            
             score[edge_mask] = graph_edge_score
             score[score == 0] = -10
             score[score == 1] = 10
@@ -717,6 +723,8 @@ class ClusterGNN(MessagePassing):
         if self.oracle_node and self.use_node_score:
             graph_node_score[data['point_categories'][start:end]>0] = 1
             graph_node_score[data['point_categories'][start:end]<=0] = 0
+            if self.classification_is_moving_node:
+                graph_node_score[~data['point_instances_mov'][start:end]] = 0
 
             node_score[start:end] = graph_node_score
             node_score[node_score == 0] = -10
@@ -755,8 +763,8 @@ class ClusterGNN(MessagePassing):
                 self.opts)
             mapped_clusters = torch.tensor(rama_out[0]).to(self.rank).int()
         except:
+            print('Could not resolve rama...')
             mapped_clusters = torch.arange(edges.shape[0]).to(self.rank).int()
-
         # map back 
         _edge_index[0, :] = edges[_edge_index[0, :]]
         _edge_index[1, :] = edges[_edge_index[1, :]]
@@ -764,12 +772,6 @@ class ClusterGNN(MessagePassing):
         clusters = clusters.int().to(self.rank)
         clusters[edges] = mapped_clusters
         clusters = clusters.cpu().numpy().tolist()
-
-        # filter out nodes thatare classified as non-objects
-        '''if self.use_node_score > 0:
-            clusters = torch.tensor(clusters)
-            clusters[(graph_node_score.cpu() < self.use_node_score).squeeze()] = -1
-            clusters = clusters.numpy()'''
 
         _clusters = defaultdict(list)
         for iter, c in enumerate(clusters):
@@ -823,12 +825,6 @@ class ClusterGNN(MessagePassing):
         G.add_edges_from(edge_indices.T.cpu().numpy())
 
         colors = [(0.999, 0.999, 0.999)] * nodes.shape[0]
-        '''
-        for i, (c, node_list) in enumerate(clusters.items()):
-            for node in node_list:
-                colors[node] = rgb_colors[i]
-            col_dict[c] = rgb_colors[i]
-        '''
 
         # save graph
         labels = {n.item(): str(n.item()) for n in nodes}
@@ -946,18 +942,16 @@ class GNNLoss(nn.Module):
             # --> instance 0 is no object
             point_instances[data.point_instances[edge_index[0, :]] == 0] = False
             point_instances = point_instances.to(self.rank)
-            # print('is there something?!', torch.where(point_instances))
-            # print(data.point_instances_mov[edge_index[0, :]].shape)
-            print(torch.where(data.point_instances_mov)[0].shape)
-            # quit()
+
             # if using moving vs non-moving / background as training objective
-            if (self.classification_is_moving_edge and mode == 'train'):
+            if self.classification_is_moving_edge:
                 point_instances[torch.logical_and(
                     ~(data.point_instances_mov[edge_index[0, :]] != 0), 
                     data.point_instances[edge_index[0, :]] != 0)] = False
-            # print('is there something 2?!', torch.where(point_instances)) 
+                
+            # if ignoring edges between static object or edges between background during training 
+            # --> requires any kind of node classification!!
             point_mask = torch.zeros(point_instances.shape[0], dtype=bool).to(self.rank)
-            # if ignoring predictions for static edges in loss, get static edge filter
             if self.ignore_stat_edges:
                 point_mask = torch.logical_or(
                     torch.logical_and(
@@ -968,36 +962,14 @@ class GNNLoss(nn.Module):
                             ~(data.point_instances_mov[edge_index[1, :]] != 0), 
                             data.point_instances[edge_index[1, :]] != 0)),
                     point_mask)
-            # print('is there something3?!', torch.where(point_instances[~point_mask]))
+
             if self.ignore_edges_between_background:
-                # setting edges that do not belong to object to zero
-                # --> instance 0 is no object
                 point_mask = torch.logical_or(
                     torch.logical_and(
                         data.point_instances[edge_index[0, :]] == 0,
                         data.point_instances[edge_index[1, :]] == 0),
                     point_mask)
             
-            '''
-            if self.use_node_score and self.node_loss and mode != 'train':
-                logits_rounded_node = self.sigmoid(node_logits.clone().detach()).squeeze()
-                point_mask = torch.logical_or(
-                    torch.logical_or(
-                        logits_rounded_node[edge_index[0, :]] < self.use_node_score,
-                        logits_rounded_node[edge_index[1, :]] < self.use_node_score),
-                    point_mask)
-                
-                # filter edges that would be filtered out by node score
-                sparse_idx = all_prediction._indices()
-                idx_mask = torch.logical_or(
-                        logits_rounded_node[sparse_idx[0, :]] < self.use_node_score,
-                        logits_rounded_node[sparse_idx[1, :]] < self.use_node_score)
-                all_prediction = torch.sparse_coo_tensor(
-                        sparse_idx[:, ~idx_mask],
-                        all_prediction._values()[~idx_mask],
-                        all_prediction.size())
-            '''
-            # print('is there something4?!', torch.where(point_instances[~point_mask]))
             # filter edge logits, point instances and point categories
             edge_logits = edge_logits[~point_mask]
             point_instances = point_instances[~point_mask].float()
@@ -1043,7 +1015,7 @@ class GNNLoss(nn.Module):
             logits_rounded[logits_rounded>0.5] = 1
             logits_rounded[logits_rounded<=0.5] = 0
             correct = logits_rounded == point_instances.squeeze()
-            # print(torch.where(correct), torch.where(point_instances), torch.where(logits_rounded))    
+
             # overall
             if correct.shape[0]:
                 log_dict[f'{mode} accuracy edge'] = torch.zeros(6).to(self.rank) 
