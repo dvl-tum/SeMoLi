@@ -254,7 +254,8 @@ class ClusterGNN(MessagePassing):
             drop_out=False,
             augment=False,
             rank=0,
-            gradient_checkpointing=False):
+            gradient_checkpointing=False, 
+            remove_non_move_thresh=1.0):
         super().__init__(aggr='mean')
         self.k = k
         self.k_eval = k_eval
@@ -343,6 +344,7 @@ class ClusterGNN(MessagePassing):
         self.ignore_stat_nodes = ignore_stat_nodes
         self.filter_edges = filter_edges
         self.dataset = dataset
+        self.remove_non_move_thresh = remove_non_move_thresh
         self.gradient_checkpointing = gradient_checkpointing
 
         self.opts = rama_py.multicut_solver_options("PD")
@@ -554,11 +556,39 @@ class ClusterGNN(MessagePassing):
         edge_index = torch.vstack([_idxs_0, _idxs_1])
 
         return edge_index
+    
+    def velocity_augment(self, data):
+        for instance in data['point_instances'].unique():
+            if instance == 0:
+                continue
+
+            # should we augment and if yes which scale
+            do_augment = torch.randint(2, (1,))
+            scale = torch.rand(1)*10
+            if not do_augment:
+                continue
+
+            # augment and adapt moving mask
+            instance_mask = data['point_instances'] == instance
+            data['traj'][instance_mask] = data['traj'][instance_mask] * scale.to(data['traj'].device)
+            dist = torch.linalg.norm(data['traj'][instance_mask][:, 1, :-1].mean(dim=0))
+            if not 'waymo' in self.dataset:
+                diff_time = (
+                    data['timestamps'][0, 1]-data['timestamps'][0, 0]) / np.power(10, 9)
+            else:
+                diff_time = (
+                    data['timestamps'][0, 1]-data['timestamps'][0, 0]) / np.power(10, 6)
+            vel = dist/diff_time
+            data['point_instances_mov'][instance_mask] = vel > self.remove_non_move_thresh
 
     def forward(self, data, eval=False, use_edge_att=True, name='General', corr_clustering=False):
         '''
         clustering: 'heuristic' / 'correlation'
         '''
+        # cchange velovity of objects
+        if not eval and self.augment:
+            self.velocity_augment(data)
+
         data = data.to(self.rank)
         batch_idx = data._slice_dict['pc_list']
         traj = data['traj']
@@ -595,42 +625,6 @@ class ClusterGNN(MessagePassing):
                     edge_index = radius_graph(graph_attr, self.r, data['batch'], max_num_neighbors=k)
         else:
             edge_index = data['edge_index']
-        
-        # add negative edges to edge_index
-        if not eval and self.augment:
-            point_instances = data.point_instances.unsqueeze(
-                0) == data.point_instances.unsqueeze(0).T
-            same_graph = data['batch'].unsqueeze(0) == data['batch'].unsqueeze(0).T
-            point_instances = torch.logical_and(point_instances, same_graph)
-            # setting edges that do not belong to object to zero
-            point_instances[data.point_instances == 0, :] = False
-            point_instances[:, data.point_instances == 0] = False
-            num_pos = edge_index[:, point_instances[
-                edge_index[0, :], edge_index[1, :]]].shape[1]
-            num_neg = edge_index.shape[1] - num_pos
-
-            # fast version
-            missing_neg = int((num_pos - num_neg))
-            a, b = list(), list()
-            if missing_neg > 0 and point_instances.shape[0]:
-                for _ in range(max(math.ceil(missing_neg/point_instances.shape[0])*2, 1)):
-                    a.append(torch.randperm(point_instances.shape[0]))
-                    b.append(torch.randperm(point_instances.shape[0]))
-                a = torch.cat(a).to(self.rank)
-                b = torch.cat(b).to(self.rank)
-                a, b = a[~point_instances[a, b]], b[~point_instances[a, b]]
-                a, b = a[:missing_neg], b[:missing_neg]
-            elif point_instances.shape[0]:
-                missing_pos = -missing_neg
-                for _ in range(max(math.ceil(missing_pos/point_instances.shape[0])*2, 1)):
-                    a.append(torch.randperm(point_instances.shape[0]))
-                    b.append(torch.randperm(point_instances.shape[0]))
-                a = torch.cat(a).to(self.rank)
-                b = torch.cat(b).to(self.rank)
-                a, b = a[point_instances[a, b]], b[point_instances[a, b]]
-                a, b = a[:missing_pos], b[:missing_pos]
-            add_idxs = torch.stack([a, b]).to(self.rank)
-            edge_index = torch.cat([edge_index.T, add_idxs.T]).T
 
         if edge_index.shape[1] == 0:
             print("EEEMPTY")

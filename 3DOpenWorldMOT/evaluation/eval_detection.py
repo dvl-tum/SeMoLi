@@ -473,7 +473,7 @@ def eval_detection(
         filter_moving=True):
 
     if not len(seq_to_eval):
-        return None, np.array([0, 2, 1, 3.142, 0])
+        return None, np.array([0, 2, 1, 3.142, 0]), None
 
     is_waymo = 'waymo' in gt_folder or 'Waymo' in gt_folder
     gt_folder = os.path.join(gt_folder, split)
@@ -521,7 +521,7 @@ def eval_detection(
         print("Loaded detections...")
 
     if dts is None:
-            return None, np.array([0, 2, 1, 3.142, 0])
+            return None, np.array([0, 2, 1, 3.142, 0]), None
 
     if use_matched_category:
         filter_class = -1
