@@ -519,19 +519,19 @@ class ClusterGNN(MessagePassing):
             num_neighbors = min(max_num_neighbors, dist.shape[0])
             if fast:
                 idxs_0 = torch.tile(torch.arange(dist.shape[0]).unsqueeze(1).to(self.rank), (1, num_neighbors)).flatten()
-                _idxs_1 = dist.topk(k=num_neighbors, dim=1, largest=False).indices.flatten()
-                idxs_1 = knn_0[1, idxs_0, _idxs_1]
+                idxs_1_for_rad = dist.topk(k=num_neighbors, dim=1, largest=False).indices.flatten()
+                idxs_1 = knn_0[1, idxs_0, idxs_1_for_rad]
             else:
                 # set diagonal elements to 0to have no self-loops
                 dist.fill_diagonal_(100)
                 idxs_0 = torch.tile(torch.arange(dist.shape[0]).unsqueeze(1).to(self.rank), (1, num_neighbors)).flatten()
                 idxs_1 = dist.topk(k=num_neighbors, dim=1, largest=False).indices.flatten()
-                _idxs_1 = idxs_1
+                idxs_1_for_rad = idxs_1
 
             # if radius graph, filter nodes that are within radius 
             # but don't exceed max num neighbors
             if type == 'radius':
-                dist = dist[idxs_0, _idxs_1]
+                dist = dist[idxs_0, idxs_1_for_rad]
                 idx = torch.where(dist<r)[0]
                 idxs_0, idxs_1 = idxs_0[idx], idxs_1[idx]
             

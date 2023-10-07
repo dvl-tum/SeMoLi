@@ -15,6 +15,7 @@ import torch.distributed as dist
 from torch.utils.data import DataLoader
 from evaluation import eval_detection
 import shutil
+from data_utils.splits import get_seq_list_fixed_val
 
 
 logger = logging.getLogger("Model")
@@ -206,12 +207,17 @@ def _main(cfg, results_df):
               cfg.tracker_options.filter_by_width,
               cfg.tracker_options.fixed_time]
     
+    seq_list = get_seq_list_fixed_val(
+        cfg.data.data_dir,
+        detection_set=cfg.data.detection_set,
+        percentage=cfg.data.percentage_data_val)
+
     if cfg.tracker_options.convert_initial:
         logger.info('Evaluating initial bounding boxes...')
         all_results_df = InitialDetProcessor.eval(
             cfg,
             os.path.join(cfg.tracker_options.out_path_for_eval, cfg.tracker_options.initial_dets, cfg.tracker_options.split),
-            os.listdir(os.path.join(cfg.tracker_options.out_path_for_eval, cfg.tracker_options.initial_dets, cfg.tracker_options.split)),
+            seq_list,
             'Initial')
         results_df.loc[len(results_df.index)] = ['initial'] + params + all_results_df.loc['TYPE_VECHICLE'].values.tolist()
 
@@ -220,7 +226,7 @@ def _main(cfg, results_df):
         all_results_df = InitialDetProcessor.eval(
             cfg,
             os.path.join(cfg.tracker_options.out_path_for_eval, cfg.tracker_options.collapsed_dets, cfg.tracker_options.split),
-            os.listdir(os.path.join(cfg.tracker_options.out_path_for_eval, cfg.tracker_options.collapsed_dets, cfg.tracker_options.split)),
+            seq_list,
             'Collapsed')
         results_df.loc[len(results_df.index)] = ['collapsed'] + params + all_results_df.loc['TYPE_VECHICLE'].values.tolist()
 
@@ -229,7 +235,7 @@ def _main(cfg, results_df):
         all_results_df = InitialDetProcessor.eval(
             cfg,
             os.path.join(cfg.tracker_options.out_path_for_eval, cfg.tracker_options.tracked_dets, cfg.tracker_options.split),
-            os.listdir(os.path.join(cfg.tracker_options.out_path_for_eval, cfg.tracker_options.tracked_dets, cfg.tracker_options.split)),
+            seq_list,
             'Tracked')
         results_df.loc[len(results_df.index)] = ['tracked'] + params + all_results_df.loc['TYPE_VECHICLE'].values.tolist()
 
@@ -238,7 +244,7 @@ def _main(cfg, results_df):
         all_results_df = InitialDetProcessor.eval(
             cfg,
             os.path.join(cfg.tracker_options.out_path_for_eval, cfg.tracker_options.registered_dets, cfg.tracker_options.split), 
-            os.listdir(os.path.join(cfg.tracker_options.out_path_for_eval, cfg.tracker_options.registered_dets, cfg.tracker_options.split)),
+            seq_list,
             'Registered')
         results_df.loc[len(results_df.index)] = ['registered'] + params + all_results_df.loc['TYPE_VECHICLE'].values.tolist()
         
