@@ -112,9 +112,11 @@ def get_feather_files(
         
         if 'Waymo' in paths:
             path_filtered = os.path.join('/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/Waymo_Converted_filtered', file)
+            # path_filtered = os.path.join('/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/Waymo_Converted_filtered', file)
         else:
             path_filtered = os.path.join('/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/Argoverse2_filtered', file)
-    
+            # path_filtered = os.path.join('/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/Argoverse2_filtered', file)
+
     if not is_gt or not os.path.isfile(path_filtered):
         df = None
         for i, path in enumerate(os.listdir(paths)):
@@ -346,6 +348,7 @@ def filter_seq(data, width=25):
 def visualize_whole(df, gf, name, base_dir='../../../'):
     split_dir = Path('/dvlresearch/jenny/Waymo_Converted_GT/val')
     split_dir = Path('/workspace/Waymo_Converted_val/val')
+    # split_dir = Path('/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/download_for_vis/Waymo_Converted_train/Waymo_Converted/train')
     loader = AV2SensorDataLoader(data_dir=split_dir, labels_dir=split_dir)
     for seq in df['log_id'].unique():
 
