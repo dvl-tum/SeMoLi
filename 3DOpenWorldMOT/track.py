@@ -137,7 +137,6 @@ class InitialDetProcessor():
                     filter_class=-2,
                     only_matched_gt=False,
                     filter_moving_first=False,
-                    filter_moving=True,
                     use_matched_category=False,
                     debug=cfg.data.debug,
                     name=name)

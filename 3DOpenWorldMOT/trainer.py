@@ -1,3 +1,4 @@
+from data_utils.splits import get_seq_list_fixed_val
 from datetime import timedelta
 import os
 import hydra
@@ -265,7 +266,7 @@ def main(cfg):
             in_args = (cfg, world_size)
             mp.spawn(train, args=in_args, nprocs=world_size, join=True)
         elif torch.cuda.is_available():
-            train(0, cfg, world_size=1)
+            train(1, cfg, world_size=1)
         else:
             train('cpu', cfg, world_size=1)
 
@@ -761,7 +762,11 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
                 # get sequence list for evaluation
                 detector_dir = os.path.join(experiment_dir + name, detector.split)
                 try:
-                    seq_list = os.listdir(detector_dir)
+                    # seq_list = os.listdir(detector_dir)
+                    seq_list = get_seq_list_fixed_val(
+                            cfg.data.data_dir,
+                            detection_set=cfg.data.detection_set,
+                            percentage=cfg.data.percentage_data_val) 
                 except:
                     seq_list = list()
 
@@ -781,7 +786,7 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
                     remove_non_move=cfg.data.remove_static_gt,
                     remove_non_move_strategy=cfg.data.remove_static_strategy,
                     remove_non_move_thresh=cfg.data.remove_static_thresh,
-                    filter_class=-1,
+                    filter_class=-2,
                     only_matched_gt=False,
                     filter_moving_first=False,
                     use_matched_category=False,
