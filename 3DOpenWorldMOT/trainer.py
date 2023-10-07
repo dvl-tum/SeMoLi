@@ -88,7 +88,10 @@ def load_model(cfg, checkpoints_dir, logger, rank=0):
         if cfg.models.model_name != 'SimpleGraph':
             node = '_NS' if cfg.models.hyperparams.use_node_score else ''
             # cluster = '_' + cfg.models.hyperparams.clustering
-            my_graph = f"_MG_{cfg.models.hyperparams.k}_{cfg.models.hyperparams.r}" if cfg.models.hyperparams.my_graph else f'_TG_{cfg.models.hyperparams.k}_{cfg.models.hyperparams.r}'
+            if cfg.models.hyperparams.graph == 'radius':
+                my_graph = f"_MG_{cfg.models.hyperparams.k}_{cfg.models.hyperparams.r}" if cfg.models.hyperparams.my_graph else f'_TG_{cfg.models.hyperparams.k}_{cfg.models.hyperparams.r}'
+            else:
+                my_graph = f"_MG_{cfg.models.hyperparams.k}" if cfg.models.hyperparams.my_graph else f'_TG_{cfg.models.hyperparams.k}'
             layer_norm = "_LN_" if cfg.models.hyperparams.layer_norm else ""
             batch_norm = "_BN_" if cfg.models.hyperparams.batch_norm else ""
             drop = "_DR_" if cfg.models.hyperparams.drop_out else ""
