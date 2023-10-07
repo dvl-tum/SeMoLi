@@ -472,7 +472,7 @@ def eval_detection(
         use_matched_category=False,
         filter_moving=True):
 
-    if not len(seq_to_eval):
+    if not len(os.listdir(tracker_folder)):
         return None, np.array([0, 2, 1, 3.142, 0]), None
 
     is_waymo = 'waymo' in gt_folder or 'Waymo' in gt_folder
