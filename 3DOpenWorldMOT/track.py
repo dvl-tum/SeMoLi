@@ -148,30 +148,30 @@ def main(cfg):
     cfg.tracker_options.collapsed_dets = f'{cfg.tracker_options.collapsed_dets}/{cfg.tracker_options.model}' 
     cfg.tracker_options.tracked_dets = f'{cfg.tracker_options.tracked_dets}/{cfg.tracker_options.model}'
     cfg.tracker_options.registered_dets = f'{cfg.tracker_options.registered_dets}/{cfg.tracker_options.model}'
-    threshs = [0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
-    lens = [2, 4, 6, 8, 10]
-    max_times = [-1, 1, 3, 5, 9, 11, 13, 15, 17, 19, 21, 23]
-    cfg.tracker_options.convert_initial = True
-    for m in max_times:
-        for l in lens:
-            for t in threshs:
-                cfg.tracker_options.a_threshold = t
-                cfg.tracker_options.i_threshold = t
-                cfg.tracker_options.len_thresh = l
-                cfg.tracker_options.max_time_track = m
-                print(f"\n \n{m} {l} {t} \n")
-                results_df = _main(cfg, max_time=m, results_df=results_df)
-                cfg.tracker_options.convert_initial = False
-                if os.path.isdir(os.path.join(
-                    cfg.tracker_options.track_data_path,
-                    cfg.tracker_options.tracked_dets)):
-                    shutil.rmtree(os.path.join(
-                        cfg.tracker_options.track_data_path,
-                        cfg.tracker_options.tracked_dets))
+    # threshs = [0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+    # lens = [2, 4, 6, 8, 10]
+    # max_times = [-1, 1, 3, 5, 9, 11, 13, 15, 17, 19, 21, 23]
+    # cfg.tracker_options.convert_initial = True
+    # for m in max_times:
+    #     for l in lens:
+    #         for t in threshs:
+    cfg.tracker_options.a_threshold = t
+    cfg.tracker_options.i_threshold = t
+    cfg.tracker_options.len_thresh = l
+    cfg.tracker_options.max_time_track = m
+    print(f"\n \n{m} {l} {t} \n")
+    results_df = _main(cfg, max_time=m, results_df=results_df)
+    # cfg.tracker_options.convert_initial = False
+    if os.path.isdir(os.path.join(
+        cfg.tracker_options.track_data_path,
+        cfg.tracker_options.tracked_dets)):
+        shutil.rmtree(os.path.join(
+            cfg.tracker_options.track_data_path,
+            cfg.tracker_options.tracked_dets))
 
     print('\n\n\n')
     print(results_df)
-    results_df.to_csv('/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/track_reg_results.csv')
+    # results_df.to_csv('/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/track_reg_results.csv')
 
 def _main(cfg, max_time, results_df):
     cfg.tracker_options.max_time_track = max_time
