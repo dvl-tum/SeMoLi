@@ -31,7 +31,7 @@ class InitialDetProcessor():
                  every_x_frame, overlap, av2_loader, rank, track_data_path, initial_dets_path, 
                  collapsed_dets_path, tracked_dets_path, registered_dets_path, gt_path, split,
                  detection_set, percentage, a_threshold, i_threshold, len_thresh, outlier_threshold,
-                 outlier_kNN, max_time_track, filter_by_width):
+                 outlier_kNN, max_time_track, filter_by_width, fixed_time):
         self.every_x_frame = every_x_frame
         self.overlap = overlap
         self.av2_loader = av2_loader
@@ -56,6 +56,7 @@ class InitialDetProcessor():
         self.outlier_kNN = outlier_kNN
         self.max_time_track = max_time_track
         self.filter_by_width = filter_by_width
+        self.fixed_time = fixed_time
 
     def track(self, log_id, split, detections=None):
         tracker = self._tracker(
@@ -69,7 +70,8 @@ class InitialDetProcessor():
             self.i_threshold,
             self.len_thresh,
             self.max_time_track,
-            self.filter_by_width)
+            self.filter_by_width,
+            self.fixed_time)
 
         # detections = self.dataset(self.collapsed_dets_path, self.gt_path, log_id, self.split).dets
         if detections is None:
@@ -284,7 +286,8 @@ def track(rank, cfg, world_size):
             outlier_threshold=cfg.tracker_options.outlier_threshold,
             outlier_kNN=cfg.tracker_options.outlier_kNN,
             max_time_track=cfg.tracker_options.max_time_track,
-            filter_by_width=cfg.tracker_options.filter_by_width)
+            filter_by_width=cfg.tracker_options.filter_by_width,
+            fixed_time=cfg.tracker_options.fixed_time)
         detections = None
         tracks = None
         if cfg.tracker_options.convert_initial:

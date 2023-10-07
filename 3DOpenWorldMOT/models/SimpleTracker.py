@@ -12,7 +12,7 @@ import matplotlib
 
 
 class SimpleTracker():
-    def __init__(self, every_x_frame, overlap, av2_loader, log_id, rank, logger, a_threshold=0.8, i_threshold=0.8, len_thresh=5, max_time=5, filter_by_width=False):
+    def __init__(self, every_x_frame, overlap, av2_loader, log_id, rank, logger, a_threshold=0.8, i_threshold=0.8, len_thresh=5, max_time=5, filter_by_width=False, inact_patience=5, fixed_time=False):
         self.active_tracks = list()
         self.inactive_tracks = list()
         # self.every_x_frame = every_x_frame
@@ -31,7 +31,9 @@ class SimpleTracker():
         self.logger = logger
         self.len_thresh = len_thresh
         self.max_time = max_time
+        self.inact_patience = inact_patience
         self.filter_by_width = filter_by_width
+        self.fixed_time = fixed_time
     
     def associate(self, detections):
         # per timestampdetections
@@ -335,12 +337,15 @@ class SimpleTracker():
                     time_dist = t1 - t0
                     # < cos for example if len_traj = 2, inactive_count=1, overlap=1
                     # then <= will be true but should not cos index starts at 0 not 1
-                    if self.max_time != -1:
-                        max_time = self.max_time 
+                    if self.inact_patience != -1:
+                        inact_patience = self.inact_patience
                     else:
-                        max_time = t.detections[-1].length-1
+                        inact_patience = t.detections[-1].length-1
+                    
+                    if self.fixed_time:
+                        inact_patience -= self.max_time
                         
-                    if time_dist < max_time:
+                    if time_dist < inact_patience:
                         trajs.extend([
                             t._get_whole_traj_and_convert_time(timestamp, self.av2_loader, max_time=self.max_time)])
                         cano_points.extend([
