@@ -31,7 +31,7 @@ class InitialDetProcessor():
                  every_x_frame, overlap, av2_loader, rank, track_data_path, initial_dets_path, 
                  collapsed_dets_path, tracked_dets_path, registered_dets_path, gt_path, split,
                  detection_set, percentage, a_threshold, i_threshold, len_thresh, outlier_threshold,
-                 outlier_kNN, max_time_track, filter_by_width):
+                 outlier_kNN, max_time_track, filter_by_width, fixed_time, l_change_thresh, w_change_thresh):
         self.every_x_frame = every_x_frame
         self.overlap = overlap
         self.av2_loader = av2_loader
@@ -56,6 +56,9 @@ class InitialDetProcessor():
         self.outlier_kNN = outlier_kNN
         self.max_time_track = max_time_track
         self.filter_by_width = filter_by_width
+        self.fixed_time = fixed_time
+        self.l_change_thresh = l_change_thresh
+        self.w_change_thresh = w_change_thresh
 
     def track(self, log_id, split, detections=None):
         tracker = self._tracker(
@@ -69,7 +72,10 @@ class InitialDetProcessor():
             self.i_threshold,
             self.len_thresh,
             self.max_time_track,
-            self.filter_by_width)
+            self.filter_by_width,
+            self.fixed_time,
+            self.l_change_thresh,
+            self.w_change_thresh)
 
         # detections = self.dataset(self.collapsed_dets_path, self.gt_path, log_id, self.split).dets
         if detections is None:
@@ -103,7 +109,7 @@ class InitialDetProcessor():
                 # filter by width
                 detections_new_time = list()
                 for d in dets:
-                    if d.lwh[1] < 5:
+                    if d.lwh[1] < self.filter_by_width:
                         detections_new_time.append(d)
                 if len(detections_new_time):
                     detections_new[timestamp] = detections_new_time
@@ -143,38 +149,50 @@ class InitialDetProcessor():
 @hydra.main(config_path="conf", config_name="conf")   
 def main(cfg):
     import pandas as pd
-    results_df = pd.DataFrame(columns=['dets', 'thresh', 'len', 'max time', 'pr 0.2', 'pr 0.4', 'pr 0.6', 'pr 0.8', 'map 0.2', 'map 0.4', 'map 0.6', 'map 0.8', 'tps 0.2', 'tps 0.4', 'tps 0.6', 'tps 0.8', 'fps 0.2', 'fps 0.4', 'fps 0.6', 'fps 0.8', 'fns 0.2', 'fns 0.4', 'fns 0.6', 'fns 0.8', 'num gt'])
+    results_df = pd.DataFrame(columns=[
+        'dets',
+        'thresh',
+        'len',
+        'max time',
+        'inact patience',
+        'filter by width',
+        'fixed time',
+        'pr 0.2', 'pr 0.4', 'pr 0.6', 'pr 0.8',
+        'map 0.2', 'map 0.4', 'map 0.6', 'map 0.8',
+        'tps 0.2', 'tps 0.4', 'tps 0.6', 'tps 0.8',
+        'fps 0.2', 'fps 0.4', 'fps 0.6', 'fps 0.8',
+        'fns 0.2', 'fns 0.4', 'fns 0.6', 'fns 0.8',
+        'num gt'])
     cfg.tracker_options.initial_dets = f'{cfg.tracker_options.initial_dets}/{cfg.tracker_options.model}'
     cfg.tracker_options.collapsed_dets = f'{cfg.tracker_options.collapsed_dets}/{cfg.tracker_options.model}' 
     cfg.tracker_options.tracked_dets = f'{cfg.tracker_options.tracked_dets}/{cfg.tracker_options.model}'
     cfg.tracker_options.registered_dets = f'{cfg.tracker_options.registered_dets}/{cfg.tracker_options.model}'
-    threshs = [0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
-    lens = [2, 4, 6, 8, 10]
-    max_times = [-1, 1, 3, 5, 9, 11, 13, 15, 17, 19, 21, 23]
-    cfg.tracker_options.convert_initial = True
-    for m in max_times:
-        for l in lens:
-            for t in threshs:
-                cfg.tracker_options.a_threshold = t
-                cfg.tracker_options.i_threshold = t
-                cfg.tracker_options.len_thresh = l
-                cfg.tracker_options.max_time_track = m
-                print(f"\n \n{m} {l} {t} \n")
-                results_df = _main(cfg, max_time=m, results_df=results_df)
-                cfg.tracker_options.convert_initial = False
-                if os.path.isdir(os.path.join(
-                    cfg.tracker_options.track_data_path,
-                    cfg.tracker_options.tracked_dets)):
-                    shutil.rmtree(os.path.join(
-                        cfg.tracker_options.track_data_path,
-                        cfg.tracker_options.tracked_dets))
+    # threshs = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
+    # lens = [2, 4, 6, 8, 10]
+    # max_times = [-1, 1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23]
+    # inact_patience = [-1, 1, 3, 5, 9, 11, 13, 15, 17, 19, 21, 23]
+    # cfg.tracker_options.convert_initial = True
+    # for t in inact_patience:
+        # cfg.tracker_options.a_threshold = t
+        # cfg.tracker_options.i_threshold = t
+        # cfg.tracker_options.len_thresh = t
+        # cfg.tracker_options.max_time_track = t
+        # cfg.tracker_options.inact_patience = t
+        # print(f"\n \n {t} \n")
+    results_df = _main(cfg, results_df=results_df)
+    # cfg.tracker_options.convert_initial = False
+    if os.path.isdir(os.path.join(
+        cfg.tracker_options.track_data_path,
+        cfg.tracker_options.tracked_dets)):
+        shutil.rmtree(os.path.join(
+            cfg.tracker_options.track_data_path,
+            cfg.tracker_options.tracked_dets))
 
     print('\n\n\n')
     print(results_df)
-    results_df.to_csv('/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/track_reg_results.csv')
+    # results_df.to_csv('/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/track_reg_results.csv')
 
-def _main(cfg, max_time, results_df):
-    cfg.tracker_options.max_time_track = max_time
+def _main(cfg, results_df):
     if cfg.multi_gpu:
         world_size = torch.cuda.device_count()
         in_args = (cfg, world_size)
@@ -184,7 +202,10 @@ def _main(cfg, max_time, results_df):
 
     params = [cfg.tracker_options.a_threshold,
               cfg.tracker_options.len_thresh,
-              cfg.tracker_options.max_time_track]
+              cfg.tracker_options.max_time_track,
+              cfg.tracker_options.inact_patience,
+              cfg.tracker_options.filter_by_width,
+              cfg.tracker_options.fixed_time]
     
     if cfg.tracker_options.convert_initial:
         logger.info('Evaluating initial bounding boxes...')
@@ -284,7 +305,10 @@ def track(rank, cfg, world_size):
             outlier_threshold=cfg.tracker_options.outlier_threshold,
             outlier_kNN=cfg.tracker_options.outlier_kNN,
             max_time_track=cfg.tracker_options.max_time_track,
-            filter_by_width=cfg.tracker_options.filter_by_width)
+            filter_by_width=cfg.tracker_options.filter_by_width,
+            fixed_time=cfg.tracker_options.fixed_time,
+            l_change_thresh=cfg.tracker_options.l_change_thresh,
+            w_change_thresh=cfg.tracker_options.w_change_thresh)
         detections = None
         tracks = None
         if cfg.tracker_options.convert_initial:

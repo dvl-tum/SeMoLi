@@ -12,7 +12,7 @@ import matplotlib
 
 
 class SimpleTracker():
-    def __init__(self, every_x_frame, overlap, av2_loader, log_id, rank, logger, a_threshold=0.8, i_threshold=0.8, len_thresh=5, max_time=5, filter_by_width=False):
+    def __init__(self, every_x_frame, overlap, av2_loader, log_id, rank, logger, a_threshold=0.8, i_threshold=0.8, len_thresh=5, max_time=5, filter_by_width=False, inact_patience=5, fixed_time=False, l_change_thresh=2, w_change_thresh=2):
         self.active_tracks = list()
         self.inactive_tracks = list()
         # self.every_x_frame = every_x_frame
@@ -31,7 +31,11 @@ class SimpleTracker():
         self.logger = logger
         self.len_thresh = len_thresh
         self.max_time = max_time
+        self.inact_patience = inact_patience
         self.filter_by_width = filter_by_width
+        self.fixed_time = fixed_time
+        self.l_change_thresh = l_change_thresh
+        self.w_change_thresh = w_change_thresh
     
     def associate(self, detections):
         # per timestampdetections
@@ -43,7 +47,7 @@ class SimpleTracker():
             if self.filter_by_width:
                 detections_new = list()
                 for d in dets:
-                    if d.lwh[1] < 5:
+                    if d.lwh[1] < self.filter_by_width:
                         detections_new.append(d)
                     else:
                         pass #print(d.lwh)
@@ -335,12 +339,15 @@ class SimpleTracker():
                     time_dist = t1 - t0
                     # < cos for example if len_traj = 2, inactive_count=1, overlap=1
                     # then <= will be true but should not cos index starts at 0 not 1
-                    if self.max_time != -1:
-                        max_time = self.max_time 
+                    if self.inact_patience != -1:
+                        inact_patience = self.inact_patience
                     else:
-                        max_time = t.detections[-1].length-1
+                        inact_patience = t.detections[-1].length-1
+                    
+                    if self.fixed_time:
+                        inact_patience -= self.max_time
                         
-                    if time_dist < max_time:
+                    if time_dist < inact_patience:
                         trajs.extend([
                             t._get_whole_traj_and_convert_time(timestamp, self.av2_loader, max_time=self.max_time)])
                         cano_points.extend([
@@ -371,7 +378,8 @@ class SimpleTracker():
         mean_dist = torch.zeros(len(propagated_pos_dets), num_tracks)
         bb_iou_2d = torch.zeros(len(propagated_pos_dets), num_tracks)
         l2_center_2d = torch.zeros(len(propagated_pos_dets), num_tracks)
-        lw_change_2d = torch.zeros(len(propagated_pos_dets), num_tracks)
+        l_change_2d = torch.zeros(len(propagated_pos_dets), num_tracks)
+        h_change_2d = torch.zeros(len(propagated_pos_dets), num_tracks)
         if visualize:
             os.makedirs('/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/Visualization_tracks', exist_ok=True)
             fig, ax = plt.subplots()
@@ -386,8 +394,10 @@ class SimpleTracker():
                 weight = torch.exp(-weight)/torch.exp(-weight).sum()
                 weight = torch.ones(traj_lens[i])
                 weight = weight.to(device)
-                lw_change_2d[k, i] = (weight.float().unsqueeze(1) * torch.abs(propagared_bbs_tracks[i]['lwh']-\
-                                      propagared_bbs_dets[k]['lwh'][:traj_lens[i]]).float()).mean()
+                l_change_2d[k, i] = (weight.float().unsqueeze(1) * torch.abs(propagared_bbs_tracks[i]['lwh'][:, 0]-\
+                                      propagared_bbs_dets[k]['lwh'][:traj_lens[i], 0]).float()).mean()
+                h_change_2d[k, i] = (weight.float().unsqueeze(1) * torch.abs(propagared_bbs_tracks[i]['lwh'][:, 1]-\
+                                      propagared_bbs_dets[k]['lwh'][:traj_lens[i], 1]).float()).mean()
                 l2_center_2d[k, i] = (weight * self.pdist(propagared_bbs_tracks[i]['translation'], 
                                        propagared_bbs_dets[k]['translation'][:traj_lens[i]])).mean()
                 
@@ -418,8 +428,15 @@ class SimpleTracker():
             dists = bb_iou_2d
         elif dist == 'L2Center':
             dists = l2_center_2d
-        # bb_iou_2d = (bb_iou_2d + l2_center_2d+lw_change_2d)/3
-        return [cd_dists, mean_dist, bb_iou_2d, l2_center_2d, lw_change_2d], \
+        
+        l_mask = torch.where(l_change_2d > self.l_change_thresh)
+        h_mask = torch.where(h_change_2d > self.w_change_thresh)
+        bb_iou_2d[l_mask[0], l_mask[1]] = torch.nan
+        bb_iou_2d[h_mask[0], h_mask[1]] = torch.nan
+        iou2d_mask = torch.where(bb_iou_2d > self.a_threshold)
+        bb_iou_2d[iou2d_mask[0], iou2d_mask[1]] = torch.nan
+
+        return [cd_dists, mean_dist, bb_iou_2d, l2_center_2d, l_change_2d, h_change_2d], \
             len(self.active_tracks), \
                 len(trajs) - len(self.active_tracks), \
                     inactive_tracks_to_use
