@@ -69,21 +69,12 @@ class SimpleTracker():
         self.tps = 0
         self.fns = 0
         self.fps = 0
-
-        print(len(active_tracks), \
-              len({t.track_id: t for t in active_tracks if len(t) > self.len_thresh}), \
-                [len(t) for t in active_tracks], \
-                    [t.detections[-1].gt_id for t in active_tracks])
         
         self.active_tracks = [t for t in active_tracks if len(t) > self.len_thresh]
 
         #for track in self.active_tracks:    
         #    track.fill_detections(self.av2_loader, self.ordered_timestamps.numpy().tolist(), self.max_time)
-
-        print(len(active_tracks), \
-              len({t.track_id: t for t in active_tracks if len(t) > self.len_thresh}), \
-                [len(t) for t in active_tracks], \
-                    [t.detections[-1].gt_id for t in active_tracks]) 
+        
         return {t.track_id: t for t in active_tracks if len(t) > self.len_thresh}
 
     def associate_timestamp(
