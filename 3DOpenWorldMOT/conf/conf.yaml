@@ -56,7 +56,11 @@ tracker_options: # Extra options for the tracker
   collaps_type: 'SimpleCollaps'
   out_path_for_eval: '/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/tracks/tracks_for_eval'
   max_time_track: 5 # set max_time to -1 --> take all
-  filter_by_width: False
+  filter_by_width: 5
+  inact_patience: -1
+  fixed_time: False
+  l_change_thresh: 10
+  w_change_thresh: 10
 
 
 detection_options:                                                                       
