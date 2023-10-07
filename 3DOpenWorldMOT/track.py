@@ -137,7 +137,7 @@ class InitialDetProcessor():
                     filter_class=-2,
                     only_matched_gt=False,
                     filter_moving_first=False,
-                    filter_moving=False,
+                    filter_moving=True,
                     use_matched_category=False,
                     debug=cfg.data.debug,
                     name=name)
@@ -276,9 +276,6 @@ def track(rank, cfg, world_size):
     for data in dataloader:
         seq_name, dataset_path, gt_path, split, detection_set, percentage = data
         seq_name, dataset_path, gt_path, split, detection_set, percentage = seq_name[0], dataset_path[0], gt_path[0], split[0], detection_set[0], percentage[0]
-
-        if seq_name != '10023947602400723454':
-            continue
 
         loader = AV2SensorDataLoader(data_dir=Path(f'{cfg.data.data_dir}_{split}/Waymo_Converted/{split}'), labels_dir=Path(f'{cfg.data.data_dir}_{split}/Waymo_Converted/{split}'))    
         detsprocessor = InitialDetProcessor(
