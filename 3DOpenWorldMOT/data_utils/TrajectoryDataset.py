@@ -457,10 +457,65 @@ class TrajectoryDataset(PyGDataset):
                 data['edge_index'][0, :].isin(nodes),
                 data['edge_index'][1, :].isin(nodes))]
         return data
+    
+    def get_object_velocities(self, data):
+        labels = self.loader.get_labels_at_lidar_timestamp(
+            log_id=data['log_id'], lidar_timestamp_ns=data['timestamps'][0, 0])
+        city_SE3_t1 = self.loader.get_city_SE3_ego(
+            data['log_id'], data['timestamps'][0, 0])
+        # labels at t+1
+        labels_t2 = self.loader.get_labels_at_lidar_timestamp(
+            log_id=data['log_id'], lidar_timestamp_ns=data['timestamps'][0, 1])
+        city_SE3_t2 = self.loader.get_city_SE3_ego(
+            data['log_id'], data['timestamps'][0, 1])
+        ids_t2 = [label.track_id for label in labels_t2]
+
+        velocities = torch.zeros(data['pc_list'].shape[0])
+        ego_traj_SE3_ego_ref = city_SE3_t2.inverse().compose(city_SE3_t1)
+        for m, label in enumerate(labels):
+            center = label.dst_SE3_object.translation
+            if len(labels_t2) and label.track_id in ids_t2:
+                # Pose of the object in the destination reference frame.
+                # ego_SE3_object --> from object to ego   
+                ego_traj_SE3_obj_traj = labels_t2[ids_t2.index(
+                    label.track_id)].dst_SE3_object
+                ego_ref_SE3_obj_ref = label.dst_SE3_object
+
+                    # transform points belonging to object in t1 into ego t2 coordinate system
+                obj_ref_ego_traj = ego_traj_SE3_ego_ref.transform_point_cloud(
+                    center)
+                
+                # transform points belonging to object in t1 into obj and from obj to ego t2 (assmue obj same points)
+                obj_traj_ego_traj = ego_traj_SE3_obj_traj.compose(
+                    ego_ref_SE3_obj_ref.inverse()).transform_point_cloud(center)
+
+                # get flow
+                translation = obj_traj_ego_traj - obj_ref_ego_traj
+                dist = np.linalg.norm(translation)
+                if 'Argo' in self.data_dir:
+                    diff_time = (
+                        data['timestamps'][0, 1]-data['timestamps'][0, 0]) / np.power(10, 9)
+                else:
+                    diff_time = (
+                        data['timestamps'][0, 1]-data['timestamps'][0, 0]) / np.power(10, 6)
+                vel = dist/diff_time
+                interior = point_cloud_handling.compute_interior_points_mask(
+                        data['pc_list'], label.vertices_m)
+                velocities[interior] = vel
+        print(data['point_categories'])
+        print(velocities)
+        quit()
+        data['velocities'] = velocities
+        path = '/'.join(['data'] + path.split('/')[1:])
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        torch.save(data, osp.join(path))
+        return data
 
     def get(self, idx): 
         path = self._processed_paths[idx]
         data = torch.load(path)
+        if 'velocities' not in data.keys:
+            data = self.get_object_velocities(data, path)
         
         ''' 
         name = path.split('_')[-1]
