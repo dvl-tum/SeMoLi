@@ -109,6 +109,7 @@ def get_feather_files(
         file = str(remove_non_move_thresh)[
             :5] + '_' + file if remove_non_move else file
         file = split + '_' + file
+        file = file + '_city'
         
         if 'Waymo' in paths:
             path_filtered = os.path.join('/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/Waymo_Converted_filtered', file)
@@ -276,19 +277,22 @@ def filter_seq(data, width=25):
                 city_SE3_t1 = loader.get_city_SE3_ego(
                     seq, int(timestamps[i]))
                 vels = list()
+                vels_city = list()
 
                 ego_traj_SE3_ego_ref = city_SE3_t2.inverse().compose(city_SE3_t1)
 
                 for m, label in enumerate(labels):
+                    center_city = city_SE3_t1.transform_point_cloud(label.dst_SE3_object.translation)
                     center = label.dst_SE3_object.translation
                     if len(labels_t2) and label.track_id in ids_t2:
                         # Pose of the object in the destination reference frame.
                         # ego_SE3_object --> from object to ego   
+                        center_lab_city = city_SE3_t2.transform_point_cloud(label.dst_SE3_object.translation)
                         ego_traj_SE3_obj_traj = labels_t2[ids_t2.index(
                             label.track_id)].dst_SE3_object
                         ego_ref_SE3_obj_ref = label.dst_SE3_object
 
-                            # transform points belonging to object in t1 into ego t2 coordinate system
+                        # transform points belonging to object in t1 into ego t2 coordinate system
                         obj_ref_ego_traj = ego_traj_SE3_ego_ref.transform_point_cloud(
                             center)
                         
@@ -298,7 +302,9 @@ def filter_seq(data, width=25):
 
                         # get flow
                         translation = obj_traj_ego_traj - obj_ref_ego_traj
+                        translation_city = center_lab_city - center_city
                         dist = np.linalg.norm(translation)
+                        dist_city = np.linalg.norm(translation_city)
                         if 'Argo' in path:
                             diff_time = (
                                 timestamps[i+1]-t) / np.power(10, 9)
@@ -306,11 +312,14 @@ def filter_seq(data, width=25):
                             diff_time = (
                                 timestamps[i+1]-t) / np.power(10, 6)
                         vel = dist/diff_time
+                        vel_city = dist_city/diff_time
                         vels.append(vel)
+                        vels_city.append(vel_city)
                         bool_labels.append(
                             vel > remove_non_move_thresh)
                     else:
                         vels.append(None)
+                        vels_city.append(None)
                         bool_labels.append(False)
                 # filter labels
                 # labels = [l for i, l in enumerate(
@@ -336,6 +345,8 @@ def filter_seq(data, width=25):
         # filter time df by track ids
         time_df = time_df[time_df['track_uuid'].isin(track_ids)]
         time_df['filter_moving'] = [bool_labels[t] for t in time_df['track_uuid'].values]
+        time_df['velocities'] = [vels[t] for t in time_df['track_uuid'].values]
+        time_df['velocities_city'] = [vels_city[t] for t in time_df['track_uuid'].values]
 
         if filtered is None and time_df.shape[0]:
             filtered = time_df
