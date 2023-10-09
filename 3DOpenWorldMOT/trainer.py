@@ -244,7 +244,7 @@ def main(cfg):
             cfg.models.loss_hyperparams.gamma_edge = params_list[iter]['gamma_edge']
             cfg.models.loss_hyperparams.alpha_node = params_list[iter]['alpha_node']
             cfg.models.loss_hyperparams.alpha_edge = params_list[iter]['alpha_edge']
-            cfg.models.loss_hyperparams.node_loss = True #params_list[iter]['node_loss']
+            # cfg.models.loss_hyperparams.node_loss = True #params_list[iter]['node_loss']
             cfg.models.hyperparams.layer_sizes_edge = params_list[iter]['layer_sizes_edge']
             cfg.models.hyperparams.layer_sizes_node = params_list[iter]['layer_sizes_node']
             cfg.training.epochs = 15
