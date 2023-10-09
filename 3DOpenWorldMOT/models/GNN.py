@@ -929,9 +929,10 @@ class GNNLoss(nn.Module):
             # keep only edges that belong to same graph (for batching opteration)
             point_instances = torch.logical_and(point_instances, same_graph).bool()
             
-            # setting edges that do not belong to object to zero
+            # setting edges that do not belong to object to zero as well as sign edges
             # --> instance 0 is no object
             point_instances[data.point_instances[edge_index[0, :]] == 0] = False
+            point_instances[data.point_category[edge_index[0, :]] == 3] = False
             point_instances = point_instances.to(self.rank)
 
             # if using moving vs non-moving / background as training objective
@@ -1035,8 +1036,9 @@ class GNNLoss(nn.Module):
             log_dict[f'{mode} num edge neg'] = num_edge_neg
 
         if self.node_loss:
-            # get if point is object
+            # get if point is object (sign is considered as no object)
             is_object = data.point_instances != 0
+            is_object[data.point_categories == 3] = False
             is_object = is_object.type(torch.FloatTensor).to(self.rank)
             object_class = data.point_categories
 
