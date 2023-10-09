@@ -932,7 +932,7 @@ class GNNLoss(nn.Module):
             # setting edges that do not belong to object to zero as well as sign edges
             # --> instance 0 is no object
             point_instances[data.point_instances[edge_index[0, :]] == 0] = False
-            point_instances[data.point_category[edge_index[0, :]] == 3] = False
+            point_instances[data.point_categories[edge_index[0, :]] == 3] = False
             point_instances = point_instances.to(self.rank)
 
             # if using moving vs non-moving / background as training objective

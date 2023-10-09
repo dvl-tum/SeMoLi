@@ -23,5 +23,5 @@ def main(split, gt_folder):
 
 if __name__ == "__main__":
     for split in ['train', 'val']:
-        gt_folder = '/workspace/Waymo_Converted_{split}/Waymo_Converted/{split}'
+        gt_folder = f'/workspace/Waymo_Converted_{split}/Waymo_Converted'
         main(split, gt_folder)

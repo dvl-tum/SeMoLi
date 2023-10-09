@@ -437,6 +437,7 @@ def compute_affinity_matrix(dts: NDArrayFloat, gts: NDArrayFloat, metric: Affini
             affinities = -(1-iou_3d)
         except:
             affinities = torch.ones(dts_corners.shape[0], gts_corners.shape[0]) * -1
+            print(affinities.shape)
     else:
         raise NotImplementedError("This affinity metric is not implemented!")
     return affinities
