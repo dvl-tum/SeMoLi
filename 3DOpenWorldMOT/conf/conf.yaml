@@ -29,6 +29,10 @@ gradient_checkpointing: False
 keep_checkpoint: False
 keep_detections: False
 continue_from_existing: True
+eval_dir: ''
+filter_moving: True
+use_matched_category: False
+store_matched: False
 
 tracker_options: # Extra options for the tracker
   a_threshold: 0.4

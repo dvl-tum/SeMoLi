@@ -458,16 +458,16 @@ class TrajectoryDataset(PyGDataset):
                 data['edge_index'][1, :].isin(nodes))]
         return data
     
-    def get_object_velocities(self, data):
+    def get_object_velocities(self, data, path):
         labels = self.loader.get_labels_at_lidar_timestamp(
-            log_id=data['log_id'], lidar_timestamp_ns=data['timestamps'][0, 0])
+            log_id=data['log_id'], lidar_timestamp_ns=data['timestamps'][0].item())
         city_SE3_t1 = self.loader.get_city_SE3_ego(
-            data['log_id'], data['timestamps'][0, 0])
+            data['log_id'], data['timestamps'][0].item())
         # labels at t+1
         labels_t2 = self.loader.get_labels_at_lidar_timestamp(
-            log_id=data['log_id'], lidar_timestamp_ns=data['timestamps'][0, 1])
+            log_id=data['log_id'], lidar_timestamp_ns=data['timestamps'][1].item())
         city_SE3_t2 = self.loader.get_city_SE3_ego(
-            data['log_id'], data['timestamps'][0, 1])
+            data['log_id'], data['timestamps'][1].item())
         ids_t2 = [label.track_id for label in labels_t2]
 
         velocities = torch.zeros(data['pc_list'].shape[0])
@@ -494,27 +494,25 @@ class TrajectoryDataset(PyGDataset):
                 dist = np.linalg.norm(translation)
                 if 'Argo' in self.data_dir:
                     diff_time = (
-                        data['timestamps'][0, 1]-data['timestamps'][0, 0]) / np.power(10, 9)
+                        data['timestamps'][1]-data['timestamps'][0]) / np.power(10, 9)
                 else:
                     diff_time = (
-                        data['timestamps'][0, 1]-data['timestamps'][0, 0]) / np.power(10, 6)
+                        data['timestamps'][1]-data['timestamps'][0]) / np.power(10, 6)
                 vel = dist/diff_time
-                interior = point_cloud_handling.compute_interior_points_mask(
-                        data['pc_list'], label.vertices_m)
+                interior = torch.from_numpy(point_cloud_handling.compute_interior_points_mask(
+                        data['pc_list'].numpy(), label.vertices_m))
                 velocities[interior] = vel
-        print(data['point_categories'])
-        print(velocities)
-        quit()
+        
         data['velocities'] = velocities
         path = '/'.join(['data'] + path.split('/')[1:])
         os.makedirs(os.path.dirname(path), exist_ok=True)
         torch.save(data, osp.join(path))
         return data
 
-    def get(self, idx): 
+    def get(self, idx, get_vels=False): 
         path = self._processed_paths[idx]
         data = torch.load(path)
-        if 'velocities' not in data.keys:
+        if 'velocities' not in data.keys and get_vels:
             data = self.get_object_velocities(data, path)
         
         ''' 
@@ -571,7 +569,7 @@ def get_TrajectoryDataLoader(cfg, name=None, train=True, val=True, test=False):
         graph_dir = None
     # get datasets
     if train and not cfg.just_eval:
-        train_data = TrajectoryDataset(cfg.data.data_dir,
+        train_data = TrajectoryDataset(cfg.data.data_dir + f'_train/' + os.path.basename(cfg.data.data_dir) if 'Argo' not in cfg.data.data_dir else cfg.data.data_dir,
             'train',
             cfg.data.trajectory_dir + '_train',
             graph_dir,
