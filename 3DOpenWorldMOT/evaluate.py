@@ -59,12 +59,14 @@ def main(cfg):
         cfg.data.data_dir,
         detection_set=cfg.data.detection_set,
         percentage=cfg.data.percentage_data_val)
-
-    name = get_name(cfg)
-    out_path = os.path.join(cfg.out_path, 'out/')
-    experiment_dir = os.path.join(out_path, f'detections_{cfg.data.detection_set}/')
-    detector_dir = os.path.join(experiment_dir + name, cfg.data.detection_set)
     
+    name = get_name(cfg) 
+    if cfg.eval_dir == '':
+        out_path = os.path.join(cfg.out_path, 'out/')
+        experiment_dir = os.path.join(out_path, f'detections_{cfg.data.detection_set}/')
+        detector_dir = os.path.join(experiment_dir + name, cfg.data.detection_set)
+    else:
+        detector_dir = cfg.eval_dir
     # evaluate detection
     _, detection_metric, _ = eval_detection.eval_detection(
         gt_folder=os.path.join(os.getcwd(), cfg.data.data_dir),
@@ -79,9 +81,11 @@ def main(cfg):
         filter_class=-2,
         only_matched_gt=False,
         filter_moving_first=False,
-        use_matched_category=False,
+        filter_moving=cfg.filter_moving,
+        use_matched_category=cfg.use_matched_category,
         debug=cfg.data.debug,
-        name=name)
+        name=name,
+        store_matched=cfg.store_matched)
 
 
 if __name__ == "__main__":

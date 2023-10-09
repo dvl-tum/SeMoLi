@@ -473,9 +473,10 @@ def eval_detection(
         only_matched_gt=False,
         filter_moving_first=False,
         use_matched_category=False,
-        filter_moving=True):
+        filter_moving=True,
+        store_matched=False):
 
-    if not len(os.listdir(tracker_folder)):
+    if not len(os.listdir(trackers_folder)):
         return None, np.array([0, 2, 1, 3.142, 0]), None
 
     is_waymo = 'waymo' in gt_folder or 'Waymo' in gt_folder
@@ -592,10 +593,10 @@ def eval_detection(
             n_jobs=n_jobs,
             filter_moving=filter_moving)
         
-        if print_detail:
-            print(f"\t Writing macthed detections to matched_{trackers_folder}/annotations_{affinity}.feather...")
-        os.makedirs(f'matched_{trackers_folder}', exist_ok=True)
-        feather.write_feather(dts, f'matched_{trackers_folder}/annotations_{affinity}.feather')
+        if store_matched:
+            print(f"\t Writing macthed detections to /workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/matched_{trackers_folder}/annotations_{affinity}.feather...")
+            os.makedirs(f'/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/matched_{trackers_folder}', exist_ok=True)
+            feather.write_feather(dts, f'/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/matched_{trackers_folder}/annotations_{affinity}.feather')
         
         dts = dts[dts['is_evaluated']==1]
         gts = gts[gts['is_evaluated']==1]

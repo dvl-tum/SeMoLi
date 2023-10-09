@@ -311,8 +311,10 @@ def train_one_epoch(model, cfg, epoch, logger, optimizer, train_loader,\
     num_edge_neg = torch.zeros(len(train_loader)).to(rank)
     
     collaps_dict = dict()
-    for batch, data in tqdm(enumerate(train_loader), total=len(train_loader), smoothing=0.9):
-    # for batch, data in enumerate(train_loader):
+    # for batch, data in tqdm(enumerate(train_loader), total=len(train_loader), smoothing=0.9):
+    for batch, data in enumerate(train_loader):
+        if batch % 100 == 0:
+            logger.info(f'Epoch {epoch}: batch {batch}/{len(train_loader)}')
         data = data.to(rank)
         optimizer.zero_grad()
         if cfg.half_precision:
@@ -325,9 +327,9 @@ def train_one_epoch(model, cfg, epoch, logger, optimizer, train_loader,\
                     continue
 
                 scaler.scale(loss).backward()
-                for name, param in model.named_parameters():
+                for p_name, param in model.named_parameters():
                     if torch.isnan(param.grad).any():
-                        logger.info('Having nan in gradients....')
+                        logger.info('Having nan in gradients {p_name}....')
                         return None, None, None, None
                 scaler.step(optimizer)
                 scaler.update()
@@ -523,8 +525,10 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
             logger.info('---- EPOCH %03d EVALUATION ----' % (epoch + 1))
             logger.info(f'Doing correlation clustering {do_corr_clustering}')
         # Iterate over validation set
-        for batch, (data) in tqdm(enumerate(val_loader), total=len(val_loader), smoothing=0.9):
-        # for batch, (data) in enumerate(val_loader):
+        # for batch, (data) in tqdm(enumerate(val_loader), total=len(val_loader), smoothing=0.9):
+        for batch, (data) in enumerate(val_loader):
+            if batch % 100 == 0:
+                logger.info(f'Epoch {epoch}: batch {batch}/{len(val_loader)}')
             # compute clusters
             logits, all_clusters, edge_index, _ = model(data, eval=True, name=name, corr_clustering=do_corr_clustering)
 
@@ -995,7 +999,7 @@ def train(rank, cfg, world_size):
                 logger.info("Terminating training due to nan values...")
                 on_return(rank, name, experiment_dir, checkpoints_dir, cfg)
                 return
-        print(epoch % cfg.training.eval_every_x == 0, epoch)
+        
         # evaluate
         if epoch % cfg.training.eval_every_x == 0:
             # do corr clustering every eval_corr_every_x epochs if epoch not 0

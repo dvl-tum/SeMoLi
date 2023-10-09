@@ -52,7 +52,8 @@ class TrajectoryDataset(PyGDataset):
             percentage_data=1,
             detection_set='train_gnn',
             filtered_file_path=None,
-            detection_out_path=None):
+            detection_out_path=None,
+            get_vels=False):
         
         if 'gt' in _processed_dir:
             self.trajectory_dir = Path(os.path.join(trajectory_dir, split))
@@ -78,7 +79,7 @@ class TrajectoryDataset(PyGDataset):
         self.percentage_data = percentage_data
         self.filtered_file_path = filtered_file_path
         self.edge_dir = edge_dir
-
+        self.get_vels = get_vels
         # for debugging
         if debug:
             if split == 'val' and 'Argo' in self.data_dir:
@@ -458,16 +459,16 @@ class TrajectoryDataset(PyGDataset):
                 data['edge_index'][1, :].isin(nodes))]
         return data
     
-    def get_object_velocities(self, data):
+    def get_object_velocities(self, data, path):
         labels = self.loader.get_labels_at_lidar_timestamp(
-            log_id=data['log_id'], lidar_timestamp_ns=data['timestamps'][0, 0])
+            log_id=data['log_id'], lidar_timestamp_ns=data['timestamps'][0].item())
         city_SE3_t1 = self.loader.get_city_SE3_ego(
-            data['log_id'], data['timestamps'][0, 0])
+            data['log_id'], data['timestamps'][0].item())
         # labels at t+1
         labels_t2 = self.loader.get_labels_at_lidar_timestamp(
-            log_id=data['log_id'], lidar_timestamp_ns=data['timestamps'][0, 1])
+            log_id=data['log_id'], lidar_timestamp_ns=data['timestamps'][1].item())
         city_SE3_t2 = self.loader.get_city_SE3_ego(
-            data['log_id'], data['timestamps'][0, 1])
+            data['log_id'], data['timestamps'][1].item())
         ids_t2 = [label.track_id for label in labels_t2]
 
         velocities = torch.zeros(data['pc_list'].shape[0])
@@ -494,17 +495,15 @@ class TrajectoryDataset(PyGDataset):
                 dist = np.linalg.norm(translation)
                 if 'Argo' in self.data_dir:
                     diff_time = (
-                        data['timestamps'][0, 1]-data['timestamps'][0, 0]) / np.power(10, 9)
+                        data['timestamps'][1]-data['timestamps'][0]) / np.power(10, 9)
                 else:
                     diff_time = (
-                        data['timestamps'][0, 1]-data['timestamps'][0, 0]) / np.power(10, 6)
+                        data['timestamps'][1]-data['timestamps'][0]) / np.power(10, 6)
                 vel = dist/diff_time
-                interior = point_cloud_handling.compute_interior_points_mask(
-                        data['pc_list'], label.vertices_m)
+                interior = torch.from_numpy(point_cloud_handling.compute_interior_points_mask(
+                        data['pc_list'].numpy(), label.vertices_m))
                 velocities[interior] = vel
-        print(data['point_categories'])
-        print(velocities)
-        quit()
+        
         data['velocities'] = velocities
         path = '/'.join(['data'] + path.split('/')[1:])
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -514,7 +513,7 @@ class TrajectoryDataset(PyGDataset):
     def get(self, idx): 
         path = self._processed_paths[idx]
         data = torch.load(path)
-        if 'velocities' not in data.keys:
+        if 'velocities' not in data.keys and self.get_vels:
             data = self.get_object_velocities(data, path)
         
         ''' 
@@ -571,7 +570,7 @@ def get_TrajectoryDataLoader(cfg, name=None, train=True, val=True, test=False):
         graph_dir = None
     # get datasets
     if train and not cfg.just_eval:
-        train_data = TrajectoryDataset(cfg.data.data_dir,
+        train_data = TrajectoryDataset(cfg.data.data_dir + f'_train/' + os.path.basename(cfg.data.data_dir) if 'Argo' not in cfg.data.data_dir else cfg.data.data_dir,
             'train',
             cfg.data.trajectory_dir + '_train',
             graph_dir,
@@ -583,7 +582,8 @@ def get_TrajectoryDataLoader(cfg, name=None, train=True, val=True, test=False):
             do_process=cfg.data.do_process,
             _processed_dir=cfg.data.processed_dir + '_train',
             percentage_data=cfg.data.percentage_data_train,
-            filtered_file_path=cfg.data.filtered_file_path)
+            filtered_file_path=cfg.data.filtered_file_path,
+            get_vels=cfg.data.get_vels)
     else:
         train_data = None
     if val:
@@ -607,7 +607,8 @@ def get_TrajectoryDataLoader(cfg, name=None, train=True, val=True, test=False):
                 percentage_data=cfg.data.percentage_data_val,
                 detection_set=cfg.data.detection_set,
                 filtered_file_path=cfg.data.filtered_file_path,
-                detection_out_path=name)
+                detection_out_path=name,
+                get_vels=cfg.data.get_vels)
     else:
         val_data = None
     if test:

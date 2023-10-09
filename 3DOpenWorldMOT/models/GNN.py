@@ -258,7 +258,8 @@ class ClusterGNN(MessagePassing):
             gradient_checkpointing=False, 
             remove_non_move_thresh=1.0,
             classification_is_moving_edge=False,
-            classification_is_moving_node=False):
+            classification_is_moving_node=False,
+            set_all_pos=False):
         super().__init__(aggr='mean')
         self.k = k
         self.k_eval = k_eval
@@ -339,6 +340,7 @@ class ClusterGNN(MessagePassing):
         self.my_graph = my_graph
         self.oracle_node = oracle_node
         self.oracle_edge = oracle_edge
+        self.set_all_pos = set_all_pos
         self.ignore_stat_edges = ignore_stat_edges
         self.ignore_stat_nodes = ignore_stat_nodes
         self.filter_edges = filter_edges
@@ -696,14 +698,17 @@ class ClusterGNN(MessagePassing):
         if self.use_node_score:
             graph_node_score = _node_score[start:end]
         graph_edge_score = _score[edge_mask]
-
+        
         # set oracle scores edge
         if self.oracle_edge:
-            graph_edge_score[data['point_instances'][src] == data['point_instances'][dst]] = 1
-            graph_edge_score[data['point_instances'][src] != data['point_instances'][dst]] = 0
-            graph_edge_score[data['point_instances'][src] <= 0] = 0
-            if self.classification_is_moving_edge:
-                graph_edge_score[~data['point_instances_mov'][src]] = 0
+            if self.set_all_pos: 
+                graph_edge_score = torch.ones(graph_edge_score.shape[0]).unsqueeze(1).to(graph_edge_score.device)
+            else:
+                graph_edge_score[data['point_instances'][src] == data['point_instances'][dst]] = 1
+                graph_edge_score[data['point_instances'][src] != data['point_instances'][dst]] = 0
+                graph_edge_score[data['point_instances'][src] <= 0] = 0
+                if self.classification_is_moving_edge:
+                    graph_edge_score[~data['point_instances_mov'][src]] = 0
             
             score[edge_mask] = graph_edge_score
             score[score == 0] = -10
