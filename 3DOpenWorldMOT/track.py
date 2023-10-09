@@ -80,14 +80,14 @@ class InitialDetProcessor():
 
         # detections = self.dataset(self.collapsed_dets_path, self.gt_path, log_id, self.split).dets
         if detections is None:
-            detections = self.dataset(self.initial_dets_path, self.gt_path, log_id, self.split).dets
+            detections = self.dataset(self.initial_dets_path, self.gt_path, log_id, self.split, self.detection_set).dets
         tracks = tracker.associate(detections)
         store_initial_detections(tracks, log_id, self.tracked_dets_path, split, tracks=True)
         return tracks
     
     def register(self, log_id, split, tracks=None):
         if tracks is None:
-            tracks = self.dataset(self.tracked_dets_path, self.gt_path, log_id, self.split, tracks=True).dets
+            tracks = self.dataset(self.tracked_dets_path, self.gt_path, log_id, self.split, self.detection_set, tracks=True).dets
         tracks = self._registration(
             tracks, self.av2_loader, log_id, self.outlier_threshold, self.outlier_kNN).register()
         store_initial_detections(tracks, log_id, self.tracked_dets_path, split, tracks=False)
@@ -95,14 +95,14 @@ class InitialDetProcessor():
 
     def collaps(self, log_id, split, detections=None):
         if detections is None:
-            detections = self.dataset(self.initial_dets_path, self.gt_path, log_id, self.split).dets
+            detections = self.dataset(self.initial_dets_path, self.gt_path, log_id, self.split, self.detection_set).dets
         self.collaps = self._collaps(self.av2_loader)
         detections = self.collaps.collaps(detections, log_id, self.gt_path)
         store_initial_detections(detections, log_id, self.collapsed_dets_path, split, tracks=False, gt_path=self.gt_path)
         return detections
     
     def get_initial_dets(self, log_id, split):
-        detections = self.dataset(self.initial_dets_path, self.gt_path, log_id, self.split).dets
+        detections = self.dataset(self.initial_dets_path, self.gt_path, log_id, self.split, self.detection_set).dets
         if self.filter_by_width:
             detections_new = dict()
             for i, timestamp in enumerate(sorted(detections.keys())):
@@ -124,7 +124,6 @@ class InitialDetProcessor():
 
     @staticmethod
     def eval(cfg, detector_dir, seq_list, name):
-        print(os.path.join(os.getcwd(), cfg.data.data_dir + '_train/Waymo_Converted'))
         _, detection_metric, all_results_df = eval_detection.eval_detection(
                     gt_folder=os.path.join(os.getcwd(), cfg.data.data_dir + '_train/Waymo_Converted'),
                     trackers_folder=detector_dir,
@@ -281,7 +280,7 @@ def track(rank, cfg, world_size):
     for data in dataloader:
         seq_name, dataset_path, gt_path, split, detection_set, percentage = data
         seq_name, dataset_path, gt_path, split, detection_set, percentage = seq_name[0], dataset_path[0], gt_path[0], split[0], detection_set[0], percentage[0]
-
+        
         loader = AV2SensorDataLoader(data_dir=Path(f'{cfg.data.data_dir}_{split}/Waymo_Converted/{split}'), labels_dir=Path(f'{cfg.data.data_dir}_{split}/Waymo_Converted/{split}'))    
         detsprocessor = InitialDetProcessor(
             tracker_type=cfg.tracker_options.tracker_type,

@@ -65,7 +65,10 @@ class SimpleTracker():
                 last=len(detections)==i+1)
         
         self.active_tracks += self.inactive_tracks
-        self.logger.info(f'TPA: {self.tps}, FNA: {self.fns}, FPS: {self.fps}, Pr: {self.tps/(self.tps+self.fps)}, Re: {self.tps/(self.tps+self.fns)}')
+        if self.tps+self.fps and self.tps+self.fns:
+            self.logger.info(f'TPA: {self.tps}, FNA: {self.fns}, FPS: {self.fps}, Pr: {self.tps/(self.tps+self.fps)}, Re: {self.tps/(self.tps+self.fns)}')
+        else:
+            self.logger.info(f'TPA: {self.tps}, FNA: {self.fns}, FPS: {self.fps}')
         self.tps = 0
         self.fns = 0
         self.fps = 0

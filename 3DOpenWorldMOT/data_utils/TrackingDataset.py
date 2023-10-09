@@ -21,13 +21,13 @@ class MOT3DTrackDataset:
         self.gt_path = gt_path
         self.detection_set = detection_set
         self.percentage_data = percentage_data
-        print(dataset_path, gt_path, detection_set, percentage_data, debug)
+        
         if 'evaluation' in detection_set:
             split = 'val'
         else:
             split = 'train'
         self.split = split
-
+        
         # for debugging
         if debug:
             if split == 'val' and 'Argo' in self.dataset_path:
