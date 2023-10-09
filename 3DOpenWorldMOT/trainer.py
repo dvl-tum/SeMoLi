@@ -325,9 +325,9 @@ def train_one_epoch(model, cfg, epoch, logger, optimizer, train_loader,\
                     continue
 
                 scaler.scale(loss).backward()
-                for name, param in model.named_parameters():
+                for p_name, param in model.named_parameters():
                     if torch.isnan(param.grad).any():
-                        logger.info('Having nan in gradients....')
+                        logger.info('Having nan in gradients {p_name}....')
                         return None, None, None, None
                 scaler.step(optimizer)
                 scaler.update()
@@ -995,7 +995,7 @@ def train(rank, cfg, world_size):
                 logger.info("Terminating training due to nan values...")
                 on_return(rank, name, experiment_dir, checkpoints_dir, cfg)
                 return
-        print(epoch % cfg.training.eval_every_x == 0, epoch)
+        
         # evaluate
         if epoch % cfg.training.eval_every_x == 0:
             # do corr clustering every eval_corr_every_x epochs if epoch not 0
