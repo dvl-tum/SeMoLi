@@ -472,12 +472,15 @@ class TrajectoryDataset(PyGDataset):
         ids_t2 = [label.track_id for label in labels_t2]
 
         velocities = torch.zeros(data['pc_list'].shape[0])
+        velocities_city = torch.zeros(data['pc_list'].shape[0])
         ego_traj_SE3_ego_ref = city_SE3_t2.inverse().compose(city_SE3_t1)
         for m, label in enumerate(labels):
+            center_city = city_SE3_t1.transform_point_cloud(label.dst_SE3_object.translation)
             center = label.dst_SE3_object.translation
             if len(labels_t2) and label.track_id in ids_t2:
                 # Pose of the object in the destination reference frame.
                 # ego_SE3_object --> from object to ego   
+                center_lab_city = city_SE3_t2.transform_point_cloud(label.dst_SE3_object.translation)
                 ego_traj_SE3_obj_traj = labels_t2[ids_t2.index(
                     label.track_id)].dst_SE3_object
                 ego_ref_SE3_obj_ref = label.dst_SE3_object
@@ -492,7 +495,9 @@ class TrajectoryDataset(PyGDataset):
 
                 # get flow
                 translation = obj_traj_ego_traj - obj_ref_ego_traj
+                translation_city = center_lab_city - center_city
                 dist = np.linalg.norm(translation)
+                dist_city = np.linalg.norm(translation_city)
                 if 'Argo' in self.data_dir:
                     diff_time = (
                         data['timestamps'][1]-data['timestamps'][0]) / np.power(10, 9)
@@ -500,11 +505,15 @@ class TrajectoryDataset(PyGDataset):
                     diff_time = (
                         data['timestamps'][1]-data['timestamps'][0]) / np.power(10, 6)
                 vel = dist/diff_time
+                vel_city = dist_city/diff_time
                 interior = torch.from_numpy(point_cloud_handling.compute_interior_points_mask(
                         data['pc_list'].numpy(), label.vertices_m))
                 velocities[interior] = vel
-        
+                velocities_city[interior] = vel_city
+                print(vel_city, vel)
+        quit()
         data['velocities'] = velocities
+        data['velocities_city'] = velocities_city
         path = '/'.join(['data'] + path.split('/')[1:])
         os.makedirs(os.path.dirname(path), exist_ok=True)
         torch.save(data, osp.join(path))
