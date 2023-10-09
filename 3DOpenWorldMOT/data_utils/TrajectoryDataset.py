@@ -52,7 +52,8 @@ class TrajectoryDataset(PyGDataset):
             percentage_data=1,
             detection_set='train_gnn',
             filtered_file_path=None,
-            detection_out_path=None):
+            detection_out_path=None,
+            get_vels=False):
         
         if 'gt' in _processed_dir:
             self.trajectory_dir = Path(os.path.join(trajectory_dir, split))
@@ -78,7 +79,7 @@ class TrajectoryDataset(PyGDataset):
         self.percentage_data = percentage_data
         self.filtered_file_path = filtered_file_path
         self.edge_dir = edge_dir
-
+        self.get_vels = get_vels
         # for debugging
         if debug:
             if split == 'val' and 'Argo' in self.data_dir:
@@ -509,10 +510,10 @@ class TrajectoryDataset(PyGDataset):
         torch.save(data, osp.join(path))
         return data
 
-    def get(self, idx, get_vels=False): 
+    def get(self, idx): 
         path = self._processed_paths[idx]
         data = torch.load(path)
-        if 'velocities' not in data.keys and get_vels:
+        if 'velocities' not in data.keys and self.get_vels:
             data = self.get_object_velocities(data, path)
         
         ''' 
@@ -581,7 +582,8 @@ def get_TrajectoryDataLoader(cfg, name=None, train=True, val=True, test=False):
             do_process=cfg.data.do_process,
             _processed_dir=cfg.data.processed_dir + '_train',
             percentage_data=cfg.data.percentage_data_train,
-            filtered_file_path=cfg.data.filtered_file_path)
+            filtered_file_path=cfg.data.filtered_file_path,
+            get_vels=cfg.data.get_vels)
     else:
         train_data = None
     if val:
@@ -605,7 +607,8 @@ def get_TrajectoryDataLoader(cfg, name=None, train=True, val=True, test=False):
                 percentage_data=cfg.data.percentage_data_val,
                 detection_set=cfg.data.detection_set,
                 filtered_file_path=cfg.data.filtered_file_path,
-                detection_out_path=name)
+                detection_out_path=name,
+                get_vels=cfg.data.get_vels)
     else:
         val_data = None
     if test:
