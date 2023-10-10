@@ -24,7 +24,7 @@ def main(split='training', save_dir='out', detection_file=None, only_stats=False
         with open(f'data_utils/new_seq_splits_Waymo_Converted_fixed_val/{detection_file}.txt', 'r') as f:
             seqs = f.read()
             seqs = seqs.split('\n')
-    tf_record_dir = f'../../../../datasets/Waymo-Dataset-Tool/waymo/waymo_format/{split}/'
+    tf_record_dir = f'/workspace/waymo/waymo_format/{split}/'
     meta_data_save = defaultdict(dict)
     objects = metrics_pb2.Objects()
     object_set = set()
@@ -99,7 +99,7 @@ def extract_labels(box_labels, context_name, time, objects, all_car=False, objec
 
 
 if __name__ == "__main__":
-    save_dir = 'waymo_gt_and_meta'
+    save_dir = '/workspace/ExchangeWorkspace/waymo_gt_and_meta'
     all_car = True
     os.makedirs(f'{save_dir}/gt', exist_ok=True)
     os.makedirs(f'{save_dir}/meta', exist_ok=True)

@@ -28,11 +28,12 @@ half_precision: True
 gradient_checkpointing: False
 keep_checkpoint: False
 keep_detections: False
-continue_from_existing: True
+continue_from_existing: False
 eval_dir: ''
 filter_moving: True
 use_matched_category: False
 store_matched: False
+do_corr_clustering: True
 
 tracker_options: # Extra options for the tracker
   a_threshold: 0.4
