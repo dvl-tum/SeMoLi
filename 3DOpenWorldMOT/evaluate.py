@@ -31,9 +31,9 @@ def get_name(cfg):
             if cfg.models.loss_hyperparams.focal_loss_edge:
                 name = f'{cfg.models.loss_hyperparams.gamma_edge}' + "_" + name
                 name = f'{cfg.models.loss_hyperparams.alpha_edge}' + "_" + name
-            edge_size = '_'.join([str(v) for v in cfg.models.hyperparams.layer_sizes_edge.values()])
+            edge_size = '_'.join([str(v) for v in cfg.models.hyperparams.layers_edge.values()])
             name = f'{edge_size}' + "_" + name
-            node_size = '_'.join([str(v) for v in cfg.models.hyperparams.layer_sizes_node.values()])
+            node_size = '_'.join([str(v) for v in cfg.models.hyperparams.layers_node.values()])
             name = f'{node_size}' + "_" + name
             
             name = 'nooracle' + "_" + name if not cfg.models.hyperparams.oracle_node and not cfg.models.hyperparams.oracle_edge else name

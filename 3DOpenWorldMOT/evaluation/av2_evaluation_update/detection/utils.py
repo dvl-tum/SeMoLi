@@ -428,16 +428,16 @@ def compute_affinity_matrix(dts: NDArrayFloat, gts: NDArrayFloat, metric: Affini
                 gts_corners.shape[0]*gts_corners.shape[1], -1), dim=0)
         dts_corners -= means
         gts_corners -= means
-        try:    
-            intersection_vol, iou_3d = box3d_overlap(
-                dts_corners.cuda(),
-                gts_corners.cuda())
+        # try:    
+        intersection_vol, iou_3d = box3d_overlap(
+            dts_corners.cuda(),
+            gts_corners.cuda())
 
-            iou_3d = torch.clip(iou_3d.cpu(), min=0, max=1).numpy()
-            affinities = -(1-iou_3d)
-        except:
-            affinities = torch.ones(dts_corners.shape[0], gts_corners.shape[0]) * -1
-            print(affinities.shape)
+        iou_3d = torch.clip(iou_3d.cpu(), min=0, max=1).numpy()
+        affinities = -(1-iou_3d)
+        # except:
+        #     affinities = torch.ones(dts_corners.shape[0], gts_corners.shape[0]) * -1
+        #     print(affinities.shape)
     else:
         raise NotImplementedError("This affinity metric is not implemented!")
     return affinities

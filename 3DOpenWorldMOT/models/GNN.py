@@ -303,33 +303,34 @@ class ClusterGNN(MessagePassing):
             node_dim += 3
         
         layers = list()
-        self.reuse = layers_node.resue
+        self.reuse = layers_node.reuse
         self.num_layers = layers_node.num_layers
-        _node_dim = node_dim
-        _edge_dim = edge_dim
-        layer_sizes_node = [layers_node.size for _ in range(layers_node.num_layers)]
-        layer_sizes_edge = [layers_edge.size for _ in range(layers_edge.num_layers)]
+        layer_sizes_node = [layers_node.size for _ in range(1, layers_node.num_layers)]
+        layer_sizes_edge = [layers_edge.size for _ in range(1, layers_edge.num_layers)]
         
         self.encode_layer = ClusterLayer(
-                    in_channel_node=_node_dim,
-                    in_channel_edge=_edge_dim,
-                    out_channel_node=layer_sizes_node,
-                    out_channel_edge=layer_sizes_edge,
+                    in_channel_node=node_dim,
+                    in_channel_edge=edge_dim,
+                    out_channel_node=layer_sizes_node[0],
+                    out_channel_edge=layer_sizes_edge[0],
                     use_batchnorm=batch_norm,
                     use_layernorm=layer_norm,
                     use_drop=drop_out,
-                    skip_node_update=skip_node_update)
-        if self.resue:
+                    skip_node_update=False)
+        print(self.encode_layer)
+        if self.reuse:
             self.layers = ClusterLayer(
-                    in_channel_node=_node_dim,
-                    in_channel_edge=_edge_dim,
+                    in_channel_node=node_dim,
+                    in_channel_edge=edge_dim,
                     out_channel_node=node_dim_hid,
                     out_channel_edge=edge_dim_hid,
                     use_batchnorm=batch_norm,
                     use_layernorm=layer_norm,
                     use_drop=drop_out,
-                    skip_node_update=skip_node_update)
+                    skip_node_update=False)
         else:
+            node_dim = layer_sizes_node[0]
+            edge_dim = layer_sizes_edge[0]
             for j, (node_dim_hid, edge_dim_hid) in enumerate(zip(layer_sizes_node, layer_sizes_edge)):
                 if j == len(layer_sizes_node) -1 and not self.use_node_score:
                     skip_node_update = True
@@ -337,8 +338,8 @@ class ClusterGNN(MessagePassing):
                     skip_node_update = False
 
                 layers.append(ClusterLayer(
-                    in_channel_node=_node_dim,
-                    in_channel_edge=_edge_dim,
+                    in_channel_node=node_dim,
+                    in_channel_edge=edge_dim,
                     out_channel_node=node_dim_hid,
                     out_channel_edge=edge_dim_hid,
                     use_batchnorm=batch_norm,
@@ -346,14 +347,14 @@ class ClusterGNN(MessagePassing):
                     use_drop=drop_out,
                     skip_node_update=skip_node_update))
                 
-                _node_dim = node_dim_hid
-                _edge_dim = edge_dim_hid
+                node_dim = node_dim_hid
+                edge_dim = edge_dim_hid
 
             self.layers = SevInpSequential(gradient_checkpointing, layers)
 
-        self.final = nn.Linear(_edge_dim, 1)
+        self.final = nn.Linear(edge_dim, 1)
         if self.use_node_score:
-            self.final_node = nn.Linear(_node_dim, 1)
+            self.final_node = nn.Linear(node_dim, 1)
         self.sigmoid = torch.nn.Sigmoid()
         # self.sigmoid = torch.nn.Tanh()
         self.cut_edges = cut_edges
@@ -658,7 +659,7 @@ class ClusterGNN(MessagePassing):
         edge_attr, _ = self.initial_edge_attributes(traj, pc, edge_index, batch=data['batch'])
 
         # forward pass thourgh layers
-
+        node_attr, edge_index, edge_attr = self.encode_layer(node_attr, edge_index, edge_attr)
         if self.reuse:
             for _ in range(self.num_layers):
                 node_attr, edge_index, edge_attr = self.layers(node_attr, edge_index, edge_attr)

@@ -110,9 +110,9 @@ def load_model(cfg, checkpoints_dir, logger, rank=0):
             if cfg.models.loss_hyperparams.focal_loss_edge:
                 name = f'{cfg.models.loss_hyperparams.gamma_edge}' + "_" + name
                 name = f'{cfg.models.loss_hyperparams.alpha_edge}' + "_" + name
-            edge_size = '_'.join([str(v) for v in cfg.models.hyperparams.layer_sizes_edge.values()])
+            edge_size = '_'.join([str(v) for v in cfg.models.hyperparams.layers_edge.values()])
             name = f'{edge_size}' + "_" + name
-            node_size = '_'.join([str(v) for v in cfg.models.hyperparams.layer_sizes_node.values()])
+            node_size = '_'.join([str(v) for v in cfg.models.hyperparams.layers_node.values()])
             name = f'{node_size}' + "_" + name
             
             name = 'nooracle' + "_" + name if not cfg.models.hyperparams.oracle_node and not cfg.models.hyperparams.oracle_edge else name
@@ -313,6 +313,7 @@ def train_one_epoch(model, cfg, epoch, logger, optimizer, train_loader,\
     num_edge_neg = torch.zeros(len(train_loader)).to(rank)
     
     collaps_dict = dict()
+    print(model)
     # for batch, data in tqdm(enumerate(train_loader), total=len(train_loader), smoothing=0.9):
     for batch, data in enumerate(train_loader):
         if batch % 100 == 0:
