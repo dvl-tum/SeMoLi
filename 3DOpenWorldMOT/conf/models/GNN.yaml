@@ -2,7 +2,7 @@
 model_name: GNN
 weight_path: ''
 hyperparams:
-    graph: 'radius'
+    graph: 'knn'
     traj_channels: 75
     pos_channels: 3
     k: 32
@@ -12,7 +12,7 @@ hyperparams:
     graph_construction: pos
     node_attr: traj
     min_samples: ${detection_options.num_interior}
-    use_node_score: 0.5
+    use_node_score: 0.3
     node_loss: ${models.loss_hyperparams.node_loss}
     clustering: 'correlation'
     do_visualize: False
@@ -26,16 +26,18 @@ hyperparams:
     classification_is_moving_node: ${models.loss_hyperparams.classification_is_moving_node}
     classification_is_moving_edge: ${models.loss_hyperparams.classification_is_moving_edge}
     filter_edges: -1
-    layer_norm: False
+    layer_norm: True
     batch_norm: False
     drop_out: False
     augment: False
-    layer_sizes_edge: 
-        l_1: 64
-        l_2: 64
-    layer_sizes_node: 
-        l_1: 64
-        l_2: 64
+    layers_edge: 
+        size: 64
+        num_layers: 64
+        reuse: False
+    layers_node: 
+        size: 64
+        num_layers: 64
+        resuse: ${models.hyperparams.layers_edge.reuse}
     gradient_checkpointing: ${gradient_checkpointing}
 loss_hyperparams:
     bce_loss: True

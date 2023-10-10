@@ -17,7 +17,7 @@ static_thresh: 0.0
 remove_static_gt: 1
 remove_static_strategy: 'per_frame' #'per_frame' #'per_seq' #'per_frame' #'per_seq'
 remove_static_thresh: 1.0
-debug: 1
+debug: False
 short_train: False
 split_val: False
 every_x_frame: 1

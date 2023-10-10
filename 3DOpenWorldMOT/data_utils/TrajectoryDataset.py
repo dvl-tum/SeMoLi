@@ -134,7 +134,7 @@ class TrajectoryDataset(PyGDataset):
     def processed_paths(self):
         if not self.do_process:
             seqs = [seq for seq in self.seqs if seq in os.listdir(self.processed_dir) and seq not in self.already_evaluated]
-            print(f'{len(seqs)} to be processed, {len(self.already_evaluated)} were already there...')
+            print(f'{len(seqs)} to be evaluated, {len(self.already_evaluated)} were already there...')
             return [os.path.join(self.processed_dir, seq, flow_file)\
                     for seq in seqs\
                         for i, flow_file in enumerate(sorted(os.listdir(osp.join(self.processed_dir, seq))))\

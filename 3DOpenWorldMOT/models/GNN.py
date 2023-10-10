@@ -244,8 +244,8 @@ class ClusterGNN(MessagePassing):
             oracle_node=False,
             oracle_edge=False,
             dataset='waymo',
-            layer_sizes_edge=None,
-            layer_sizes_node=None,
+            layers_node=None,
+            layers_edge=None,
             ignore_stat_edges=0,
             ignore_stat_nodes=0,
             filter_edges=-1,
@@ -303,30 +303,53 @@ class ClusterGNN(MessagePassing):
             node_dim += 3
         
         layers = list()
-
+        self.reuse = layers_node.resue
+        self.num_layers = layers_node.num_layers
         _node_dim = node_dim
         _edge_dim = edge_dim
-        if layer_sizes_node is None:
-            layer_sizes_node = {'l_1': node_dim}
-            layer_sizes_edge = {'l_1': edge_dim}
-        for j, (node_dim_hid, edge_dim_hid) in enumerate(zip(layer_sizes_node.values(), layer_sizes_edge.values())):
-            if j == len(layer_sizes_node) -1 and not self.use_node_score:
-                skip_node_update = True
-            else:
-                skip_node_update = False
-            layers.append(ClusterLayer(
-                in_channel_node=_node_dim,
-                in_channel_edge=_edge_dim,
-                out_channel_node=node_dim_hid,
-                out_channel_edge=edge_dim_hid,
-                use_batchnorm=batch_norm,
-                use_layernorm=layer_norm,
-                use_drop=drop_out,
-                skip_node_update=skip_node_update))
-            _node_dim = node_dim_hid
-            _edge_dim = edge_dim_hid
+        layer_sizes_node = [layers_node.size for _ in range(layers_node.num_layers)]
+        layer_sizes_edge = [layers_edge.size for _ in range(layers_edge.num_layers)]
+        
+        self.encode_layer = ClusterLayer(
+                    in_channel_node=_node_dim,
+                    in_channel_edge=_edge_dim,
+                    out_channel_node=layer_sizes_node,
+                    out_channel_edge=layer_sizes_edge,
+                    use_batchnorm=batch_norm,
+                    use_layernorm=layer_norm,
+                    use_drop=drop_out,
+                    skip_node_update=skip_node_update)
+        if self.resue:
+            self.layers = ClusterLayer(
+                    in_channel_node=_node_dim,
+                    in_channel_edge=_edge_dim,
+                    out_channel_node=node_dim_hid,
+                    out_channel_edge=edge_dim_hid,
+                    use_batchnorm=batch_norm,
+                    use_layernorm=layer_norm,
+                    use_drop=drop_out,
+                    skip_node_update=skip_node_update)
+        else:
+            for j, (node_dim_hid, edge_dim_hid) in enumerate(zip(layer_sizes_node, layer_sizes_edge)):
+                if j == len(layer_sizes_node) -1 and not self.use_node_score:
+                    skip_node_update = True
+                else:
+                    skip_node_update = False
 
-        self.layers = SevInpSequential(gradient_checkpointing, layers)
+                layers.append(ClusterLayer(
+                    in_channel_node=_node_dim,
+                    in_channel_edge=_edge_dim,
+                    out_channel_node=node_dim_hid,
+                    out_channel_edge=edge_dim_hid,
+                    use_batchnorm=batch_norm,
+                    use_layernorm=layer_norm,
+                    use_drop=drop_out,
+                    skip_node_update=skip_node_update))
+                
+                _node_dim = node_dim_hid
+                _edge_dim = edge_dim_hid
+
+            self.layers = SevInpSequential(gradient_checkpointing, layers)
 
         self.final = nn.Linear(_edge_dim, 1)
         if self.use_node_score:
@@ -635,7 +658,12 @@ class ClusterGNN(MessagePassing):
         edge_attr, _ = self.initial_edge_attributes(traj, pc, edge_index, batch=data['batch'])
 
         # forward pass thourgh layers
-        node_attr, edge_index, edge_attr = self.layers(node_attr, edge_index, edge_attr)
+
+        if self.reuse:
+            for _ in range(self.num_layers):
+                node_attr, edge_index, edge_attr = self.layers(node_attr, edge_index, edge_attr)
+        else:
+            node_attr, edge_index, edge_attr = self.layers(node_attr, edge_index, edge_attr)
 
         # either use edge features or dot product of node features
         src, dst = edge_index
