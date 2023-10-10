@@ -32,11 +32,11 @@ hyperparams:
     augment: False
     layers_edge: 
         size: 64
-        num_layers: 64
+        num_layers: 3
         reuse: False
     layers_node: 
         size: 64
-        num_layers: 64
+        num_layers: 3
         resuse: ${models.hyperparams.layers_edge.reuse}
     gradient_checkpointing: ${gradient_checkpointing}
 loss_hyperparams:
