@@ -238,6 +238,8 @@ def main(cfg):
 
     for iter in range(1, iters+1):
         if cfg.training.hypersearch:
+            if iter == 1:
+                continue
             cfg.training.optim.base_lr = params_list[iter]['lr']
             cfg.training.optim.weight_decay = params_list[iter]['weight_decay']
             cfg.models.loss_hyperparams.gamma_node = params_list[iter]['gamma_node']
@@ -1010,7 +1012,9 @@ def train(rank, cfg, world_size):
             # do_corr_clustering = do_corr_clustering or epoch == cfg.training.epochs - 
             # do corr clustering if oracle node or edge
             do_corr_clustering = do_corr_clustering or cfg.models.hyperparams.oracle_node or cfg.models.hyperparams.oracle_edge
-
+            # no corr clustering when hyper search
+            do_corr_clustering = do_corr_clustering and not cfg.training.hypersearch
+            do_corr_clustering = do_corr_clustering and cfg.do_corr_clustering
             model, optimizer, criterion, best_metric = eval_one_epoch(
                 model,
                 do_corr_clustering,

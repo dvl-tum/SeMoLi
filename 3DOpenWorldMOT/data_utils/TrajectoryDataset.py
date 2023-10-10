@@ -510,11 +510,10 @@ class TrajectoryDataset(PyGDataset):
                         data['pc_list'].numpy(), label.vertices_m))
                 velocities[interior] = vel
                 velocities_city[interior] = vel_city
-                print(vel_city, vel)
-        quit()
+        
         data['velocities'] = velocities
         data['velocities_city'] = velocities_city
-        path = '/'.join(['data'] + path.split('/')[1:])
+        path = '/'.join(['/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/data'] + path.split('/')[2:])
         os.makedirs(os.path.dirname(path), exist_ok=True)
         torch.save(data, osp.join(path))
         return data

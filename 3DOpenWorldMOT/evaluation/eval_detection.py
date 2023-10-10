@@ -101,7 +101,7 @@ def get_feather_files(
     if is_gt:
         # get file name
         split = os.path.basename(paths)
-        file = 'filtered_version.feather'
+        file = 'filtered_version_city.feather'
         file = 'remove_non_drive_' + file if remove_non_drive else file
         file = 'remove_far_' + file if remove_far else file
         file = 'remove_non_move_' + file if remove_non_move else file
@@ -109,7 +109,6 @@ def get_feather_files(
         file = str(remove_non_move_thresh)[
             :5] + '_' + file if remove_non_move else file
         file = split + '_' + file
-        file = file + '_city'
         
         if 'Waymo' in paths:
             path_filtered = os.path.join('/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/Waymo_Converted_filtered', file)
@@ -117,7 +116,7 @@ def get_feather_files(
         else:
             path_filtered = os.path.join('/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/Argoverse2_filtered', file)
             # path_filtered = os.path.join('/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/Argoverse2_filtered', file)
-
+    
     if not is_gt or not os.path.isfile(path_filtered):
         df = None
         for i, path in enumerate(os.listdir(paths)):
@@ -341,7 +340,9 @@ def filter_seq(data, width=25):
         # get track id of remaining objects
         track_ids = [l.track_id for l in labels]
         bool_labels = {l.track_id: b for l, b in zip(labels, bool_labels)}
-
+        vels =  {l.track_id: b for l, b in zip(labels, vels)}
+        vels_city = {l.track_id: b for l, b in zip(labels, vels_city)}
+        
         # filter time df by track ids
         time_df = time_df[time_df['track_uuid'].isin(track_ids)]
         time_df['filter_moving'] = [bool_labels[t] for t in time_df['track_uuid'].values]
