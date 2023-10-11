@@ -495,7 +495,8 @@ def eval_detection(
         use_matched_category=False,
         filter_moving=True,
         store_matched=False,
-        velocity_evaluation=False):
+        velocity_evaluation=False,
+        min_num_interior_pts=20):
 
     if os.path.isdir(trackers_folder) and not len(os.listdir(trackers_folder)):
         return None, np.array([0, 2, 1, 3.142, 0]), None
@@ -544,7 +545,7 @@ def eval_detection(
     dts = dts[np.logical_and(dts['height_m'] > 0.1, 
                              np.logical_and(dts['length_m'] > 0.1, dts['width_m'] > 0.1))]
 
-    # dts = dts[dts['num_interior_pts'] > 50]
+    dts = dts[dts['num_interior_pts'] > min_num_interior_pts]
     # dts = dts[dts['height_m'] < 3]
     # dts = dts[dts['width_m'] < 4]
     # dts = dts[dts['length_m'] < 7]
