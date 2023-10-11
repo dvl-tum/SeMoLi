@@ -90,6 +90,13 @@ class CompetitionCategoriesWaymo(str, Enum):
 
 
 @unique
+class VelocityCategories(str, Enum):
+    TYPE_VECHICLE = 'SLOW'
+    TYPE_PEDESTRIAN = 'MEDIUM'
+    TYPE_CYCLIST = 'FAST'
+
+
+@unique
 class AffinityType(str, Enum):
     """Affinity types for assigning detections to ground truth cuboids."""
 

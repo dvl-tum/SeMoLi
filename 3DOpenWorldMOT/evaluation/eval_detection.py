@@ -68,6 +68,12 @@ _class_dict_waymo = {
         3: 'TYPE_SIGN', 
         4: 'TYPE_CYCLIST'}
 
+_class_dict_velocities = {
+    -1: 'IGNORE',
+    1: 'SLOW',
+    2: 'MEDIUM', 
+    3: 'FAST', }
+
 def quat_to_mat(quat_wxyz):
     """Convert a quaternion to a 3D rotation matrix.
 
@@ -488,7 +494,8 @@ def eval_detection(
         filter_moving_first=False,
         use_matched_category=False,
         filter_moving=True,
-        store_matched=False):
+        store_matched=False,
+        velocity_evaluation=False):
 
     if os.path.isdir(trackers_folder) and not len(os.listdir(trackers_folder)):
         return None, np.array([0, 2, 1, 3.142, 0]), None
@@ -513,9 +520,16 @@ def eval_detection(
         remove_non_move_thresh=remove_non_move_thresh,
         seq_list=seq_to_eval,
         loader=loader,
-        gt_folder=gt_folder)
-    
+        gt_folder=gt_folder)    
     gts['filter_moving'] = gts['velocities'] > remove_non_move_thresh
+
+    if velocity_evaluation:
+        gts_categories = np.ones(gts.shape[0])
+        gts_categories[gts['velocities'] < 1] = -1
+        gts_categories[np.logical_and(gts['velocities'] < 3, gts['velocities'] >= 1)] = 1
+        gts_categories[np.logical_and(gts['velocities'] < 10, gts['velocities'] >= 2)] = 2
+        gts_categories[gts['velocities'] >= 10] = 3
+
 
     if just_eval:
         print("Loaded ground truth...")
@@ -553,7 +567,9 @@ def eval_detection(
     else:                                                                                                                                                           
          gts['category_int'] = gts['category'] 
     
-    if is_waymo:
+    if velocity_evaluation:
+        _class_dict = _class_dict_velocities
+    elif is_waymo:
         _class_dict = _class_dict_waymo
     else:
         _class_dict = _class_dict_argo
