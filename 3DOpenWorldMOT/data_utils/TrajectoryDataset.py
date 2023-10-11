@@ -523,7 +523,7 @@ class TrajectoryDataset(PyGDataset):
 
     def get(self, idx): 
         path = self._processed_paths[idx]
-        if 'velocities' not in data.keys and self.get_vels:
+        if self.get_vels:
             data = self.get_object_velocities(data, path)
         else:
             data = torch.load(path)
