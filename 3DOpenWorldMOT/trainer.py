@@ -361,7 +361,7 @@ def train_one_epoch(model, cfg, epoch, logger, optimizer, train_loader,\
                     quit()
             optimizer.step()
 
-        if torch.isnan(logits[0]).any():
+        if torch.isnan(logits[0][-1]).any():
             logger.info(f'Having nan in logits {logits}....')
             return None, None, None, None
         
@@ -535,7 +535,7 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
             # compute clusters
             logits, all_clusters, edge_index, _ = model(data, eval=True, name=name, corr_clustering=do_corr_clustering)
 
-            if logits is not None and torch.isnan(logits[0]).any():
+            if logits is not None and torch.isnan(logits[0][-1]).any():
                 logger.info(f'Having nan in eval logits {logits}....')
                 return None, None, None, None
 

@@ -255,7 +255,8 @@ class ClusterGNN(MessagePassing):
             remove_non_move_thresh=1.0,
             classification_is_moving_edge=False,
             classification_is_moving_node=False,
-            set_all_pos=False):
+            set_all_pos=False,
+            deep_supervision=False):
         super().__init__(aggr='mean')
         self.k = k
         self.k_eval = k_eval
@@ -266,6 +267,7 @@ class ClusterGNN(MessagePassing):
         self.graph_construction = graph_construction
         self.use_node_score = use_node_score * node_loss
         self.clustering = clustering
+        self.deep_supervision = deep_supervision
         edge_dim = 0
         if '_DP_' in self.edge_attr:
             edge_dim += pos_channels
@@ -299,6 +301,9 @@ class ClusterGNN(MessagePassing):
             node_dim += 3
         
         layers = list()
+        final = list()
+        if self.use_node_score:
+            final_node = list()
         self.reuse = layers_node.reuse
         self.num_layers = layers_node.num_layers
         layer_sizes_node = [layers_node.size for _ in range(1, layers_node.num_layers)]
@@ -313,6 +318,12 @@ class ClusterGNN(MessagePassing):
                     use_layernorm=layer_norm,
                     use_drop=drop_out,
                     skip_node_update=False)
+        
+        if self.deep_supervision:
+            final.append(nn.Linear(edge_dim, 1))
+            if self.use_node_score:
+                final_node.append(nn.Linear(node_dim, 1))
+
         print(self.encode_layer)
         if self.reuse:
             node_dim = layers_node.size
@@ -347,12 +358,16 @@ class ClusterGNN(MessagePassing):
                 
                 node_dim = node_dim_hid
                 edge_dim = edge_dim_hid
+                if self.deep_supervision or j == len(layer_sizes_node) -1 :
+                    final.append(nn.Linear(edge_dim, 1))
+                    if self.use_node_score:
+                        final_node.append(nn.Linear(node_dim, 1))
 
             self.layers = SevInpSequential(gradient_checkpointing, layers)
 
-        self.final = nn.Linear(edge_dim, 1)
+        self.final = SevInpSequential(gradient_checkpointing, final)
         if self.use_node_score:
-            self.final_node = nn.Linear(node_dim, 1)
+            self.final_node = SevInpSequential(gradient_checkpointing, final_node)
         self.sigmoid = torch.nn.Sigmoid()
         # self.sigmoid = torch.nn.Tanh()
         self.cut_edges = cut_edges
@@ -628,23 +643,27 @@ class ClusterGNN(MessagePassing):
         edge_attr, _ = self.initial_edge_attributes(traj, pc, edge_index, batch=data['batch'])
         
         # forward pass thourgh layers
+        final = list()
+        final_node = list()
         node_attr, edge_index, edge_attr = self.encode_layer(node_attr, edge_index, edge_attr)
-        if self.reuse:
-            for _ in range(self.num_layers):
-                node_attr, edge_index, edge_attr = self.layers(node_attr, edge_index, edge_attr)
-        else:
-            node_attr, edge_index, edge_attr = self.layers(node_attr, edge_index, edge_attr)
+        if self.deep_supervision:
+            score = self.final[0](edge_attr)
+            final.append(score)
+            if self.use_node_score:
+                node_score = self.final_node[0](node_attr)
+                final_node.append(node_score)
 
-        # either use edge features or dot product of node features
-        src, dst = edge_index
-        if not use_edge_att:
-            score = (node_attr[src] * node_attr[dst]).sum(dim=-1)
-        else:
-            score = self.final(edge_attr)
-        if self.use_node_score:
-            node_score = self.final_node(node_attr)
-        else:
-            node_score = None
+        for i in range(self.num_layers):
+            if self.reuse:
+                node_attr, edge_index, edge_attr = self.layers(node_attr, edge_index, edge_attr)
+            else:
+                node_attr, edge_index, edge_attr = self.layers[i](node_attr, edge_index, edge_attr)
+            if self.deep_supervision:
+                score = self.final[i+1](edge_attr)
+                final.append(score)
+                if self.use_node_score:
+                    node_score = self.final_node[i+1](node_attr)
+                    final_node.append(node_score)
         
         # return if we have nans in forward pass
         if torch.any(torch.isnan(score)):
@@ -677,11 +696,11 @@ class ClusterGNN(MessagePassing):
             else:
                 print('Invalid clustering choice')
                 quit()
-            return [score, node_score], all_clusters, edge_index, None
+            return [final, final_node], all_clusters, edge_index, None
         elif eval:
-            return [score, node_score], [[]*len(batch_idx[:-1])], edge_index, None
+            return [final, final_node], [[]*len(batch_idx[:-1])], edge_index, None
         
-        return [score, node_score], edge_index, None
+        return [final, final_node], edge_index, None
     
     def corr_clustering(self, iter_data):
         i, (start, end) = iter_data
@@ -961,13 +980,13 @@ class GNNLoss(nn.Module):
                     point_mask)
             
             # filter edge logits, point instances and point categories
-            edge_logits = edge_logits[~point_mask]
+            edge_logits = [e[~point_mask] for e in edge_logits]
             point_instances = point_instances[~point_mask].float()
             point_categories = point_categories[~point_mask]
             point_categories1 = point_categories1[~point_mask]
             edge_index = edge_index[:, ~point_mask]
             
-            if edge_logits.shape[0] == 0:
+            if edge_logits[0].shape[0] == 0:
                 return None, None, None, None
 
             num_edge_pos, num_edge_neg = point_instances.sum(), (point_instances==0).sum()
@@ -981,16 +1000,18 @@ class GNNLoss(nn.Module):
                 pos_weight = pos_weight.cpu()
                 self._edge_loss = nn.BCEWithLogitsLoss(pos_weight=pos_weight).to(self.rank)
             
-            if not self.focal_loss_edge:
-                bce_loss_edge = self._edge_loss(
-                    edge_logits.squeeze(), point_instances.squeeze())
-            else:
-                bce_loss_edge = self._edge_loss(
-                    edge_logits.squeeze(),
-                    point_instances.squeeze(),
-                    alpha=self.alpha_edge,
-                    gamma=self.gamma_edge,
-                    reduction="mean",)
+            bce_loss_edge = 0
+            for _edge_logits in edge_logits:
+                if not self.focal_loss_edge:
+                    bce_loss_edge += self._edge_loss(
+                        _edge_logits.squeeze(), point_instances.squeeze())
+                else:
+                    bce_loss_edge += self._edge_loss(
+                        _edge_logits.squeeze(),
+                        point_instances.squeeze(),
+                        alpha=self.alpha_edge,
+                        gamma=self.gamma_edge,
+                        reduction="mean",)
             
             # LOG LOSS
             loss += self.edge_weight * bce_loss_edge
@@ -1000,7 +1021,7 @@ class GNNLoss(nn.Module):
             log_dict[f'{mode} bce loss edge'][1] = 1
 
             # get accuracy
-            logits_rounded = self.sigmoid(edge_logits.clone().detach()).squeeze()
+            logits_rounded = self.sigmoid(edge_logits[-1].clone().detach()).squeeze()
             hist_edge = np.histogram(logits_rounded.cpu().numpy(), bins=10, range=(0., 1.))
             logits_rounded[logits_rounded>0.5] = 1
             logits_rounded[logits_rounded<=0.5] = 0
@@ -1049,7 +1070,7 @@ class GNNLoss(nn.Module):
                 if self.ignore_stat_nodes:
                     # filter logits and object ground truth
                     is_object = is_object[~is_object_stat]
-                    node_logits = node_logits[~is_object_stat]
+                    node_logits = [n[~is_object_stat] for n in node_logits]
                     object_class = object_class[~is_object_stat]
                 if self.classification_is_moving_node:
                     is_object[is_object_stat] = False
@@ -1061,17 +1082,19 @@ class GNNLoss(nn.Module):
                 pos_weight = num_neg/num_pos
                 self._node_loss = nn.BCEWithLogitsLoss(pos_weight=pos_weight).to(self.rank)
             
-            # compute loss            
-            if not self.focal_loss_node:
-                bce_loss_node = self._node_loss(
-                    node_logits.squeeze(), is_object.squeeze())
-            else:
-                bce_loss_node = self._node_loss(
-                    node_logits.squeeze(),
-                    is_object.squeeze(),
-                    alpha=self.alpha_node,
-                    gamma=self.gamma_node,
-                    reduction="mean",)
+            bce_loss_node = 0
+            for _node_logits in node_logits:
+                # compute loss            
+                if not self.focal_loss_node:
+                    bce_loss_node += self._node_loss(
+                        _node_logits.squeeze(), is_object.squeeze())
+                else:
+                    bce_loss_node += self._node_loss(
+                        _node_logits.squeeze(),
+                        is_object.squeeze(),
+                        alpha=self.alpha_node,
+                        gamma=self.gamma_node,
+                        reduction="mean",)
 
             # log loss
             log_dict[f'{mode} bce loss node'] = torch.zeros(2).to(self.rank)
@@ -1080,7 +1103,7 @@ class GNNLoss(nn.Module):
             loss += self.node_weight * bce_loss_node
 
             # get accuracy
-            logits_rounded_node = self.sigmoid(node_logits.clone().detach()).squeeze()
+            logits_rounded_node = self.sigmoid(node_logits[-1].clone().detach()).squeeze()
             hist_node = np.histogram(logits_rounded_node.cpu().numpy(), bins=10, range=(0., 1.))
             logits_rounded_node[logits_rounded_node>0.5] = 1
             logits_rounded_node[logits_rounded_node<=0.5] = 0
