@@ -460,6 +460,9 @@ class TrajectoryDataset(PyGDataset):
         return data
     
     def get_object_velocities(self, data, path):
+        path = '/'.join(['/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/data'] + path.split('/')[2:])
+        if os.path.isfile():
+            return torch.load(path)
         labels = self.loader.get_labels_at_lidar_timestamp(
             log_id=data['log_id'], lidar_timestamp_ns=data['timestamps'][0].item())
         city_SE3_t1 = self.loader.get_city_SE3_ego(
@@ -480,7 +483,8 @@ class TrajectoryDataset(PyGDataset):
             if len(labels_t2) and label.track_id in ids_t2:
                 # Pose of the object in the destination reference frame.
                 # ego_SE3_object --> from object to ego   
-                center_lab_city = city_SE3_t2.transform_point_cloud(label.dst_SE3_object.translation)
+                center_lab_city = city_SE3_t2.transform_point_cloud(labels_t2[ids_t2.index(
+                    label.track_id)].dst_SE3_object.translation)
                 ego_traj_SE3_obj_traj = labels_t2[ids_t2.index(
                     label.track_id)].dst_SE3_object
                 ego_ref_SE3_obj_ref = label.dst_SE3_object
@@ -513,17 +517,16 @@ class TrajectoryDataset(PyGDataset):
         
         data['velocities'] = velocities
         data['velocities_city'] = velocities_city
-        path = '/'.join(['/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/data'] + path.split('/')[2:])
         os.makedirs(os.path.dirname(path), exist_ok=True)
         torch.save(data, osp.join(path))
         return data
 
     def get(self, idx): 
         path = self._processed_paths[idx]
-        data = torch.load(path)
         if 'velocities' not in data.keys and self.get_vels:
             data = self.get_object_velocities(data, path)
-        
+        else:
+            data = torch.load(path)
         ''' 
         name = path.split('_')[-1]
         if os.path.isfile(f'{self.edge_dir}/{name}'):

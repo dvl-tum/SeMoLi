@@ -119,26 +119,28 @@ def get_feather_files(
     
     if not is_gt or not os.path.isfile(path_filtered):
         df = None
-        for i, path in enumerate(os.listdir(paths)):
-            if seq_list is not None:
-                if path not in seq_list and not is_gt:
-                    continue
-            data = feather.read_feather(
-                os.path.join(paths, path, 'annotations.feather'))
-
+        if os.path.isdir(paths):
+            for i, path in enumerate(os.listdir(paths)):
+                if seq_list is not None:
+                    if path not in seq_list and not is_gt:
+                        continue
+                data = feather.read_feather(
+                    os.path.join(paths, path, 'annotations.feather'))
+                data['log_id'] = [path] * data.shape[0]
+                if df is None:
+                    df = data
+                else:
+                    df = df.append(data)
+        else:
+            df = feather.read_feather(paths)
+        
+        if df['category'].dtypes != int:
             if 'Argo' in paths or not is_gt:
                 def convert2int(x): return class_dict_argo[x]
-                data['category'] = data['category'].apply(convert2int)
+                df['category'] = df['category'].apply(convert2int)
             else:
                 def str2ing(x): return int(x)
-                data['category'] = data['category'].apply(str2ing)
-
-            data['log_id'] = [path] * data.shape[0]
-
-            if df is None:
-                df = data
-            else:
-                df = df.append(data)
+                df['category'] = df['category'].apply(str2ing)
 
         df = df.astype({'num_interior_pts': 'int64'})
 
@@ -471,7 +473,7 @@ def eval_detection(
         remove_non_drive=True,
         remove_non_move=True,
         remove_non_move_strategy='per_frame',
-        remove_non_move_thresh=3000/3600,
+        remove_non_move_thresh=1,
         split='val',
         visualize=False,
         debug=False,
@@ -488,7 +490,7 @@ def eval_detection(
         filter_moving=True,
         store_matched=False):
 
-    if not len(os.listdir(trackers_folder)):
+    if os.path.isdir(trackers_folder) and not len(os.listdir(trackers_folder)):
         return None, np.array([0, 2, 1, 3.142, 0]), None
 
     is_waymo = 'waymo' in gt_folder or 'Waymo' in gt_folder
@@ -512,6 +514,8 @@ def eval_detection(
         seq_list=seq_to_eval,
         loader=loader,
         gt_folder=gt_folder)
+    
+    gts['filter_moving'] = gts['velocities'] > remove_non_move_thresh
 
     if just_eval:
         print("Loaded ground truth...")

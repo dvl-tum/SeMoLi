@@ -277,10 +277,12 @@ def track(rank, cfg, world_size):
             batch_size=1,
             sampler=sampler)
     
-    for data in dataloader:
+    for i, data in enumerate(dataloader):
         seq_name, dataset_path, gt_path, split, detection_set, percentage = data
         seq_name, dataset_path, gt_path, split, detection_set, percentage = seq_name[0], dataset_path[0], gt_path[0], split[0], detection_set[0], percentage[0]
-        
+        if os.path.isdir(os.path.join(cfg.tracker_options.out_path_for_eval, cfg.tracker_options.registered_dets, split, seq_name)):
+            continue
+        print(i, len(dataloader))
         loader = AV2SensorDataLoader(data_dir=Path(f'{cfg.data.data_dir}_{split}/Waymo_Converted/{split}'), labels_dir=Path(f'{cfg.data.data_dir}_{split}/Waymo_Converted/{split}'))    
         detsprocessor = InitialDetProcessor(
             tracker_type=cfg.tracker_options.tracker_type,
@@ -315,6 +317,9 @@ def track(rank, cfg, world_size):
         if cfg.tracker_options.convert_initial:
             logger.info('Converting initial...')
             detections = detsprocessor.get_initial_dets(seq_name, detection_set)
+            if not len(detections):
+                print(f'No initial detections for sequences {seq_name}')
+                continue
             detsprocessor.to_feather(detections, seq_name, os.path.join(cfg.tracker_options.out_path_for_eval, cfg.tracker_options.initial_dets), detection_set)
         if cfg.tracker_options.collaps:
             logger.info('Collapsing...')

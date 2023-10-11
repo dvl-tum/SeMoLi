@@ -85,7 +85,7 @@ class CompetitionCategories(str, Enum):
 class CompetitionCategoriesWaymo(str, Enum):
     TYPE_VECHICLE = 'TYPE_VECHICLE'
     TYPE_PEDESTRIAN = 'TYPE_PEDESTRIAN'
-    TYPE_SIGN = 'TYPE_SIGN'
+    # TYPE_SIGN = 'TYPE_SIGN'
     TYPE_CYCLIST = 'TYPE_CYCLIST'
 
 

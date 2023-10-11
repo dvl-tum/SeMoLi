@@ -249,6 +249,7 @@ def summarize_metrics(
 
     average_precisions = pd.DataFrame({t: 0.0 for t in cfg.affinity_thresholds_m}, index=cfg.categories)
     precisions = pd.DataFrame({t: 0.0 for t in cfg.affinity_thresholds_m}, index=cfg.categories)
+    recalls = pd.DataFrame({t: 0.0 for t in cfg.affinity_thresholds_m}, index=cfg.categories)
     fps = 0
     all_results_df = pd.DataFrame({f'{met} {t}': 0.0 for met in ['pr', 'ap', 'tps', 'fps', 'fns'] for t in cfg.affinity_thresholds_m}, index=cfg.categories)
     all_results_df['num gt'] = np.zeros(all_results_df.shape[0])
@@ -386,11 +387,13 @@ def summarize_metrics(
             # Record the average precision.
             average_precisions.loc[category, affinity_threshold_m] = threshold_average_precision
             precisions.loc[category, affinity_threshold_m] = true_positives.sum()/(true_positives.sum()+(~true_positives).sum())
+            recalls.loc[category, affinity_threshold_m] = true_positives.sum()/num_gts
             all_results_df.loc[category, f'pr {affinity_threshold_m}'] = true_positives.sum()/(true_positives.sum()+(~true_positives).sum())
             all_results_df.loc[category, f'ap {affinity_threshold_m}'] = threshold_average_precision
 
         print("\t AVERAGE PRECISIONS ", average_precisions.loc[category].values)
         print("\t PRECISIONS ", precisions.loc[category].values)
+        print("\t RECALLS ", recalls.loc[category].values)
         mean_average_precisions: NDArrayFloat = average_precisions.loc[category].to_numpy().mean()
 
         # Select only the true positives for each instance.

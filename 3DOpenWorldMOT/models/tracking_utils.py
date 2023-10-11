@@ -474,6 +474,8 @@ def load_initial_detections(out_path, split, seq=None, tracks=False, every_x_fra
     detections = defaultdict(list)
     if tracks:
         detections = defaultdict(dict)
+    if not os.path.isdir(p):
+        return detections
     for d in os.listdir(p):
         dict_key = int(d.split('_')[0])
 
@@ -641,9 +643,10 @@ def to_feather(detections, log_id, out_path, split, rank, precomp_dets=False, na
         dets = detections[timestamp]
         for det in dets:
 
-            # only keep bounding boxes with lwh > 0
-            # if det.lwh[0] < 0.1 or det.lwh[1] < 0.1 or det.lwh[2] < 0.1:
-            #     continue
+            # only keep bounding boxes with lwh > 0 
+            # necessay also for 3DIoU
+            if det.lwh[0] < 0.1 or det.lwh[1] < 0.1 or det.lwh[2] < 0.1:
+                continue
 
             # quaternion rotation around z axis
             quat = torch.tensor([torch.cos(det.alpha/2), 0, 0, torch.sin(det.alpha/2)]).numpy()

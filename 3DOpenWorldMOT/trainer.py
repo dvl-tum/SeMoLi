@@ -316,7 +316,7 @@ def train_one_epoch(model, cfg, epoch, logger, optimizer, train_loader,\
     print(model)
     # for batch, data in tqdm(enumerate(train_loader), total=len(train_loader), smoothing=0.9):
     for batch, data in enumerate(train_loader):
-        if batch % 100 == 0:
+        if batch % 50 == 0:
             logger.info(f'Epoch {epoch}: batch {batch}/{len(train_loader)}')
         data = data.to(rank)
         optimizer.zero_grad()
@@ -530,7 +530,7 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
         # Iterate over validation set
         # for batch, (data) in tqdm(enumerate(val_loader), total=len(val_loader), smoothing=0.9):
         for batch, (data) in enumerate(val_loader):
-            if batch % 100 == 0:
+            if batch % 50 == 0:
                 logger.info(f'Epoch {epoch}: batch {batch}/{len(val_loader)}')
             # compute clusters
             logits, all_clusters, edge_index, _ = model(data, eval=True, name=name, corr_clustering=do_corr_clustering)

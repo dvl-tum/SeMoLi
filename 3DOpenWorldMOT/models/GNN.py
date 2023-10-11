@@ -167,23 +167,19 @@ def get_mean_min_max(_in, num_edges):
 
 def get_per_time_traj_diff(traj, edge_index, pos_dim):
     a = traj.view(traj.shape[0], -1, pos_dim)[edge_index[0]]
-    a = a.view(edge_index.shape[1], -1)
-
-    b = traj.view(traj.shape[0], -1, pos_dim)[edge_index[1]]
-    b = b.view(edge_index.shape[1], -1)
-
     a = a.view(-1, pos_dim)
+    b = traj.view(traj.shape[0], -1, pos_dim)[edge_index[1]]
     b = b.view(-1, pos_dim)
-    return torch.nn.PairwiseDistance(p=2)(a, b)
+
+    return torch.nn.PairwiseDistance(p=2)(a, b).view(traj.shape[0], -1)
 
 def get_per_time_pos_traj_diff(traj, pos, edge_index, pos_dim):
-    a = traj.view(traj.shape[0], -1, pos_dim)[edge_index[0]]+pos[edge_index[0]].unsqueeze(1)
-    a = a.view(edge_index.shape[1], -1)
-    b = traj.view(traj.shape[0], -1, pos_dim)[edge_index[1]]+pos[edge_index[1]].unsqueeze(1)
-    b = b.view(edge_index.shape[1], -1)
+    a = traj.view(traj.shape[0], -1, pos_dim)[edge_index[0]]+pos[edge_index[0]].unsqueeze(1)  
     a = a.view(-1, pos_dim)
+    b = traj.view(traj.shape[0], -1, pos_dim)[edge_index[1]]+pos[edge_index[1]].unsqueeze(1)
     b = b.view(-1, pos_dim)
-    return torch.nn.PairwiseDistance(p=2)(a, b)
+    
+    return torch.nn.PairwiseDistance(p=2)(a, b).view(traj.shape[0], -1)
 
 def get_per_time_vel_diff(traj, time, _batch, dataset, edge_index, pos_dim):
     a = traj.view(traj.shape[0], -1, pos_dim)
@@ -319,11 +315,13 @@ class ClusterGNN(MessagePassing):
                     skip_node_update=False)
         print(self.encode_layer)
         if self.reuse:
+            node_dim = layers_node.size
+            edge_dim = layers_edge.size
             self.layers = ClusterLayer(
-                    in_channel_node=node_dim,
-                    in_channel_edge=edge_dim,
-                    out_channel_node=node_dim_hid,
-                    out_channel_edge=edge_dim_hid,
+                    in_channel_node=layers_node.size,
+                    in_channel_edge=layers_edge.size,
+                    out_channel_node=layers_node.size,
+                    out_channel_edge=layers_edge.size,
                     use_batchnorm=batch_norm,
                     use_layernorm=layer_norm,
                     use_drop=drop_out,
@@ -657,7 +655,7 @@ class ClusterGNN(MessagePassing):
         
         # get initial edge attributes
         edge_attr, _ = self.initial_edge_attributes(traj, pc, edge_index, batch=data['batch'])
-
+        
         # forward pass thourgh layers
         node_attr, edge_index, edge_attr = self.encode_layer(node_attr, edge_index, edge_attr)
         if self.reuse:
