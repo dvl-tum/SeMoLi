@@ -527,8 +527,8 @@ def eval_detection(
         loader=loader,
         gt_folder=gt_folder)
     dts = dts.drop_duplicates()
-    # dts = dts[np.logical_and(dts['height_m'] > 0.1, 
-    #                          np.logical_and(dts['length_m'] > 0.1, dts['width_m'] > 0.1))]
+    dts = dts[np.logical_and(dts['height_m'] > 0.1, 
+                             np.logical_and(dts['length_m'] > 0.1, dts['width_m'] > 0.1))]
 
     # dts = dts[dts['num_interior_pts'] > 50]
     # dts = dts[dts['height_m'] < 3]
