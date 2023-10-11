@@ -277,13 +277,14 @@ def filter_seq(data, width=0):
                     city_SE3_t2 = loader.get_city_SE3_ego(
                         seq, int(timestamps[i+1]))
                     ids_t2 = [label.track_id for label in labels_t2]
+                    t_ = i+1
                 else:
                     labels_t2 = loader.get_labels_at_lidar_timestamp(
                         log_id=seq, lidar_timestamp_ns=int(timestamps[i-1]))
                     city_SE3_t2 = loader.get_city_SE3_ego(
                         seq, int(timestamps[i-1]))
                     ids_t2 = [label.track_id for label in labels_t2]
-
+                    t_ = i-1
                 city_SE3_t1 = loader.get_city_SE3_ego(
                     seq, int(timestamps[i]))
                 vels = list()
@@ -297,7 +298,9 @@ def filter_seq(data, width=0):
                     if len(labels_t2) and label.track_id in ids_t2:
                         # Pose of the object in the destination reference frame.
                         # ego_SE3_object --> from object to ego   
-                        center_lab_city = city_SE3_t2.transform_point_cloud(label.dst_SE3_object.translation)
+                        center_lab_city = city_SE3_t2.transform_point_cloud(
+                                labels_t2[ids_t2.index(
+                            label.track_id)].dst_SE3_object.translation)
                         ego_traj_SE3_obj_traj = labels_t2[ids_t2.index(
                             label.track_id)].dst_SE3_object
                         ego_ref_SE3_obj_ref = label.dst_SE3_object
@@ -317,10 +320,10 @@ def filter_seq(data, width=0):
                         dist_city = np.linalg.norm(translation_city)
                         if 'Argo' in path:
                             diff_time = (
-                                timestamps[i+1]-t) / np.power(10, 9)
+                                timestamps[t_]-t) / np.power(10, 9)
                         else:
                             diff_time = (
-                                timestamps[i+1]-t) / np.power(10, 6)
+                                timestamps[t_]-t) / np.power(10, 6)
                         vel = dist/diff_time
                         vel_city = dist_city/diff_time
                         vels.append(vel)
@@ -534,9 +537,9 @@ def eval_detection(
         use_matched_category = True
         gts_categories = np.ones(gts.shape[0])
         gts_categories[gts['velocities'] < 1] = -1
-        gts_categories[np.logical_and(gts['velocities'] < 3, gts['velocities'] >= 1)] = 1
-        gts_categories[np.logical_and(gts['velocities'] < 10, gts['velocities'] >= 2)] = 2
-        gts_categories[gts['velocities'] >= 10] = 3
+        gts_categories[np.logical_and(gts['velocities'] < 2, gts['velocities'] >= 1)] = 1
+        gts_categories[np.logical_and(gts['velocities'] < 5, gts['velocities'] >= 2)] = 2
+        gts_categories[gts['velocities'] >= 5] = 3
         gts['category'] = gts_categories
 
     if just_eval:
