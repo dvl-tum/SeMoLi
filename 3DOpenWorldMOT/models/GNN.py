@@ -171,7 +171,7 @@ def get_per_time_traj_diff(traj, edge_index, pos_dim):
     b = traj.view(traj.shape[0], -1, pos_dim)[edge_index[1]]
     b = b.view(-1, pos_dim)
 
-    return torch.nn.PairwiseDistance(p=2)(a, b).view(traj.shape[0], -1)
+    return torch.nn.PairwiseDistance(p=2)(a, b).view(edge_index.shape[1], -1)
 
 def get_per_time_pos_traj_diff(traj, pos, edge_index, pos_dim):
     a = traj.view(traj.shape[0], -1, pos_dim)[edge_index[0]]+pos[edge_index[0]].unsqueeze(1)  
@@ -179,7 +179,7 @@ def get_per_time_pos_traj_diff(traj, pos, edge_index, pos_dim):
     b = traj.view(traj.shape[0], -1, pos_dim)[edge_index[1]]+pos[edge_index[1]].unsqueeze(1)
     b = b.view(-1, pos_dim)
     
-    return torch.nn.PairwiseDistance(p=2)(a, b).view(traj.shape[0], -1)
+    return torch.nn.PairwiseDistance(p=2)(a, b).view(edge_index.shape[1], -1)
 
 def get_per_time_vel_diff(traj, time, _batch, dataset, edge_index, pos_dim):
     a = traj.view(traj.shape[0], -1, pos_dim)
@@ -579,31 +579,6 @@ class ClusterGNN(MessagePassing):
 
         return edge_index
     
-    def velocity_augment(self, data):
-        for instance in data['point_instances'].unique():
-            # don't augment background velocity
-            if instance == 0:
-                continue
-
-            # should we augment and if yes which scale
-            do_augment = torch.randint(2, (1,))
-            scale = torch.rand(1)*10
-            if not do_augment:
-                continue
-
-            # augment and adapt moving mask
-            instance_mask = data['point_instances'] == instance
-            data['traj'][instance_mask] = data['traj'][instance_mask] * scale.to(data['traj'].device)
-            dist = torch.linalg.norm(data['traj'][instance_mask][:, 1, :-1].mean(dim=0))
-            if not 'waymo' in self.dataset:
-                diff_time = (
-                    data['timestamps'][0, 1]-data['timestamps'][0, 0]) / np.power(10, 9)
-            else:
-                diff_time = (
-                    data['timestamps'][0, 1]-data['timestamps'][0, 0]) / np.power(10, 6)
-            vel = dist/diff_time
-            data['point_instances_mov'][instance_mask] = vel > self.remove_non_move_thresh
-
     def forward(self, data, eval=False, use_edge_att=True, name='General', corr_clustering=False):
         '''
         clustering: 'heuristic' / 'correlation'
@@ -611,10 +586,6 @@ class ClusterGNN(MessagePassing):
         # if no points return
         if data['traj'].shape[0] == 0:
             return [None, None], list(), None, None
-        
-        # augment data by changing velovity of objects
-        if not eval and self.augment:
-            self.velocity_augment(data)
         
         # extract data
         data = data.to(self.rank)

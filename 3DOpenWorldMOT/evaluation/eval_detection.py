@@ -3,7 +3,7 @@ import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
 from av2.evaluation.detection.eval import evaluate
 from av2.evaluation.detection.utils import DetectionCfg
-from av2.evaluation.detection.constants import CompetitionCategories, CompetitionCategoriesWaymo 
+from av2.evaluation.detection.constants import CompetitionCategories, CompetitionCategoriesWaymo, VelocityCategories
 from pathlib import Path
 from av2.utils.io import read_feather, read_all_annotations
 import numpy as np
@@ -107,7 +107,7 @@ def get_feather_files(
     if is_gt:
         # get file name
         split = os.path.basename(paths)
-        file = 'filtered_version_city.feather'
+        file = 'filtered_version_city_w0.feather'
         file = 'remove_non_drive_' + file if remove_non_drive else file
         file = 'remove_far_' + file if remove_far else file
         file = 'remove_non_move_' + file if remove_non_move else file
@@ -200,7 +200,7 @@ def get_feather_files(
 
     return df
 
-def filter_seq(data, width=25):
+def filter_seq(data, width=0):
     # generate filtered version
     filtered = None
     map_dict = dict()
@@ -278,8 +278,11 @@ def filter_seq(data, width=25):
                         seq, int(timestamps[i+1]))
                     ids_t2 = [label.track_id for label in labels_t2]
                 else:
-                    labels_t2 = list()
-                    ids_t2 = list()
+                    labels_t2 = loader.get_labels_at_lidar_timestamp(
+                        log_id=seq, lidar_timestamp_ns=int(timestamps[i-1]))
+                    city_SE3_t2 = loader.get_city_SE3_ego(
+                        seq, int(timestamps[i-1]))
+                    ids_t2 = [label.track_id for label in labels_t2]
 
                 city_SE3_t1 = loader.get_city_SE3_ego(
                     seq, int(timestamps[i]))
@@ -496,7 +499,8 @@ def eval_detection(
         filter_moving=True,
         store_matched=False,
         velocity_evaluation=False,
-        min_num_interior_pts=20):
+        min_num_interior_pts=20,
+        waymo_style=True):
 
     if os.path.isdir(trackers_folder) and not len(os.listdir(trackers_folder)):
         return None, np.array([0, 2, 1, 3.142, 0]), None
@@ -523,14 +527,18 @@ def eval_detection(
         loader=loader,
         gt_folder=gt_folder)    
     gts['filter_moving'] = gts['velocities'] > remove_non_move_thresh
-
+    if waymo_style:
+        print(gts.shape)
+        gts = gts[np.logical_and(gts['tx_m'] < 50, gts['ty_m'] < 20)]
+        print(gts.shape)
     if velocity_evaluation:
+        use_matched_category = True
         gts_categories = np.ones(gts.shape[0])
         gts_categories[gts['velocities'] < 1] = -1
         gts_categories[np.logical_and(gts['velocities'] < 3, gts['velocities'] >= 1)] = 1
         gts_categories[np.logical_and(gts['velocities'] < 10, gts['velocities'] >= 2)] = 2
         gts_categories[gts['velocities'] >= 10] = 3
-
+        gts['category'] = gts_categories
 
     if just_eval:
         print("Loaded ground truth...")
@@ -546,6 +554,12 @@ def eval_detection(
                              np.logical_and(dts['length_m'] > 0.1, dts['width_m'] > 0.1))]
 
     dts = dts[dts['num_interior_pts'] > min_num_interior_pts]
+ 
+    if waymo_style:
+        print(dts.shape)
+        dts = dts[np.logical_and(dts['tx_m'] < 50, dts['ty_m'] < 20)]
+        print(dts.shape)
+    # dts = dts[dts['num_interior_pts'] > 50]
     # dts = dts[dts['height_m'] < 3]
     # dts = dts[dts['width_m'] < 4]
     # dts = dts[dts['length_m'] < 7]
@@ -598,7 +612,9 @@ def eval_detection(
         # Defaults to competition parameters.
         if print_detail:
             print(f' \t Setting categories to Waymo categories {is_waymo}')
-        if is_waymo:
+        if velocity_evaluation:
+            categories : Tuple[str, ...] = tuple(x.value for x in VelocityCategories)
+        elif is_waymo:
             categories : Tuple[str, ...] = tuple(x.value for x in CompetitionCategoriesWaymo)
         else:
             categories : Tuple[str, ...] = tuple(x.value for x in CompetitionCategories)
@@ -661,6 +677,7 @@ def eval_detection(
         # AP    ATE    ASE    AOE    CDS
         _filter_class = filter_class if filter_class == -1 else _class_dict[filter_class]
         if _filter_class == -1:
+            print('\tDetection metrics: ', metrics.loc['AVERAGE_METRICS'].values)
             metric = metrics.loc['AVERAGE_METRICS'].values
         else:
             print('\tDetection metrics: ', metrics.loc[_filter_class].values)

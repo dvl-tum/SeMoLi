@@ -1,3 +1,4 @@
+import copy
 import glob
 from torch.utils.data import Dataset, DataLoader
 from torch_geometric.data import Dataset as PyGDataset
@@ -53,7 +54,9 @@ class TrajectoryDataset(PyGDataset):
             detection_set='train_gnn',
             filtered_file_path=None,
             detection_out_path=None,
-            get_vels=False):
+            get_vels=False, 
+            vel_augment=False,
+            remove_non_move_thresh=1):
         
         if 'gt' in _processed_dir:
             self.trajectory_dir = Path(os.path.join(trajectory_dir, split))
@@ -80,6 +83,8 @@ class TrajectoryDataset(PyGDataset):
         self.filtered_file_path = filtered_file_path
         self.edge_dir = edge_dir
         self.get_vels = get_vels
+        self.vel_augment = vel_augment
+        self.remove_non_move_thresh = remove_non_move_thresh
         # for debugging
         if debug:
             if split == 'val' and 'Argo' in self.data_dir:
@@ -461,7 +466,7 @@ class TrajectoryDataset(PyGDataset):
     
     def get_object_velocities(self, data, path):
         path = '/'.join(['/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/data'] + path.split('/')[2:])
-        if os.path.isfile():
+        if os.path.isfile(path):
             return torch.load(path)
         labels = self.loader.get_labels_at_lidar_timestamp(
             log_id=data['log_id'], lidar_timestamp_ns=data['timestamps'][0].item())
@@ -521,12 +526,45 @@ class TrajectoryDataset(PyGDataset):
         torch.save(data, osp.join(path))
         return data
 
+    def velocity_augment(self, data):
+        point_instances_mov_new = copy.deepcopy(data['point_instances'])
+        for instance in data['point_instances'].unique():
+            # don't augment background velocity
+            if instance == 0:
+                continue
+
+            # should we augment and if yes which scale
+            do_augment = torch.randint(2, (1,))
+            # scale*10*np.exp(-torch.linalg.norm(data['traj'][instance_mask][:, 1, :-1].mean(dim=0)))
+            scale = torch.rand(1)*10
+            instance_mask = (data['point_instances'] == instance).squeeze()
+            if not do_augment:
+                if data['point_instances_mov'][:, instance_mask].sum() == 0:
+                    point_instances_mov_new[:, instance_mask] = 0
+                continue
+            # augment and adapt moving mask
+            data['traj'][instance_mask] = data['traj'][instance_mask] * scale.to(data['traj'].device)
+            dist = torch.linalg.norm(data['traj'][instance_mask][:, 1, :-1].mean(dim=0))
+            if 'Argo' in self.data_dir:
+                diff_time = (
+                    data['timestamps'][1]-data['timestamps'][0]) / np.power(10, 9)
+            else:
+                diff_time = (
+                    data['timestamps'][1]-data['timestamps'][0]) / np.power(10, 6)
+            vel = dist/diff_time
+            if vel < self.remove_non_move_thresh:
+                point_instances_mov_new[:, instance_mask] = 0
+        data['point_instances_mov'] = point_instances_mov_new
+        
+        return data
+
     def get(self, idx): 
         path = self._processed_paths[idx]
-        if self.get_vels:
+        data = torch.load(path)
+        if 'velocities' not in data.keys and self.get_vels:
             data = self.get_object_velocities(data, path)
-        else:
-            data = torch.load(path)
+        if self.vel_augment:
+            data = self.velocity_augment(data)
         ''' 
         name = path.split('_')[-1]
         if os.path.isfile(f'{self.edge_dir}/{name}'):
@@ -594,7 +632,9 @@ def get_TrajectoryDataLoader(cfg, name=None, train=True, val=True, test=False):
             _processed_dir=cfg.data.processed_dir + '_train',
             percentage_data=cfg.data.percentage_data_train,
             filtered_file_path=cfg.data.filtered_file_path,
-            get_vels=cfg.data.get_vels)
+            get_vels=cfg.data.get_vels,
+            vel_augment=cfg.data.vels_augment,
+            remove_non_move_thresh=cfg.data.remove_static_thresh)
     else:
         train_data = None
     if val:
