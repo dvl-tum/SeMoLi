@@ -268,7 +268,7 @@ def main(cfg):
             in_args = (cfg, world_size)
             mp.spawn(train, args=in_args, nprocs=world_size, join=True)
         elif torch.cuda.is_available():
-            train(1, cfg, world_size=1)
+            train(0, cfg, world_size=1)
         else:
             train('cpu', cfg, world_size=1)
 
@@ -312,8 +312,6 @@ def train_one_epoch(model, cfg, epoch, logger, optimizer, train_loader,\
     num_edge_pos = torch.zeros(len(train_loader)).to(rank)
     num_edge_neg = torch.zeros(len(train_loader)).to(rank)
     
-    collaps_dict = dict()
-    print(model)
     # for batch, data in tqdm(enumerate(train_loader), total=len(train_loader), smoothing=0.9):
     for batch, data in enumerate(train_loader):
         if batch % 50 == 0:
@@ -361,7 +359,7 @@ def train_one_epoch(model, cfg, epoch, logger, optimizer, train_loader,\
                     quit()
             optimizer.step()
 
-        if torch.isnan(logits[0]).any():
+        if torch.isnan(logits[0][-1]).any():
             logger.info(f'Having nan in logits {logits}....')
             return None, None, None, None
         
@@ -535,7 +533,7 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
             # compute clusters
             logits, all_clusters, edge_index, _ = model(data, eval=True, name=name, corr_clustering=do_corr_clustering)
 
-            if logits is not None and torch.isnan(logits[0]).any():
+            if logits is not None and torch.isnan(logits[0][-1]).any():
                 logger.info(f'Having nan in eval logits {logits}....')
                 return None, None, None, None
 

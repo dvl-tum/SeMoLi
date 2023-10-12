@@ -571,6 +571,7 @@ def eval_detection(
     dts = dts[np.logical_or(dts['num_interior_pts'] > min_num_interior_pts, dts['num_interior_pts']==-1)]
     print(f'Numer of detections after num interior threshold {dts.shape[0]}')
     print(dts)
+
     if waymo_style:
         dts = dts[np.logical_and(dts['tx_m'] < 50, dts['ty_m'] < 20)]
     

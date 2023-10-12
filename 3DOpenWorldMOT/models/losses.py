@@ -29,7 +29,7 @@ def sigmoid_focal_loss(
     inputs: torch.Tensor,
     targets: torch.Tensor,
     velocity: torch.Tensor = torch.zeros(1),
-    vel_ranges: dict = dict(),
+    vel_ranges: dict = {0: 1-0.01, 2: 1-0.06, 5: 1-0.27, 100000: 1-0.27},
     alpha: float = 0.25,
     gamma: float = 2,
     reduction: str = "none",
@@ -65,17 +65,17 @@ def sigmoid_focal_loss(
     p_t = p * targets + (1 - p) * (1 - targets)
     loss = ce_loss * ((1 - p_t) ** gamma)
 
-    if alpha >= 0 and not weight_velocity:
+    if alpha >= 0:
         alpha_t = alpha * targets + (1 - alpha) * (1 - targets)
         loss = alpha_t * loss
 
-    elif weight_velocity:
+    if weight_velocity:
         weight = torch.ones(targets.shape[0])
         keys = list(vel_ranges.keys())
         for i in range(len(vel_ranges)-1):
             weight[torch.logical_and(
-                velocity>vel_ranges[keys[i]],
-                velocity>vel_ranges[keys[i+1]])] = vel_ranges[keys[i]]
+                velocity>=keys[i],
+                velocity<keys[i+1])] = vel_ranges[keys[i]]
         loss = weight.to(loss.device) * loss
 
     # Check reduction option and return loss accordingly
