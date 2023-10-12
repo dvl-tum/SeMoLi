@@ -268,7 +268,7 @@ def main(cfg):
             in_args = (cfg, world_size)
             mp.spawn(train, args=in_args, nprocs=world_size, join=True)
         elif torch.cuda.is_available():
-            train(1, cfg, world_size=1)
+            train(0, cfg, world_size=1)
         else:
             train('cpu', cfg, world_size=1)
 
@@ -312,8 +312,6 @@ def train_one_epoch(model, cfg, epoch, logger, optimizer, train_loader,\
     num_edge_pos = torch.zeros(len(train_loader)).to(rank)
     num_edge_neg = torch.zeros(len(train_loader)).to(rank)
     
-    collaps_dict = dict()
-    print(model)
     # for batch, data in tqdm(enumerate(train_loader), total=len(train_loader), smoothing=0.9):
     for batch, data in enumerate(train_loader):
         if batch % 50 == 0:

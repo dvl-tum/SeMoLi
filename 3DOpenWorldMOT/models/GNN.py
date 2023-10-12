@@ -320,11 +320,10 @@ class ClusterGNN(MessagePassing):
                     skip_node_update=False)
         
         if self.deep_supervision:
-            final.append(nn.Linear(edge_dim, 1))
+            final.append(nn.Linear(layer_sizes_node[0], 1))
             if self.use_node_score:
-                final_node.append(nn.Linear(node_dim, 1))
+                final_node.append(nn.Linear(layer_sizes_edge[0], 1))
 
-        print(self.encode_layer)
         if self.reuse:
             node_dim = layers_node.size
             edge_dim = layers_edge.size
@@ -337,6 +336,11 @@ class ClusterGNN(MessagePassing):
                     use_layernorm=layer_norm,
                     use_drop=drop_out,
                     skip_node_update=False)
+            for j in range(1, layers_edge.num_layers):
+                if self.deep_supervision or j == len(layer_sizes_node)-1 :
+                    final.append(nn.Linear(layers_edge.size, 1))
+                    if self.use_node_score:
+                        final_node.append(nn.Linear(layers_node.size, 1))
         else:
             node_dim = layer_sizes_node[0]
             edge_dim = layer_sizes_edge[0]
@@ -368,6 +372,7 @@ class ClusterGNN(MessagePassing):
         self.final = SevInpSequential(gradient_checkpointing, final)
         if self.use_node_score:
             self.final_node = SevInpSequential(gradient_checkpointing, final_node)
+
         self.sigmoid = torch.nn.Sigmoid()
         # self.sigmoid = torch.nn.Tanh()
         self.cut_edges = cut_edges
@@ -522,8 +527,8 @@ class ClusterGNN(MessagePassing):
                 _node_attr.mean(dim=-1)]).T
             node_attr.append(_node_attr)
             node_dim += 3
-        
-        node_attr = torch.stack(node_attr).squeeze().float()
+
+        node_attr = torch.hstack(node_attr).squeeze().float()
 
         return node_attr, node_dim
     
@@ -631,9 +636,14 @@ class ClusterGNN(MessagePassing):
                     edge_index = self.get_graph(
                         graph_attr, self.r, max_num_neighbors=k, batch_idx=batch_idx, type='radius')
                 else:
+                    print(self.r, k, self.graph_construction)
                     edge_index = radius_graph(graph_attr, self.r, data['batch'], max_num_neighbors=k)
         else:
             edge_index = data['edge_index']
+
+        for k, (i, j) in enumerate(zip(batch_idx[1:], batch_idx[:-1])):
+            e = edge_index[:, torch.logical_and(edge_index[0]>=j, edge_index[0]<i)] - j
+            self.visualize(torch.arange(i-j), e, pc[j:i], torch.ones(i-j), data.timestamps[k, 0])
 
         # if there are no edges in pc --> very sparse?!
         if edge_index.shape[1] == 0:
@@ -653,7 +663,7 @@ class ClusterGNN(MessagePassing):
                 node_score = self.final_node[0](node_attr)
                 final_node.append(node_score)
 
-        for i in range(self.num_layers):
+        for i in range(self.num_layers-1):
             if self.reuse:
                 node_attr, edge_index, edge_attr = self.layers(node_attr, edge_index, edge_attr)
             else:
@@ -664,11 +674,12 @@ class ClusterGNN(MessagePassing):
                 if self.use_node_score:
                     node_score = self.final_node[i+1](node_attr)
                     final_node.append(node_score)
-        
-        # return if we have nans in forward pass
-        if torch.any(torch.isnan(score)):
-            print('Having nan during forward pass...')
-            return [torch.nan, torch.nan], edge_index, None
+            elif i == self.num_layers-2:
+                score = self.final[-1](edge_attr)
+                final.append(score)
+                if self.use_node_score:
+                    node_score = self.final_node[-1](node_attr)
+                    final_node.append(node_score)
 
         # evaluate correlation clustering
         if eval and corr_clustering:
@@ -747,6 +758,8 @@ class ClusterGNN(MessagePassing):
             graph_edge_index = graph_edge_index[:, (graph_edge_score > self.filter_edges).squeeze()]
             graph_edge_score = graph_edge_score[(graph_edge_score > self.filter_edges).squeeze()]
         
+        self.visualize(torch.arange(end-start), graph_edge_index-start.item(), pc[start:end], torch.ones(end-start), data.timestamps[i, 0], name='filtered')
+        
         # filter egdes using node score to make problem smaller
         graph_edge_index = graph_edge_index - start.item()
         if self.use_node_score:
@@ -795,6 +808,8 @@ class ClusterGNN(MessagePassing):
             if len(node_list) < self.min_samples:
                 for n in node_list:
                     clusters[n] = -1
+        
+        self.visualize(torch.arange(end-start), graph_edge_index, pc[start:end], clusters, data.timestamps[i, 0], name='after')
         
         return clusters
 
