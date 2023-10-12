@@ -59,7 +59,7 @@ _class_dict_argo = {
 
 class_dict_argo = {v: k for k, v in _class_dict_argo.items()}
 
-WAYMO_CLASSES = {'TYPE_UNKNOWN': -1, 'TYPE_VECHICLE': 1,
+WAYMO_CLASSES = {'TYPE_UNKNOWN': -1, 'TYPE_VECHICLE': 1, 'REGULAR_VEHICLE': 1,
                  'TYPE_PEDESTRIAN': 2, 'TYPE_SIGN': 12, 'TYPE_CYCLIST': 15}
 _class_dict_waymo = {
         -1: 'TYPE_UNKNOWN', 
@@ -102,7 +102,8 @@ def get_feather_files(
         remove_non_move_thresh=3000/3600,
         seq_list=None,
         loader=None,
-        gt_folder=None):
+        gt_folder=None, 
+        is_waymo=True):
     
     if is_gt:
         # get file name
@@ -116,7 +117,7 @@ def get_feather_files(
             :5] + '_' + file if remove_non_move else file
         file = split + '_' + file
         
-        if 'Waymo' in paths:
+        if is_waymo:
             path_filtered = os.path.join('/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/Waymo_Converted_filtered', file)
             # path_filtered = os.path.join('/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/Waymo_Converted_filtered', file)
         else:
@@ -141,15 +142,17 @@ def get_feather_files(
             df = feather.read_feather(paths)
         
         if df['category'].dtypes != int:
-            if 'Argo' in paths or not is_gt:
+            if not is_waymo:
                 def convert2int(x): return class_dict_argo[x]
                 df['category'] = df['category'].apply(convert2int)
             else:
-                def str2ing(x): return int(x)
-                df['category'] = df['category'].apply(str2ing)
-
+                try:
+                    def str2ing(x): return int(x)
+                    df['category'] = df['category'].apply(str2ing)
+                except:
+                    def class2int(x): return WAYMO_CLASSES[x]
+                    df['category'] = df['category'].apply(class2int)
         df = df.astype({'num_interior_pts': 'int64'})
-
         if not is_gt:
             if 'score' not in df.columns:
                 # np.max(df['num_interior_pts'].values)/df['num_interior_pts'].values # [1] * df.shape[0]
@@ -197,7 +200,6 @@ def get_feather_files(
     
         if seq_list is not None:
             df = df[df['log_id'].isin(seq_list)]
-
     return df
 
 def filter_seq(data, width=0):
@@ -502,8 +504,9 @@ def eval_detection(
         filter_moving=True,
         store_matched=False,
         velocity_evaluation=False,
+        min_num_interior_pts=20,
         waymo_style=True):
-
+    
     if os.path.isdir(trackers_folder) and not len(os.listdir(trackers_folder)):
         return None, np.array([0, 2, 1, 3.142, 0]), None
 
@@ -527,12 +530,20 @@ def eval_detection(
         remove_non_move_thresh=remove_non_move_thresh,
         seq_list=seq_to_eval,
         loader=loader,
-        gt_folder=gt_folder)    
-    gts['filter_moving'] = gts['velocities'] > remove_non_move_thresh
+        gt_folder=gt_folder, 
+        is_waymo=is_waymo)
+    # print((gts['filter_moving'] == (gts['velocities'] > remove_non_move_thresh)).all())
+    # quit()
+    print(gts.shape) 
+    if filter_moving_first:
+        gts = gts[gts['filter_moving']]
+    print(gts.shape)
+    gts = gts[gts['num_interior_pts'] > 0]
+    print(gts.shape)
     if waymo_style:
-        print(gts.shape)
         gts = gts[np.logical_and(gts['tx_m'] < 50, gts['ty_m'] < 20)]
-        print(gts.shape)
+        gts = gts[np.logical_and(gts['tx_m'] > -50, gts['ty_m'] > -20)]
+    print(gts.shape)
     if velocity_evaluation:
         use_matched_category = True
         gts_categories = np.ones(gts.shape[0])
@@ -550,14 +561,19 @@ def eval_detection(
         seq_list=seq_to_eval,
         is_gt=False,
         loader=loader,
-        gt_folder=gt_folder)
+        gt_folder=gt_folder,
+        is_waymo=is_waymo)
     dts = dts.drop_duplicates()
+    print(f'Numer of detections {dts.shape[0]}')
     dts = dts[np.logical_and(dts['height_m'] > 0.1, 
                              np.logical_and(dts['length_m'] > 0.1, dts['width_m'] > 0.1))]  
+    print(f'Numer of detections after size threshold {dts.shape[0]}')
+    dts = dts[np.logical_or(dts['num_interior_pts'] > min_num_interior_pts, dts['num_interior_pts']==-1)]
+    print(f'Numer of detections after num interior threshold {dts.shape[0]}')
+    print(dts)
     if waymo_style:
-        print(dts.shape)
         dts = dts[np.logical_and(dts['tx_m'] < 50, dts['ty_m'] < 20)]
-        print(dts.shape)
+    
     # dts = dts[dts['num_interior_pts'] > 50]
     # dts = dts[dts['height_m'] < 3]
     # dts = dts[dts['width_m'] < 4]
@@ -604,8 +620,8 @@ def eval_detection(
     for affinity, tp_thresh, threshs, n_jobs in zip(
         ['CENTER', 'IoU3D'], [2.0, 0.6], [(0.5, 1.0, 2.0, 4.0), (0.2, 0.4, 0.6, 0.8)], [8, 1]):
         
-        # if affinity == 'CENTER':
-        #     continue
+        if affinity == 'CENTER':
+            continue
 
         # Evaluate instances.
         # Defaults to competition parameters.
@@ -626,7 +642,7 @@ def eval_detection(
             categories=categories
             )
 
-        print(f"\t {affinity}\n")
+        print(f"\t {affinity}, # gt {gts.shape[0]}, # dt {dts.shape[0]}\n")
         dts, gts, metrics, np_tps, np_fns, _, all_results_df = evaluate(
             dts_orig,
             gts_orig,
