@@ -640,10 +640,10 @@ class ClusterGNN(MessagePassing):
                     edge_index = radius_graph(graph_attr, self.r, data['batch'], max_num_neighbors=k)
         else:
             edge_index = data['edge_index']
-
-        for k, (i, j) in enumerate(zip(batch_idx[1:], batch_idx[:-1])):
-            e = edge_index[:, torch.logical_and(edge_index[0]>=j, edge_index[0]<i)] - j
-            self.visualize(torch.arange(i-j), e, pc[j:i], torch.ones(i-j), data.timestamps[k, 0])
+            
+        # for k, (i, j) in enumerate(zip(batch_idx[1:], batch_idx[:-1])):
+        #     e = edge_index[:, torch.logical_and(edge_index[0]>=j, edge_index[0]<i)] - j
+        #     self.visualize(torch.arange(i-j), e, pc[j:i], torch.ones(i-j), data.timestamps[k, 0])
 
         # if there are no edges in pc --> very sparse?!
         if edge_index.shape[1] == 0:
@@ -653,8 +653,8 @@ class ClusterGNN(MessagePassing):
         edge_attr, _ = self.initial_edge_attributes(traj, pc, edge_index, batch=data['batch'])
         
         # forward pass thourgh layers
-        final = list()
-        final_node = list()
+        final, edge_score = list(), None
+        final_node, node_score = list(), None
         node_attr, edge_index, edge_attr = self.encode_layer(node_attr, edge_index, edge_attr)
         if self.deep_supervision:
             score = self.final[0](edge_attr)
@@ -758,7 +758,7 @@ class ClusterGNN(MessagePassing):
             graph_edge_index = graph_edge_index[:, (graph_edge_score > self.filter_edges).squeeze()]
             graph_edge_score = graph_edge_score[(graph_edge_score > self.filter_edges).squeeze()]
         
-        self.visualize(torch.arange(end-start), graph_edge_index-start.item(), pc[start:end], torch.ones(end-start), data.timestamps[i, 0], name='filtered')
+        # self.visualize(torch.arange(end-start), graph_edge_index-start.item(), pc[start:end], torch.ones(end-start), data.timestamps[i, 0], name='filtered')
         
         # filter egdes using node score to make problem smaller
         graph_edge_index = graph_edge_index - start.item()
@@ -809,7 +809,7 @@ class ClusterGNN(MessagePassing):
                 for n in node_list:
                     clusters[n] = -1
         
-        self.visualize(torch.arange(end-start), graph_edge_index, pc[start:end], clusters, data.timestamps[i, 0], name='after')
+        # self.visualize(torch.arange(end-start), graph_edge_index, pc[start:end], clusters, data.timestamps[i, 0], name='after')
         
         return clusters
 

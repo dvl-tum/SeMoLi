@@ -124,10 +124,15 @@ def load_model(cfg, checkpoints_dir, logger, rank=0):
             os.makedirs(checkpoints_dir + name, exist_ok=True)
 
             try:
+                # if True:
                 checkpoint = torch.load(cfg.models.weight_path)
                 chkpt_new = dict()
                 for k, v in checkpoint['model_state_dict'].items():
-                    if 'module' in k:
+                    if k == 'module.final.weight':
+                        chkpt_new['final.0.weight'] = v
+                    elif k == 'module.final.bias':
+                        chkpt_new['final.0.bias'] = v
+                    elif 'module' in k:
                         chkpt_new[k[7:]] = v
                     else:
                         chkpt_new[k] = v
