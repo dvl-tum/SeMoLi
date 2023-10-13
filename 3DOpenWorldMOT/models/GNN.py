@@ -796,15 +796,16 @@ class ClusterGNN(MessagePassing):
                 print('Could not resolve rama...')
                 mapped_clusters = torch.arange(edges.shape[0]).to(self.rank).int()
         else:
-            # from scipy.sparse import csr_matrix
-            _, mapped_clusters = connected_components(csgraph=_edge_index, directed=False, return_labels=True)
+            from scipy.sparse import csr_matrix
+            input_graph = csr_matrix((np.ones(_edge_index.shape[1]), (_edge_index[0, :].cpu().numpy(), _edge_index[1, :].cpu().numpy())), shape=(edges.shape[0], edges.shape[0]))
+            _, mapped_clusters = connected_components(csgraph=input_graph, directed=False, return_labels=True)
 
         # map back 
         _edge_index[0, :] = edges[_edge_index[0, :]]
         _edge_index[1, :] = edges[_edge_index[1, :]]
         clusters = torch.ones(end.item()-start.item()) * - 1
         clusters = clusters.int().to(self.rank)
-        clusters[edges] = mapped_clusters
+        clusters[edges] = torch.from_numpy(mapped_clusters).to(_edge_index.device)
         clusters = clusters.cpu().numpy()
 
         # if clusters are < min_samples set to rubbish
