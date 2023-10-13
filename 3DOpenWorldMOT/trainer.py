@@ -241,10 +241,14 @@ def main(cfg):
         params_list = sample_params()
         iters = 30
 
+    iters = 3
+    ks = [8, 16, 32]
+
     for iter in range(1, iters+1):
+        cfg.models.hyperparams.k = ks[iter-1]
+        cfg.models.hyperparams.k_eval = ks[iter-1]
+
         if cfg.training.hypersearch:
-            if iter == 1:
-                continue
             cfg.training.optim.base_lr = params_list[iter]['lr']
             cfg.training.optim.weight_decay = params_list[iter]['weight_decay']
             cfg.models.loss_hyperparams.gamma_node = params_list[iter]['gamma_node']
