@@ -42,6 +42,8 @@ from av2.utils.io import TimestampedCitySE3EgoPoses, read_city_SE3_ego
 from av2.utils.typing import NDArrayBool, NDArrayFloat, NDArrayInt
 from pytorch3d.ops import box3d_overlap
 import torch
+from .iou import IoUs2D
+from scipy.spatial.transform import Rotation as R
 
 
 logger = logging.getLogger(__name__)
@@ -438,6 +440,23 @@ def compute_affinity_matrix(dts: NDArrayFloat, gts: NDArrayFloat, metric: Affini
         except:
             affinities = np.ones([dts_corners.shape[0], gts_corners.shape[0]]) * -1
             print(affinities.shape)
+    elif metric == AffinityType.IoU2D:
+        print(dts)
+        r = R.from_quat([dts[:, 7], dts[:, 8], dts[:, 9], dts[:, 6]])
+        alpha = r.as_euler('z')
+        print(alpha)
+        dts_corners = np.stack([dts[:, :2], dts[:, 3], dts[:, 4], alpha])
+        print(dts_corners)
+        r = R.from_quat([gts[:, 7], gts[:, 8], gts[:, 9], gts[:, 6]])
+        alpha = r.as_euler('z')
+        gts_corners = np.stack([gts[:, :2], gts[:, 3], gts[:, 4], alpha])
+        print(gts)
+        print(gts_corners)
+        # get 2D IoU
+        iou_2d = IoUs2D(dts_corners, gts_corners)
+        print(iou_2d)
+        quit()
+        affinities = -(1-iou_2d)
     else:
         raise NotImplementedError("This affinity metric is not implemented!")
     return affinities

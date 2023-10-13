@@ -624,7 +624,7 @@ def eval_detection(
     gts_orig = gts
     dts_orig = dts
     for affinity, tp_thresh, threshs, n_jobs in zip(
-        ['CENTER', 'IoU3D'], [2.0, 0.6], [(0.5, 1.0, 2.0, 4.0), (0.2, 0.4, 0.6, 0.8)], [8, 1]):
+        ['CENTER', 'IoU3D', 'IoU2D'], [2.0, 0.6, 0.6], [(0.5, 1.0, 2.0, 4.0), (0.2, 0.4, 0.6, 0.8), (0.2, 0.4, 0.6, 0.8)], [8, 1, 1]):
         
         if affinity == 'CENTER':
             continue
