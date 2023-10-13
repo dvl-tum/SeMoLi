@@ -56,7 +56,9 @@ class TrajectoryDataset(PyGDataset):
             detection_out_path=None,
             get_vels=False, 
             vel_augment=False,
-            remove_non_move_thresh=1):
+            remove_non_move_thresh=1,
+            traj_channels=25,
+            pos_channels=3):
         
         if 'gt' in _processed_dir:
             self.trajectory_dir = Path(os.path.join(trajectory_dir, split))
@@ -85,6 +87,8 @@ class TrajectoryDataset(PyGDataset):
         self.get_vels = get_vels
         self.vel_augment = vel_augment
         self.remove_non_move_thresh = remove_non_move_thresh
+        self.traj_channels = traj_channels
+        self.pos_channels = pos_channels
         # for debugging
         if debug:
             if split == 'val' and 'Argo' in self.data_dir:
@@ -558,9 +562,25 @@ class TrajectoryDataset(PyGDataset):
         
         return data
 
-    def get(self, idx): 
+    def get(self, idx, waymo_style=True):
         path = self._processed_paths[idx]
         data = torch.load(path)
+        data['traj'] = data['traj'][:, :self.traj_channels, :self.pos_channels]
+        data['pc_list'] = data['pc_list'][:, :self.pos_channels]
+        data['timestamps'] = data['timestamps'][:self.traj_channels]
+        
+        if waymo_style:
+            mask = torch.logical_and(
+                torch.logical_and(data['pc_list'][:, 0] < 50, data['pc_list'][:, 0] > -50),
+                torch.logical_and(data['pc_list'][:, 1] < 20, data['pc_list'][:, 1] > -20))
+            data['traj'] = data['traj'][mask]
+            data['pc_list'] = data['pc_list'][mask]
+            data['point_instances'] = data['point_instances'][:, mask]
+            data['point_categories'] = data['point_categories'][:, mask]
+            if 'point_categories_mov' in data.keys:
+                data['point_instances_mov'] = data['point_instances_mov'][:, mask]
+                data['point_categories_mov'] = data['point_categories_mov'][:, mask]
+
         if 'velocities' not in data.keys and self.get_vels:
             data = self.get_object_velocities(data, path)
         if self.vel_augment:
@@ -634,7 +654,9 @@ def get_TrajectoryDataLoader(cfg, name=None, train=True, val=True, test=False):
             filtered_file_path=cfg.data.filtered_file_path,
             get_vels=cfg.data.get_vels,
             vel_augment=cfg.data.vels_augment,
-            remove_non_move_thresh=cfg.data.remove_static_thresh)
+            remove_non_move_thresh=cfg.data.remove_static_thresh,
+            traj_channels=cfg.data.traj_channels,
+            pos_channels=cfg.data.pos_channels,)
     else:
         train_data = None
     if val:
@@ -659,7 +681,9 @@ def get_TrajectoryDataLoader(cfg, name=None, train=True, val=True, test=False):
                 detection_set=cfg.data.detection_set,
                 filtered_file_path=cfg.data.filtered_file_path,
                 detection_out_path=name,
-                get_vels=cfg.data.get_vels)
+                get_vels=cfg.data.get_vels,
+                traj_channels=cfg.data.traj_channels,
+                pos_channels=cfg.data.pos_channels,)
     else:
         val_data = None
     if test:

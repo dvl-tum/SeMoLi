@@ -268,6 +268,7 @@ class ClusterGNN(MessagePassing):
         self.use_node_score = use_node_score * node_loss
         self.clustering = clustering
         self.deep_supervision = deep_supervision
+        traj_channels = traj_channels * pos_channels
         edge_dim = 0
         if '_DP_' in self.edge_attr:
             edge_dim += pos_channels
@@ -653,8 +654,8 @@ class ClusterGNN(MessagePassing):
         edge_attr, _ = self.initial_edge_attributes(traj, pc, edge_index, batch=data['batch'])
         
         # forward pass thourgh layers
-        final = list()
-        final_node = list()
+        final, score = list(), None
+        final_node, node_score = list(), None
         node_attr, edge_index, edge_attr = self.encode_layer(node_attr, edge_index, edge_attr)
         if self.deep_supervision:
             score = self.final[0](edge_attr)
@@ -826,12 +827,15 @@ class ClusterGNN(MessagePassing):
         clusters = clusters_dict
 
         # adapt edges to predicted clusters
+        colors = [rgb_colors[0] for _ in range(nodes.shape[0])]
         if mode == 'after':
             edge_indices = list()
             for c, nodelist in clusters.items():
                 if c == -1:
                     continue
                 for i, node1 in enumerate(nodelist):
+                    print(c, node1, rgb_colors[c])
+                    colors[node1] = rgb_colors[c]
                     for j, node2 in enumerate(nodelist):
                         if j <= i:
                             continue
@@ -847,13 +851,13 @@ class ClusterGNN(MessagePassing):
         G.add_nodes_from(nodes.numpy())
         G.add_edges_from(edge_indices.T.cpu().numpy())
 
-        colors = [(0.999, 0.999, 0.999)] * nodes.shape[0]
+        # colors = [(0.999, 0.999, 0.999)] * nodes.shape[0]
 
         # save graph
         labels = {n.item(): str(n.item()) for n in nodes}
         plt.figure(figsize=(50, 50))
         nx.draw_networkx_edges(G, pos, width=3)
-        nx.draw_networkx_nodes(G, pos, node_size=2, node_color=colors)
+        nx.draw_networkx_nodes(G, pos, node_color=colors)
         # nx.draw_networkx_labels(G, pos, labels=labels, font_size=6, font_color='red')
         plt.axis("off")
         plt.savefig(f'../../../vis_graph/{name}/{timestamp}_{mode}.png', bbox_inches='tight', dpi=300)
