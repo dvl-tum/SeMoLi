@@ -793,7 +793,7 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
                     remove_non_move_thresh=cfg.data.remove_static_thresh,
                     filter_class=-2,
                     only_matched_gt=False,
-                    filter_moving_first=False,
+                    filter_moving_first=True,
                     use_matched_category=False,
                     debug=cfg.data.debug,
                     name=name)
