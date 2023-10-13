@@ -438,7 +438,7 @@ def compute_affinity_matrix(dts: NDArrayFloat, gts: NDArrayFloat, metric: Affini
             iou_3d = torch.clip(iou_3d.cpu(), min=0, max=1).numpy()
             affinities = -(1-iou_3d)
         except:
-            affinities = np.ones(dts_corners.shape[0], gts_corners.shape[0]) * -1
+            affinities = np.ones([dts_corners.shape[0], gts_corners.shape[0]]) * -1
             print(affinities.shape)
     elif metric == AffinityType.IoU2D:
         print(dts)

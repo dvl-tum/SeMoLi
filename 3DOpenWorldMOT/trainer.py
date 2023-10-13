@@ -124,10 +124,15 @@ def load_model(cfg, checkpoints_dir, logger, rank=0):
             os.makedirs(checkpoints_dir + name, exist_ok=True)
 
             try:
+                # if True:
                 checkpoint = torch.load(cfg.models.weight_path)
                 chkpt_new = dict()
                 for k, v in checkpoint['model_state_dict'].items():
-                    if 'module' in k:
+                    if k == 'module.final.weight':
+                        chkpt_new['final.0.weight'] = v
+                    elif k == 'module.final.bias':
+                        chkpt_new['final.0.bias'] = v
+                    elif 'module' in k:
                         chkpt_new[k[7:]] = v
                     else:
                         chkpt_new[k] = v
@@ -146,7 +151,7 @@ def load_model(cfg, checkpoints_dir, logger, rank=0):
                 else:
                     if rank == 0:
                         logger.info('No existing model, starting training from scratch...')
-
+            
             if cfg.training.optim.optimizer.o_class == 'Adam':
                 optimizer = torch.optim.Adam(
                     model.parameters(),
@@ -816,7 +821,8 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
             else:
                 metric = detection_metric
 
-            # store weights if neural net                
+            # store weights if neural net 
+            print(metric[0], best_metric, metric[0] >= best_metric)
             if metric[0] >= best_metric:
                 best_metric = metric[0]
                 if is_neural_net and not cfg.just_eval:
@@ -875,9 +881,9 @@ def train(rank, cfg, world_size):
         load_model(cfg, checkpoints_dir, logger, rank)
     
     if rank == 0 or not cfg.multi_gpu:
-        if os.path.isdir(experiment_dir + name) and not cfg.continue_from_existing:
+        if not cfg.just_eval and os.path.isdir(experiment_dir + name) and not cfg.continue_from_existing:
             shutil.rmtree(experiment_dir + name)
-        if os.path.isdir(str(checkpoints_dir) + name) and not cfg.continue_from_existing:
+        if not cfg.just_eval and os.path.isdir(str(checkpoints_dir) + name) and not cfg.continue_from_existing:
             shutil.rmtree(str(checkpoints_dir) + name)
         os.makedirs(experiment_dir + name, exist_ok=True)
         logger.info(f'Detections are stored under {experiment_dir + name}...')
@@ -1042,7 +1048,7 @@ def train(rank, cfg, world_size):
    
     # final_evaluation
     dist.barrier()
-    if rank == 0:
+    if rank == 0 and not cfg.just_eval:
         for d in os.listdir(experiment_dir + name):
             shutil.rmtree(experiment_dir + name + f'/{d}')
     final_evaluation(
@@ -1067,9 +1073,9 @@ def train(rank, cfg, world_size):
 
 
 def on_return(rank, name, experiment_dir, checkpoints_dir, cfg):
-    if not cfg.keep_checkpoint and rank == 0:
+    if not cfg.just_eval and not cfg.keep_checkpoint and rank == 0:
         shutil.rmtree(checkpoints_dir + name)
-    if not cfg.keep_detections and rank == 0:
+    if not cfg.just_eval and not cfg.keep_detections and rank == 0:
         shutil.rmtree(experiment_dir + name)
 
 
