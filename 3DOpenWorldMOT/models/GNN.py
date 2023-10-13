@@ -24,6 +24,7 @@ import wandb
 import copy
 import torch.utils.checkpoint as checkpoint
 import torch_cluster
+from scipy.sparse.csgraph import connected_components
 
 
 rgb_colors = {}
@@ -714,7 +715,7 @@ class ClusterGNN(MessagePassing):
         
         return [final, final_node], edge_index, None
     
-    def corr_clustering(self, iter_data):
+    def corr_clustering(self, iter_data, method='connected_components'):
         i, (start, end) = iter_data
         edge_index, _node_score, _score, data, score, node_score, pc, rama_cuda, name = self.args
 
@@ -780,18 +781,23 @@ class ClusterGNN(MessagePassing):
         _edge_index = graph_edge_index
         _edge_index[0, :] = mapping[graph_edge_index[0, :]]
         _edge_index[1, :] = mapping[graph_edge_index[1, :]]
+        self.visualize(torch.arange(edges.shape[0]), _edge_index, pc[edges], torch.ones(edges.shape[0]), data.timestamps[i, 0], name='mapped')
 
-        # solve correlation clustering
-        try:
-            rama_out = rama_cuda(
-                [e[0] for e in _edge_index.T.cpu().numpy()],
-                [e[1] for e in _edge_index.T.cpu().numpy()], 
-                (graph_edge_score.cpu().numpy()*2)-1,
-                self.opts)
-            mapped_clusters = torch.tensor(rama_out[0]).to(self.rank).int()
-        except:
-            print('Could not resolve rama...')
-            mapped_clusters = torch.arange(edges.shape[0]).to(self.rank).int()
+        if method == 'rama':
+            # solve correlation clustering
+            try:
+                rama_out = rama_cuda(
+                    [e[0] for e in _edge_index.T.cpu().numpy()],
+                    [e[1] for e in _edge_index.T.cpu().numpy()], 
+                    (graph_edge_score.cpu().numpy()*2)-1,
+                    self.opts)
+                mapped_clusters = torch.tensor(rama_out[0]).to(self.rank).int()
+            except:
+                print('Could not resolve rama...')
+                mapped_clusters = torch.arange(edges.shape[0]).to(self.rank).int()
+        else:
+            # from scipy.sparse import csr_matrix
+            _, mapped_clusters = connected_components(csgraph=_edge_index, directed=False, return_labels=True)
 
         # map back 
         _edge_index[0, :] = edges[_edge_index[0, :]]
