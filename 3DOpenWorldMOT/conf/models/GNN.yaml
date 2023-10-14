@@ -2,6 +2,7 @@
 model_name: GNN
 weight_path: ''
 hyperparams:
+    initial_edge_as_input: False
     graph: 'knn'
     traj_channels: ${data.traj_channels}
     pos_channels: ${data.pos_channels}

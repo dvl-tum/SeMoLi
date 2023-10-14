@@ -257,7 +257,8 @@ class ClusterGNN(MessagePassing):
             classification_is_moving_edge=False,
             classification_is_moving_node=False,
             set_all_pos=False,
-            deep_supervision=False):
+            deep_supervision=False,
+            initial_edge_as_input=False):
         super().__init__(aggr='mean')
         self.k = k
         self.k_eval = k_eval
@@ -269,6 +270,7 @@ class ClusterGNN(MessagePassing):
         self.use_node_score = use_node_score * node_loss
         self.clustering = clustering
         self.deep_supervision = deep_supervision
+        self.initial_edge_as_input = initial_edge_as_input
         traj_channels = traj_channels * pos_channels
         edge_dim = 0
         if '_DP_' in self.edge_attr:
@@ -638,14 +640,17 @@ class ClusterGNN(MessagePassing):
                     edge_index = self.get_graph(
                         graph_attr, self.r, max_num_neighbors=k, batch_idx=batch_idx, type='radius')
                 else:
-                    print(self.r, k, self.graph_construction)
                     edge_index = radius_graph(graph_attr, self.r, data['batch'], max_num_neighbors=k)
         else:
             edge_index = data['edge_index']
             
-        # for k, (i, j) in enumerate(zip(batch_idx[1:], batch_idx[:-1])):
-        #     e = edge_index[:, torch.logical_and(edge_index[0]>=j, edge_index[0]<i)] - j
-        #     self.visualize(torch.arange(i-j), e, pc[j:i], torch.ones(i-j), data.timestamps[k, 0])
+        '''
+        if not os.path.isfile(os.path.join('/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/vis_graph', 'before', data['log_id'][0] + '.png')):
+            # for k, (i, j) in enumerate(zip(batch_idx[1:], batch_idx[:-1])):
+            k, i, j = 0, batch_idx[1], batch_idx[0]
+            e = edge_index[:, torch.logical_and(edge_index[0]>=j, edge_index[0]<i)] - j
+            self.visualize(torch.arange(i-j), e, pc[j:i], torch.ones(i-j), data.timestamps[k, 0], data=data)
+        '''
 
         # if there are no edges in pc --> very sparse?!
         if edge_index.shape[1] == 0:
@@ -654,35 +659,40 @@ class ClusterGNN(MessagePassing):
         # get initial edge attributes
         edge_attr, _ = self.initial_edge_attributes(traj, pc, edge_index, batch=data['batch'])
         
-        # forward pass thourgh layers
-        final, score = list(), None
-        final_node, node_score = list(), None
-        node_attr, edge_index, edge_attr = self.encode_layer(node_attr, edge_index, edge_attr)
-        if self.deep_supervision:
-            score = self.final[0](edge_attr)
-            final.append(score)
-            if self.use_node_score:
-                node_score = self.final_node[0](node_attr)
-                final_node.append(node_score)
-
-        for i in range(self.num_layers-1):
-            if self.reuse:
-                node_attr, edge_index, edge_attr = self.layers(node_attr, edge_index, edge_attr)
-            else:
-                node_attr, edge_index, edge_attr = self.layers[i](node_attr, edge_index, edge_attr)
+        if not self.initial_edge_as_input:
+            # forward pass thourgh layers
+            final, score = list(), None
+            final_node, node_score = list(), None
+            node_attr, edge_index, edge_attr = self.encode_layer(node_attr, edge_index, edge_attr)
             if self.deep_supervision:
-                score = self.final[i+1](edge_attr)
+                score = self.final[0](edge_attr)
                 final.append(score)
                 if self.use_node_score:
-                    node_score = self.final_node[i+1](node_attr)
+                    node_score = self.final_node[0](node_attr)
                     final_node.append(node_score)
-            elif i == self.num_layers-2:
-                score = self.final[-1](edge_attr)
-                final.append(score)
-                if self.use_node_score:
-                    node_score = self.final_node[-1](node_attr)
-                    final_node.append(node_score)
-
+    
+            for i in range(self.num_layers-1):
+                if self.reuse:
+                    node_attr, edge_index, edge_attr = self.layers(node_attr, edge_index, edge_attr)
+                else:
+                    node_attr, edge_index, edge_attr = self.layers[i](node_attr, edge_index, edge_attr)
+                if self.deep_supervision:
+                    score = self.final[i+1](edge_attr)
+                    final.append(score)
+                    if self.use_node_score:
+                        node_score = self.final_node[i+1](node_attr)
+                        final_node.append(node_score)
+                elif i == self.num_layers-2:
+                    score = self.final[-1](edge_attr)
+                    final.append(score)
+                    if self.use_node_score:
+                        node_score = self.final_node[-1](node_attr)
+                        final_node.append(node_score)
+        else:
+            score = 1 - torch.linalg.norm(edge_attr, dim=1)
+            node_score = None
+            final = [score]
+            final_node = list()
         # evaluate correlation clustering
         if eval and corr_clustering:
             _score = self.sigmoid(score)
@@ -690,25 +700,21 @@ class ClusterGNN(MessagePassing):
                 _node_score = self.sigmoid(node_score)
             else:
                 _node_score = None
-            if self.clustering == 'correlation':
-                multiprocessing = False
-                data_loader = enumerate(zip(batch_idx[:-1], batch_idx[1:]))
-                rama_cuda = rama_py.rama_cuda
-                all_clusters = list()
-                if multiprocessing:
-                    pickle.dumps(rama_cuda)
-                    self.args = edge_index, _node_score, _score, data, score, node_score, pc, rama_cuda, name
-                    with mp.Pool() as pool:
-                        clusters = pool.map(self.corr_clustering, data_loader, chunksize=None)
-                        all_clusters.append(clusters)
-                else:
-                    self.args = edge_index, _node_score, _score, data, score, node_score, pc, rama_cuda, name
-                    for iter_data in data_loader:
-                        clusters = self.corr_clustering(iter_data)
-                        all_clusters.append(clusters)
+            multiprocessing = False
+            data_loader = enumerate(zip(batch_idx[:-1], batch_idx[1:]))
+            rama_cuda = rama_py.rama_cuda
+            all_clusters = list()
+            if multiprocessing:
+                pickle.dumps(rama_cuda)
+                self.args = edge_index, _node_score, _score, data, score, node_score, pc, rama_cuda, name
+                with mp.Pool() as pool:
+                    clusters = pool.map(self.corr_clustering, data_loader, chunksize=None)
+                    all_clusters.append(clusters)
             else:
-                print('Invalid clustering choice')
-                quit()
+                self.args = edge_index, _node_score, _score, data, score, node_score, pc, rama_cuda, name
+                for iter_data in data_loader:
+                    clusters = self.corr_clustering(iter_data)
+                    all_clusters.append(clusters)
             return [final, final_node], all_clusters, edge_index, None
         elif eval:
             return [final, final_node], [[]*len(batch_idx[:-1])], edge_index, None
@@ -760,7 +766,8 @@ class ClusterGNN(MessagePassing):
             graph_edge_index = graph_edge_index[:, (graph_edge_score > self.filter_edges).squeeze()]
             graph_edge_score = graph_edge_score[(graph_edge_score > self.filter_edges).squeeze()]
         
-        # self.visualize(torch.arange(end-start), graph_edge_index-start.item(), pc[start:end], torch.ones(end-start), data.timestamps[i, 0], name='filtered')
+        # if not os.path.isfile(os.path.join('/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/vis_graph', 'filtered', data['log_id'][0] + '.png')):
+        #     self.visualize(torch.arange(end-start), graph_edge_index-start.item(), pc[start:end], torch.ones(end-start), data.timestamps[i, 0], name='filtered',data=data)
         
         # filter egdes using node score to make problem smaller
         graph_edge_index = graph_edge_index - start.item()
@@ -781,9 +788,11 @@ class ClusterGNN(MessagePassing):
         _edge_index = graph_edge_index
         _edge_index[0, :] = mapping[graph_edge_index[0, :]]
         _edge_index[1, :] = mapping[graph_edge_index[1, :]]
-        self.visualize(torch.arange(edges.shape[0]), _edge_index, pc[edges], torch.ones(edges.shape[0]), data.timestamps[i, 0], name='mapped')
+        
+        # if not os.path.isfile(os.path.join('/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/vis_graph', 'mapped', data['log_id'][0] + '.png')):
+        #     self.visualize(torch.arange(edges.shape[0]), _edge_index, pc[edges], torch.ones(edges.shape[0]), data.timestamps[i, 0], name='mapped', data=data)
 
-        if method == 'rama':
+        if self.clustering == 'correlation':
             # solve correlation clustering
             try:
                 rama_out = rama_cuda(
@@ -799,13 +808,14 @@ class ClusterGNN(MessagePassing):
             from scipy.sparse import csr_matrix
             input_graph = csr_matrix((np.ones(_edge_index.shape[1]), (_edge_index[0, :].cpu().numpy(), _edge_index[1, :].cpu().numpy())), shape=(edges.shape[0], edges.shape[0]))
             _, mapped_clusters = connected_components(csgraph=input_graph, directed=False, return_labels=True)
+            mapped_clusters = torch.from_numpy(mapped_clusters).to(_edge_index.device)
 
         # map back 
         _edge_index[0, :] = edges[_edge_index[0, :]]
         _edge_index[1, :] = edges[_edge_index[1, :]]
         clusters = torch.ones(end.item()-start.item()) * - 1
         clusters = clusters.int().to(self.rank)
-        clusters[edges] = torch.from_numpy(mapped_clusters).to(_edge_index.device)
+        clusters[edges] = mapped_clusters
         clusters = clusters.cpu().numpy()
 
         # if clusters are < min_samples set to rubbish
@@ -817,11 +827,12 @@ class ClusterGNN(MessagePassing):
                 for n in node_list:
                     clusters[n] = -1
         
-        # self.visualize(torch.arange(end-start), graph_edge_index, pc[start:end], clusters, data.timestamps[i, 0], name='after')
+        # if not os.path.isfile(os.path.join('/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/vis_graph', 'after', data['log_id'][0] + '.png')):
+        #     self.visualize(torch.arange(end-start), graph_edge_index, pc[start:end], clusters, data.timestamps[i, 0], name='after', data=data)
         
         return clusters
 
-    def visualize(self, nodes, edge_indices, pos, clusters, timestamp, mode='before', name='General'):
+    def visualize(self, nodes, edge_indices, pos, clusters, timestamp, mode='before', name='General', data=None):
         os.makedirs(f'../../../vis_graph/{name}', exist_ok=True)
         import networkx as nx
         import matplotlib 
@@ -835,13 +846,12 @@ class ClusterGNN(MessagePassing):
 
         # adapt edges to predicted clusters
         colors = [rgb_colors[0] for _ in range(nodes.shape[0])]
-        if mode == 'after':
+        if name == 'after':
             edge_indices = list()
             for c, nodelist in clusters.items():
                 if c == -1:
                     continue
                 for i, node1 in enumerate(nodelist):
-                    print(c, node1, rgb_colors[c])
                     colors[node1] = rgb_colors[c]
                     for j, node2 in enumerate(nodelist):
                         if j <= i:
@@ -867,7 +877,9 @@ class ClusterGNN(MessagePassing):
         nx.draw_networkx_nodes(G, pos, node_color=colors)
         # nx.draw_networkx_labels(G, pos, labels=labels, font_size=6, font_color='red')
         plt.axis("off")
-        plt.savefig(f'../../../vis_graph/{name}/{timestamp}_{mode}.png', bbox_inches='tight', dpi=300)
+        p = os.path.join('/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/vis_graph', name, data['log_id'][0] + '.png')
+        plt.savefig(p, bbox_inches='tight', dpi=300)
+        # plt.savefig(f'../../../vis_graph/{name}/{timestamp}_{mode}.png', bbox_inches='tight', dpi=300)
         plt.close()
          
     def __repr__(self):

@@ -80,7 +80,7 @@ def main(cfg):
         remove_non_move_thresh=cfg.data.remove_static_thresh,
         filter_class=-2,
         only_matched_gt=False,
-        filter_moving_first=True,
+        filter_moving_first=False,
         filter_moving=cfg.filter_moving,
         use_matched_category=cfg.use_matched_category,
         debug=cfg.data.debug,

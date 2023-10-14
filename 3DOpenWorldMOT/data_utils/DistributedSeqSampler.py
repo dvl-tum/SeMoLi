@@ -88,7 +88,7 @@ class DistributedSeqSampler(Sampler[T_co]):
 
         # get per replica paths and their length
         self.per_replica_list = list()
-        log_ids = list(self.dataset.data)
+        log_ids = list(range(len(self.dataset.data))) #list(self.dataset.data)
         max_len = list()
         for i in range(self.num_replicas):
             replica_list = log_ids[i*self.num_log_ids:(i+1)*self.num_log_ids]
