@@ -3,6 +3,7 @@ model_name: GNN
 weight_path: ''
 hyperparams:
     graph: 'knn'
+    graph_eval: 'knn'
     traj_channels: ${data.traj_channels}
     pos_channels: ${data.pos_channels}
     k: 32

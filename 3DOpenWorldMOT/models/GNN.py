@@ -189,14 +189,14 @@ def get_per_time_vel_diff(traj, time, _batch, dataset, edge_index, pos_dim):
         diff_time = diff_time / torch.pow(torch.tensor(10), 9.0) 
     else:
         diff_time = diff_time / torch.pow(torch.tensor(10), 6.0)
-    
+
     # get dx/dt of all nodes
-    a = (a[:, 1:, :] - a[:, :-1, :])/diff_time
+    a = (a[:, 1:, :] - a[:, :-1, :])/diff_time.unsqueeze(2)
     # get dx/dt for sending and receiving
+    b = a[edge_index[1]]
     a = a[edge_index[0]]
-    b = b[edge_index[1]]
     # get diff between and compute norm to get magnitude
-    return torch.linalg.norm(simplediff(a - b), dim=-1)
+    return torch.linalg.norm(simplediff(a, b), dim=-1)
 
 
 class SevInpSequential(nn.Sequential):
@@ -229,6 +229,7 @@ class ClusterGNN(MessagePassing):
             k_eval=64,
             r=0.5,
             graph='radius',
+            graph_eval='radius',
             edge_attr='diffpos',
             graph_construction='pos',
             node_attr='traj',
@@ -263,6 +264,7 @@ class ClusterGNN(MessagePassing):
         self.k_eval = k_eval
         self.r = r
         self.graph = graph
+        self.graph_eval = graph_eval
         self.edge_attr = edge_attr
         self.node_attr = node_attr
         self.graph_construction = graph_construction
@@ -440,8 +442,8 @@ class ClusterGNN(MessagePassing):
             edge_dim += traj_dim
 
         if '_DTDP_' in self.edge_attr:
-            a = torch.stack([x2[edge_index[0]], x1[edge_index[0]]])
-            b = torch.stack([x2[edge_index[1]], x1[edge_index[1]]])
+            a = torch.hstack([x2[edge_index[0]], x1[edge_index[0]]])
+            b = torch.hstack([x2[edge_index[1]], x1[edge_index[1]]])
             edge_attr.append(simplediff(a, b))
             edge_dim += pos_dim + traj_dim
 
@@ -626,14 +628,15 @@ class ClusterGNN(MessagePassing):
         
         # get edges using knn graph (for computational feasibility)
         k = self.k if not eval else self.k_eval
+        graph = self.graph if not eval else self.graph_eval
         if 'edge_index' not in data.keys:
-            if self.graph == 'knn':
+            if graph == 'knn':
                 if self.my_graph and len(graph_attr.shape) != 2:
                     edge_index = self.get_graph(
                         graph_attr, self.r, max_num_neighbors=k, batch_idx=batch_idx, type='knn')
                 else:
                     edge_index = knn_graph(x=graph_attr, k=k, batch=data['batch'])
-            elif self.graph == 'radius':
+            elif graph == 'radius':
                 if self.my_graph and len(graph_attr.shape) != 2:
                     edge_index = self.get_graph(
                         graph_attr, self.r, max_num_neighbors=k, batch_idx=batch_idx, type='radius')
@@ -643,16 +646,16 @@ class ClusterGNN(MessagePassing):
         else:
             edge_index = data['edge_index']
             
-        # for k, (i, j) in enumerate(zip(batch_idx[1:], batch_idx[:-1])):
-        #     e = edge_index[:, torch.logical_and(edge_index[0]>=j, edge_index[0]<i)] - j
-        #     self.visualize(torch.arange(i-j), e, pc[j:i], torch.ones(i-j), data.timestamps[k, 0])
+        for k, (i, j) in enumerate(zip(batch_idx[1:], batch_idx[:-1])):
+            e = edge_index[:, torch.logical_and(edge_index[0]>=j, edge_index[0]<i)] - j
+            self.visualize(torch.arange(i-j), e, pc[j:i], torch.ones(i-j), data.timestamps[k, 0])
 
         # if there are no edges in pc --> very sparse?!
         if edge_index.shape[1] == 0:
             return [None, None], torch.tensor(list(range(pc.shape[0]))), None
         
         # get initial edge attributes
-        edge_attr, _ = self.initial_edge_attributes(traj, pc, edge_index, batch=data['batch'])
+        edge_attr, _ = self.initial_edge_attributes(traj, pc, edge_index, timestamps=data['timestamps'], batch=data['batch'])
         
         # forward pass thourgh layers
         final, score = list(), None
@@ -760,7 +763,7 @@ class ClusterGNN(MessagePassing):
             graph_edge_index = graph_edge_index[:, (graph_edge_score > self.filter_edges).squeeze()]
             graph_edge_score = graph_edge_score[(graph_edge_score > self.filter_edges).squeeze()]
         
-        # self.visualize(torch.arange(end-start), graph_edge_index-start.item(), pc[start:end], torch.ones(end-start), data.timestamps[i, 0], name='filtered')
+        self.visualize(torch.arange(end-start), graph_edge_index-start.item(), pc[start:end], torch.ones(end-start), data.timestamps[i, 0], name='filtered')
         
         # filter egdes using node score to make problem smaller
         graph_edge_index = graph_edge_index - start.item()
@@ -817,8 +820,8 @@ class ClusterGNN(MessagePassing):
                 for n in node_list:
                     clusters[n] = -1
         
-        # self.visualize(torch.arange(end-start), graph_edge_index, pc[start:end], clusters, data.timestamps[i, 0], name='after')
-        
+        self.visualize(torch.arange(end-start), graph_edge_index, pc[start:end], clusters, data.timestamps[i, 0], name='after')
+
         return clusters
 
     def visualize(self, nodes, edge_indices, pos, clusters, timestamp, mode='before', name='General'):
