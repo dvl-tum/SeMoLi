@@ -441,21 +441,18 @@ def compute_affinity_matrix(dts: NDArrayFloat, gts: NDArrayFloat, metric: Affini
             affinities = np.ones([dts_corners.shape[0], gts_corners.shape[0]]) * -1
             print(affinities.shape)
     elif metric == AffinityType.IoU2D:
-        print(dts)
-        r = R.from_quat([dts[:, 7], dts[:, 8], dts[:, 9], dts[:, 6]])
-        alpha = r.as_euler('z')
-        print(alpha)
-        dts_corners = np.stack([dts[:, :2], dts[:, 3], dts[:, 4], alpha])
-        print(dts_corners)
-        r = R.from_quat([gts[:, 7], gts[:, 8], gts[:, 9], gts[:, 6]])
-        alpha = r.as_euler('z')
-        gts_corners = np.stack([gts[:, :2], gts[:, 3], gts[:, 4], alpha])
-        print(gts)
-        print(gts_corners)
+        rs = [R.from_quat([dts[i, 7], dts[i, 8], dts[i, 9], dts[i, 6]]) for i in range(dts.shape[0])]
+        alpha = np.expand_dims(np.stack([r.as_euler('xyz') for r in rs])[:, -1], axis=1)
+        dts_corners = np.hstack([dts[:, :2], dts[:, 3:5], alpha])
+        rs = [R.from_quat([gts[i, 7], gts[i, 8], gts[i, 9], gts[i, 6]]) for i in range(gts.shape[0])]
+        alpha = np.expand_dims(np.stack([r.as_euler('xyz') for r in rs])[:, -1], axis=1)
+        gts_corners = np.hstack([gts[:, :2], gts[:, 3:5], alpha])
+        
+        idx_d = np.array([i for i in range(dts.shape[0]) for j in range(gts.shape[0])])
+        idx_g = np.array([j  for i in range(dts.shape[0]) for j in range(gts.shape[0])])
+
         # get 2D IoU
-        iou_2d = IoUs2D(dts_corners, gts_corners)
-        print(iou_2d)
-        quit()
+        iou_2d = IoUs2D(torch.from_numpy(dts_corners[idx_d]).unsqueeze(0).cuda(), torch.from_numpy(gts_corners[idx_g]).unsqueeze(0).cuda()).view(dts.shape[0], gts.shape[0]).cpu().numpy()
         affinities = -(1-iou_2d)
     else:
         raise NotImplementedError("This affinity metric is not implemented!")

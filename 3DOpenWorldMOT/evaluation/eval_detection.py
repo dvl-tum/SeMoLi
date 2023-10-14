@@ -570,7 +570,12 @@ def eval_detection(
     print(f'Numer of detections after size threshold {dts.shape[0]}')
     dts = dts[np.logical_or(dts['num_interior_pts'] > min_num_interior_pts, dts['num_interior_pts']==-1)]
     print(f'Numer of detections after num interior threshold {dts.shape[0]}')
-    print(dts)
+    dts = dts[dts['width_m']<5]
+    print(f'Numer of detections after removing objexts with w > 5 {dts.shape[0]}')
+    dts = dts[dts['length_m']<20]
+    print(f'Numer of detections after removing objexts with l > 20 {dts.shape[0]}')
+    dts = dts[dts['height_m']<4]
+    print(f'Numer of detections after removing objexts with h > 4 {dts.shape[0]}')
 
     if waymo_style:
         dts = dts[np.logical_and(dts['tx_m'] < 50, dts['ty_m'] < 20)]
@@ -619,10 +624,10 @@ def eval_detection(
     gts_orig = gts
     dts_orig = dts
     for affinity, tp_thresh, threshs, n_jobs in zip(
-        ['CENTER', 'IoU3D', 'IoU2D'], [2.0, 0.6, 0.6], [(0.5, 1.0, 2.0, 4.0), (0.2, 0.4, 0.6, 0.8), (0.2, 0.4, 0.6, 0.8)], [8, 1, 1]):
+        ['CENTER', 'IoU3D', 'IoU2D'], [2.0, 0.6, 0.6], [(0.5, 1.0, 2.0, 4.0), (0.2, 0.4, 0.6, 0.8), (0.2, 0.4, 0.6, 0.99)], [8, 1, 1]):
         
-        if affinity == 'CENTER':
-            continue
+        # if affinity == 'CENTER' or affinity == 'IoU3D':
+        #     continue
 
         # Evaluate instances.
         # Defaults to competition parameters.
