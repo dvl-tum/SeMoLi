@@ -86,7 +86,8 @@ def main(cfg):
         debug=cfg.data.debug,
         name=name,
         store_matched=cfg.store_matched,
-        velocity_evaluation=cfg.vel_evaluation)
+        velocity_evaluation=cfg.vel_evaluation,
+        heuristics=cfg.heuristics)
 
 
 if __name__ == "__main__":

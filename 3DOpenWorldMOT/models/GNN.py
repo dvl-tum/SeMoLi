@@ -294,8 +294,8 @@ class ClusterGNN(MessagePassing):
         if '_MMMDV_' in self.edge_attr:
             edge_dim += 3
         if '_DV_' in self.edge_attr:
-            edge_dim += int(traj_channels/pos_channels)
-        print(traj_channels)
+            edge_dim += int(traj_channels/pos_channels) - 1
+        
         # get node mlp
         self.node_attr = node_attr
         node_dim = 0
@@ -308,16 +308,16 @@ class ClusterGNN(MessagePassing):
         if '_MMMV_' in self.node_attr:
             node_dim += 3
         if '_V_' in self.node_attr:
-            node_dim += int(traj_channels/pos_channels)
-
+            node_dim += int(traj_channels/pos_channels) - 1
+        
         layers = list()
         final = list()
         if self.use_node_score:
             final_node = list()
         self.reuse = layers_node.reuse
         self.num_layers = layers_node.num_layers
-        layer_sizes_node = [layers_node.size for _ in range(1, layers_node.num_layers)]
-        layer_sizes_edge = [layers_edge.size for _ in range(1, layers_edge.num_layers)]
+        layer_sizes_node = [layers_node.size for _ in range(0, layers_node.num_layers)]
+        layer_sizes_edge = [layers_edge.size for _ in range(0, layers_edge.num_layers)]
         
         self.encode_layer = ClusterLayer(
                     in_channel_node=node_dim,
@@ -480,11 +480,10 @@ class ClusterGNN(MessagePassing):
             edge_dim += 3
         
         if '_DV_' in self.edge_attr:
-            edge_attr.append(get_per_time_vel_diff(x1, timestamps, batch, self.dataset, edge_index, pos_dim), num_edges)
-            edge_dim += int(traj_dim / 3)
-
+            edge_attr.append(get_per_time_vel_diff(x1, timestamps, batch, self.dataset, edge_index, pos_dim))
+            edge_dim += int(traj_dim / 3) -1
+        
         edge_attr = torch.stack(edge_attr).squeeze().float()
-
         return edge_attr, edge_dim
     
     def initial_node_attributes(self, x1, x2, _type, timestamps=None, batch=None):
@@ -537,7 +536,7 @@ class ClusterGNN(MessagePassing):
             _node_attr = _node_attr / diff_time
             if '_V_' in _type:
                 node_attr.append(_node_attr)
-                node_dim += traj_dim
+                node_dim += int(traj_dim/pos_dim) - 1
             else:
                 _node_attr = torch.vstack([
                     _node_attr.min(dim=-1).values,
@@ -547,7 +546,6 @@ class ClusterGNN(MessagePassing):
                 node_dim += 3
 
         node_attr = torch.hstack(node_attr).squeeze().float()
-
         return node_attr, node_dim
     
     def get_graph(self, node_attr, r=5, max_num_neighbors=16, batch_idx=None, type='radius', metric='euclidean', fast=False):
@@ -686,7 +684,7 @@ class ClusterGNN(MessagePassing):
                     node_score = self.final_node[0](node_attr)
                     final_node.append(node_score)
     
-            for i in range(self.num_layers-1):
+            for i in range(self.num_layers):
                 if self.reuse:
                     if self.gradient_checkpointing:
                         inputs = (node_attr, edge_index, edge_attr)
@@ -707,7 +705,7 @@ class ClusterGNN(MessagePassing):
                     if self.use_node_score:
                         node_score = self.final_node[i+1](node_attr)
                         final_node.append(node_score)
-                elif i == self.num_layers-2:
+                elif i == self.num_layers-1:
                     score = self.final[-1](edge_attr)
                     final.append(score)
                     if self.use_node_score:
