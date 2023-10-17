@@ -6,7 +6,7 @@ eval_every_x: 1
 eval_corr_every_x: 5
 num_workers: 64
 batch_size: 8
-batch_size_val: 4
+batch_size_val: 2
 shuffle: True
 gpu: 0 # -1 -> no cuda otherwise takes the specified index
 optim:
