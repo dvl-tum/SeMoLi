@@ -316,8 +316,8 @@ class ClusterGNN(MessagePassing):
             final_node = list()
         self.reuse = layers_node.reuse
         self.num_layers = layers_node.num_layers
-        layer_sizes_node = [layers_node.size for _ in range(1, layers_node.num_layers)]
-        layer_sizes_edge = [layers_edge.size for _ in range(1, layers_edge.num_layers)]
+        layer_sizes_node = [layers_node.size for _ in range(0, layers_node.num_layers)]
+        layer_sizes_edge = [layers_edge.size for _ in range(0, layers_edge.num_layers)]
         
         self.encode_layer = ClusterLayer(
                     in_channel_node=node_dim,
@@ -480,7 +480,7 @@ class ClusterGNN(MessagePassing):
             edge_dim += 3
         
         if '_DV_' in self.edge_attr:
-            edge_attr.append(get_per_time_vel_diff(x1, timestamps, batch, self.dataset, edge_index, pos_dim), num_edges)
+            edge_attr.append(get_per_time_vel_diff(x1, timestamps, batch, self.dataset, edge_index, pos_dim))
             edge_dim += int(traj_dim / 3) -1
         
         edge_attr = torch.stack(edge_attr).squeeze().float()
@@ -684,7 +684,7 @@ class ClusterGNN(MessagePassing):
                     node_score = self.final_node[0](node_attr)
                     final_node.append(node_score)
     
-            for i in range(self.num_layers-1):
+            for i in range(self.num_layers):
                 if self.reuse:
                     if self.gradient_checkpointing:
                         inputs = (node_attr, edge_index, edge_attr)
@@ -705,7 +705,7 @@ class ClusterGNN(MessagePassing):
                     if self.use_node_score:
                         node_score = self.final_node[i+1](node_attr)
                         final_node.append(node_score)
-                elif i == self.num_layers-2:
+                elif i == self.num_layers-1:
                     score = self.final[-1](edge_attr)
                     final.append(score)
                     if self.use_node_score:

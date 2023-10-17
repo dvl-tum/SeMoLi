@@ -35,6 +35,7 @@ use_matched_category: False
 store_matched: False
 do_corr_clustering: True
 vel_evaluation: False
+heuristics: False
 
 tracker_options: # Extra options for the tracker
   a_threshold: 0.4

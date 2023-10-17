@@ -2,7 +2,7 @@
 class_class: 'TrajectoryDataLoader'
 dataset_name: 'av2_traj'
 trajectory_dir: '/storage/user/seidensc/datasets/trajectories/trajectories/remove_non_drive_and_ground_comp_4_80_0.6_2000'
-data_dir: '../../../data/argoverse2'
+data_dir: '/workspace/Argoverse2'
 processed_dir: False
 do_process: False
 num_classes: 1
@@ -23,7 +23,10 @@ split_val: False
 every_x_frame: 1
 margin: 0.6
 traj_channels: 75
+pos_channels: 3
 percentage_data_train: 0.5
 percentage_data_val: 0.1
 filtered_file_path: '/dvlresearch/jenny/'
 detection_set: 'val_gnn' # 'val_gnn' 'train_gnn' 'val_detector', 'train_detector'
+get_vels: False
+vels_augment: False

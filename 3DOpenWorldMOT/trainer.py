@@ -124,7 +124,7 @@ def load_model(cfg, checkpoints_dir, logger, rank=0):
             os.makedirs(checkpoints_dir + name, exist_ok=True)
 
             try:
-                # if True:
+                #if True:
                 checkpoint = torch.load(cfg.models.weight_path)
                 chkpt_new = dict()
                 for k, v in checkpoint['model_state_dict'].items():
@@ -139,8 +139,8 @@ def load_model(cfg, checkpoints_dir, logger, rank=0):
                 checkpoint['model_state_dict'] = chkpt_new
                 start_epoch = checkpoint['epoch'] if not cfg.just_eval else start_epoch
                 model.load_state_dict(checkpoint['model_state_dict'])
-                met = checkpoint['best_metric']
-                metric_mode = checkpoint['metric_mode']
+                met = checkpoint['best_metric'] if 'best_metric' in checkpoint.keys() else 0
+                metric_mode = checkpoint['metric_mode'] if 'metric_mode' in checkpoint.keys() else None
                 if rank == 0:
                     logger.info(f'Use pretrained model with {metric_mode}: {met}')
             except:
@@ -985,6 +985,9 @@ def train(rank, cfg, world_size):
                     and cfg.models.model_name != 'DBSCAN_Intersection'
     
     best_metric = 0
+    if cfg.just_eval:
+        start_epoch = 0
+    print(start_epoch, cfg.training.epochs)
     for epoch in range(start_epoch, cfg.training.epochs):
         if not cfg.just_eval:
             '''Train on chopped scenes'''
@@ -1054,6 +1057,7 @@ def train(rank, cfg, world_size):
     if rank == 0 and not cfg.just_eval:
         for d in os.listdir(experiment_dir + name):
             shutil.rmtree(experiment_dir + name + f'/{d}')
+    do_corr_clustering = True and cfg.do_corr_clustering
     final_evaluation(
             model,
                 do_corr_clustering,
