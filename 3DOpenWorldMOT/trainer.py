@@ -241,12 +241,11 @@ def main(cfg):
         params_list = sample_params()
         iters = 30
 
-    iters = 3
-    ks = [8, 16, 32]
+    # iters = 10
+    # rs = [0.2, 0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8, 2]
 
     for iter in range(1, iters+1):
-        cfg.models.hyperparams.k = ks[iter-1]
-        cfg.models.hyperparams.k_eval = ks[iter-1]
+        # cfg.models.hyperparams.thresh = rs[iter-1]
 
         if cfg.training.hypersearch:
             cfg.training.optim.base_lr = params_list[iter]['lr']

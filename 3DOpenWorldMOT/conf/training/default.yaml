@@ -1,12 +1,12 @@
 # @package training
 # Those arguments defines the training hyper-parameters
-epochs: 5
+epochs: 100
 hypersearch: False
 eval_every_x: 1
-eval_corr_every_x: 110
+eval_corr_every_x: 5
 num_workers: 64
 batch_size: 8
-batch_size_val: 8
+batch_size_val: 4
 shuffle: True
 gpu: 0 # -1 -> no cuda otherwise takes the specified index
 optim:

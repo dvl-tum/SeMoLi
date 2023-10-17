@@ -22,7 +22,7 @@ short_train: False
 split_val: False
 every_x_frame: 1
 margin: 0.6
-traj_channels: 75
+traj_channels: 25
 pos_channels: 3
 percentage_data_train: 0.5
 percentage_data_val: 0.1

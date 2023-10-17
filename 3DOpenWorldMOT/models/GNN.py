@@ -278,7 +278,7 @@ class ClusterGNN(MessagePassing):
         if '_DP_' in self.edge_attr:
             edge_dim += pos_channels
         if '_DT_' in self.edge_attr:
-            edge_dim += pos_channels
+            edge_dim += traj_channels
         if '_DTDP_' in self.edge_attr:
             edge_dim += pos_channels + traj_channels
         if '_DPT_' in self.edge_attr:
@@ -293,7 +293,9 @@ class ClusterGNN(MessagePassing):
             edge_dim += 3
         if '_MMMDV_' in self.edge_attr:
             edge_dim += 3
-        
+        if '_DV_' in self.edge_attr:
+            edge_dim += int(traj_channels/pos_channels)
+        print(traj_channels)
         # get node mlp
         self.node_attr = node_attr
         node_dim = 0
@@ -305,7 +307,9 @@ class ClusterGNN(MessagePassing):
             node_dim += traj_channels
         if '_MMMV_' in self.node_attr:
             node_dim += 3
-        
+        if '_V_' in self.node_attr:
+            node_dim += int(traj_channels/pos_channels)
+
         layers = list()
         final = list()
         if self.use_node_score:
@@ -329,7 +333,7 @@ class ClusterGNN(MessagePassing):
             final.append(nn.Linear(layer_sizes_node[0], 1))
             if self.use_node_score:
                 final_node.append(nn.Linear(layer_sizes_edge[0], 1))
-
+        self.layers = None
         if self.reuse:
             node_dim = layers_node.size
             edge_dim = layers_edge.size
@@ -475,6 +479,10 @@ class ClusterGNN(MessagePassing):
             edge_attr.append(get_mean_min_max(get_per_time_vel_diff(x1, timestamps, batch, self.dataset, edge_index, pos_dim), num_edges))
             edge_dim += 3
         
+        if '_DV_' in self.edge_attr:
+            edge_attr.append(get_per_time_vel_diff(x1, timestamps, batch, self.dataset, edge_index, pos_dim), num_edges)
+            edge_dim += int(traj_dim / 3)
+
         edge_attr = torch.stack(edge_attr).squeeze().float()
 
         return edge_attr, edge_dim
@@ -517,7 +525,7 @@ class ClusterGNN(MessagePassing):
         if '_PT_' in _type:
             node_attr.append((x1.view(num_objects, -1, pos_dim)+x2.unsqueeze(1)).view(num_objects, -1))
             node_dim += traj_dim
-        if '_MMMV_' in _type:
+        if '_MMMV_' in _type or '_V_' in _type:
             _node_attr = x1.view(num_objects, -1, pos_dim)
             diff_time = timestamps[batch, 1:] - timestamps[batch, :-1]
             if 'argo' in self.dataset:
@@ -527,12 +535,16 @@ class ClusterGNN(MessagePassing):
             _node_attr = _node_attr[:, 1:, :] - _node_attr[:, :-1, :]
             _node_attr = torch.linalg.norm(_node_attr, dim=-1)
             _node_attr = _node_attr / diff_time
-            _node_attr = torch.vstack([
-                _node_attr.min(dim=-1).values,
-                _node_attr.max(dim=-1).values,
-                _node_attr.mean(dim=-1)]).T
-            node_attr.append(_node_attr)
-            node_dim += 3
+            if '_V_' in _type:
+                node_attr.append(_node_attr)
+                node_dim += traj_dim
+            else:
+                _node_attr = torch.vstack([
+                    _node_attr.min(dim=-1).values,
+                    _node_attr.max(dim=-1).values,
+                    _node_attr.mean(dim=-1)]).T
+                node_attr.append(_node_attr)
+                node_dim += 3
 
         node_attr = torch.hstack(node_attr).squeeze().float()
 
@@ -667,7 +679,7 @@ class ClusterGNN(MessagePassing):
             final, score = list(), None
             final_node, node_score = list(), None
             node_attr, edge_index, edge_attr = self.encode_layer(node_attr, edge_index, edge_attr)
-            if self.deep_supervision:
+            if self.deep_supervision or self.layers is None:
                 score = self.final[0](edge_attr)
                 final.append(score)
                 if self.use_node_score:
@@ -676,9 +688,19 @@ class ClusterGNN(MessagePassing):
     
             for i in range(self.num_layers-1):
                 if self.reuse:
-                    node_attr, edge_index, edge_attr = self.layers(node_attr, edge_index, edge_attr)
+                    if self.gradient_checkpointing:
+                        inputs = (node_attr, edge_index, edge_attr)
+                        inputs = checkpoint.checkpoint(self.layers, *inputs, use_reentrant=False)
+                        node_attr, edge_index, edge_attr = inputs
+                    else:
+                        node_attr, edge_index, edge_attr = self.layers(node_attr, edge_index, edge_attr)
                 else:
-                    node_attr, edge_index, edge_attr = self.layers[i](node_attr, edge_index, edge_attr)
+                    if self.gradient_checkpointing:
+                        inputs = (node_attr, edge_index, edge_attr)
+                        inputs = checkpoint.checkpoint(self.layers[i], *inputs, use_reentrant=False)
+                        node_attr, edge_index, edge_attr = inputs
+                    else:
+                        node_attr, edge_index, edge_attr = self.layers[i](node_attr, edge_index, edge_attr)
                 if self.deep_supervision:
                     score = self.final[i+1](edge_attr)
                     final.append(score)

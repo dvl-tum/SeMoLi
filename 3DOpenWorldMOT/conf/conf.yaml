@@ -25,7 +25,7 @@ just_eval: False
 metric: acc
 multi_gpu: False
 half_precision: True
-gradient_checkpointing: False
+gradient_checkpointing: True
 keep_checkpoint: False
 keep_detections: False
 continue_from_existing: False
