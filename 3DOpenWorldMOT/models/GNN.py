@@ -259,7 +259,9 @@ class ClusterGNN(MessagePassing):
             classification_is_moving_node=False,
             set_all_pos=False,
             deep_supervision=False,
-            initial_edge_as_input=False):
+            initial_edge_as_input=False, 
+            inflation_layer_edge=None,
+            inflation_layer_node=None):
         super().__init__(aggr='mean')
         self.k = k
         self.k_eval = k_eval
@@ -319,6 +321,15 @@ class ClusterGNN(MessagePassing):
         layer_sizes_node = [layers_node.size for _ in range(0, layers_node.num_layers)]
         layer_sizes_edge = [layers_edge.size for _ in range(0, layers_edge.num_layers)]
         
+        self.inflation_layer_edge = inflation_layer_edge
+        self.inflation_layer_node = inflation_layer_node
+        if self.inflation_layer_edge.use:
+            self.encode_edge = torch.nn.Linear(edge_dim, self.inflation_layer_edge.dim)
+            edge_dim = self.inflation_layer_edge.dim
+        if self.inflation_layer_node.use:
+            self.encode_node = torch.nn.Linear(edge_dim, self.inflation_layer_node.dim)
+            node_dim = self.inflation_layer_node.dim
+
         self.encode_layer = ClusterLayer(
                     in_channel_node=node_dim,
                     in_channel_edge=edge_dim,
@@ -614,6 +625,43 @@ class ClusterGNN(MessagePassing):
         edge_index = torch.vstack([_idxs_0, _idxs_1])
 
         return edge_index
+
+    def get_graph_VEL_POS(self, node_attr, pos, r=5, max_num_neighbors=16, batch_idx=None):
+        # my graph
+        _idxs_0, _idxs_1 = list(), list()
+        for ith, (start, end) in enumerate(zip(batch_idx[:-1], batch_idx[1:])):
+            # iterate over frames in batch
+            X = node_attr[start:end]
+            P = pos[start:end]
+            # get distances between nodes
+            x_shape = X.shape
+            num_neighbors = min(65, x_shape[0])
+            knn_0 = torch_cluster.knn(X, X, k=num_neighbors)
+            knn_0 = knn_0.view(2, x_shape[0], -1)[:, :, 1:]
+            idx = knn_0.reshape(2, -1)
+            idxs_0 = idx[0]
+            idxs_1 = idx[1]
+
+            # get indices up to max_num_neighbors per node --> knn neighbors
+            dist = self.pdist(P[idxs_0, :], P[idxs_1, :])
+
+            # if radius graph, filter nodes that are within radius 
+            # but don't exceed max num neighbors
+            idx = torch.where(dist<r)[0]
+            idxs_0, idxs_1 = idxs_0[idx], idxs_1[idx]
+            
+            idxs_0 += start
+            idxs_1 += start            
+            _idxs_0.append(idxs_0)
+            _idxs_1.append(idxs_1)
+
+        _idxs_0 = torch.hstack(_idxs_0)
+        _idxs_1 = torch.hstack(_idxs_1)
+
+        edge_index = torch.vstack([_idxs_0, _idxs_1])
+
+        return edge_index
+
     
     def forward(self, data, eval=False, use_edge_att=True, name='General', corr_clustering=False):
         '''
@@ -654,6 +702,8 @@ class ClusterGNN(MessagePassing):
                         graph_attr, self.r, max_num_neighbors=k, batch_idx=batch_idx, type='radius')
                 else:
                     edge_index = radius_graph(graph_attr, self.r, data['batch'], max_num_neighbors=k)
+            elif graph == 'VELPOS':
+                edge_index = self.get_graph_VEL_POS(graph_attr, pc, r=self.r, max_num_neighbors=k, batch_idx=batch_idx)
         else:
             edge_index = data['edge_index']
             
@@ -672,6 +722,11 @@ class ClusterGNN(MessagePassing):
         # get initial edge attributes
         edge_attr, _ = self.initial_edge_attributes(traj, pc, edge_index, timestamps=data['timestamps'], batch=data['batch'])
         
+        if self.inflation_layer_edge.use:
+            edge_attr = self.encode_edge(edge_attr)
+        if self.inflation_layer_node.use:
+            edge_attr = self.encode_node(node_attr)
+
         if not self.initial_edge_as_input:
             # forward pass thourgh layers
             final, score = list(), None
