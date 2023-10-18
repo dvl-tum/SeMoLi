@@ -32,6 +32,12 @@ hyperparams:
     batch_norm: False
     drop_out: False
     augment: False
+    inflation_layer_edge:
+        use: False
+        dim: 32
+    inflation_layer_node:
+        use: False
+        dim: 32
     layers_edge: 
         size: 64
         num_layers: 3

@@ -259,7 +259,9 @@ class ClusterGNN(MessagePassing):
             classification_is_moving_node=False,
             set_all_pos=False,
             deep_supervision=False,
-            initial_edge_as_input=False):
+            initial_edge_as_input=False, 
+            inflation_layer_edge=None,
+            inflation_layer_node=None):
         super().__init__(aggr='mean')
         self.k = k
         self.k_eval = k_eval
@@ -319,6 +321,15 @@ class ClusterGNN(MessagePassing):
         layer_sizes_node = [layers_node.size for _ in range(0, layers_node.num_layers)]
         layer_sizes_edge = [layers_edge.size for _ in range(0, layers_edge.num_layers)]
         
+        self.inflation_layer_edge = inflation_layer_edge
+        self.inflation_layer_node = inflation_layer_node
+        if self.inflation_layer_edge.use:
+            self.encode_edge = torch.nn.Linear(edge_dim, self.inflation_layer_edge.dim)
+            edge_dim = self.inflation_layer_edge.dim
+        if self.inflation_layer_node:
+            self.encode_node = torch.nn.Linear(edge_dim, self.inflation_layer_node.dim)
+            node_dim = self.inflation_layer_node.dim
+
         self.encode_layer = ClusterLayer(
                     in_channel_node=node_dim,
                     in_channel_edge=edge_dim,
@@ -672,6 +683,11 @@ class ClusterGNN(MessagePassing):
         # get initial edge attributes
         edge_attr, _ = self.initial_edge_attributes(traj, pc, edge_index, timestamps=data['timestamps'], batch=data['batch'])
         
+        if self.inflation_layer_edge.use:
+            edge_attr = self.encode_edge(edge_attr)
+        if self.inflation_layer_node.use:
+            edge_attr = self.encode_node(node_attr)
+
         if not self.initial_edge_as_input:
             # forward pass thourgh layers
             final, score = list(), None
