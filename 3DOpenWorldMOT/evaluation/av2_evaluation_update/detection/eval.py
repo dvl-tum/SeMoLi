@@ -203,7 +203,7 @@ def evaluate(
     dts.loc[:, METRIC_COLUMN_NAMES_DTS] = dts_metrics
     gts.loc[:, METRIC_COLUMN_NAMES_GTS] = gts_metrics
     dts['matched_category'] = dts['matched_category'].apply(lambda x: _class_dict[x])
-
+    
     if len([t for t in np_tps if t is not None]):
         np_tps = np.concatenate([t for t in np_tps if t is not None])
     else:
@@ -244,7 +244,8 @@ def summarize_metrics(
         {s.value: cfg.metrics_defaults[i] for i, s in enumerate(tuple(MetricNames))}, index=cfg.categories
     )
 
-    unmatched_fps_dets = dts[np.logical_and(dts["is_evaluated"], dts["matched_category"]=='UNMATCHED')].shape[0]
+    # unmatched_fps_dets = dts[np.logical_and(dts["is_evaluated"], dts["matched_category"]=='UNMATCHED')].shape[0]
+    unmatched_fps_dets = dts[dts["matched_category"]=='TYPE_UNKNOWN'].shape[0]
     print(f"\t Unmatched FP detections {unmatched_fps_dets} ...")
 
     average_precisions = pd.DataFrame({t: 0.0 for t in cfg.affinity_thresholds_m}, index=cfg.categories)
@@ -280,6 +281,7 @@ def summarize_metrics(
             continue
         print('\t', category)    
         for affinity_threshold_m in cfg.affinity_thresholds_m:
+            print(category_dts[~category_dts[affinity_threshold_m]])
             true_positives: NDArrayBool = category_dts[affinity_threshold_m].astype(bool).to_numpy()
             if affinity_threshold_m == cfg.tp_threshold_m:
                 fps += ~true_positives.sum()

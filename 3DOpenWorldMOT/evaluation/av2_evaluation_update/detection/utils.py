@@ -157,7 +157,6 @@ def accumulate(
 
     is_evaluated_dts &= compute_evaluated_dts_mask(dts[..., :3], cfg)
     is_evaluated_gts &= compute_evaluated_gts_mask(gts[..., :3], gts[..., -2], cfg)
-
     # Initialize results array.
     # last +1 for tp, second last for assigned category
     dts_augmented: NDArrayFloat = np.zeros((N, T + E + 1 + 1))
@@ -220,7 +219,6 @@ def accumulate(
 
         # no TPs if either of both
         np_tps = None
-    
     # Permute the detections according to the original ordering..
     outputs: Tuple[NDArrayInt, NDArrayInt] = np.unique(
         permutation, return_index=True)  # type: ignore
@@ -310,7 +308,7 @@ def assign(
     # static / wrong category / wrong pointrange
     rem_dts = np.isin(
         all_dts, idx_dts[~matched_mask])
-
+    
     # filter matches
     idx_dts = idx_dts[matched_mask]
     idx_gts = idx_gts[matched_mask]
@@ -333,6 +331,7 @@ def assign(
 
         dts_metrics[idx_dts[is_tp], i] = True
         gts_metrics[idx_gts, i] = True
+        dts_category[idx_dts[is_tp]] = gts[..., -3][idx_gts[is_tp]]
 
         if threshold_m != cfg.tp_threshold_m:
             continue  # Skip if threshold isn't the true positive threshold.
@@ -341,7 +340,7 @@ def assign(
             continue  # Skip if no true positives exist.
         
         # getting category detection was matched to
-        dts_category[idx_dts[is_tp]] = gts[..., -3][idx_gts[is_tp]]
+        # dts_category[idx_dts[is_tp]] = gts[..., -3][idx_gts[is_tp]]
         np_tps = gts[idx_gts[is_tp]][:, -2]
         np_fns = gts[all_gts[keep_gts][~np.isin(all_gts[keep_gts], idx_gts[is_tp])]][:, -2]
         

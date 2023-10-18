@@ -1,4 +1,5 @@
 # FOR DETECTION EVALUATION
+import copy
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
 from av2.evaluation.detection.eval import evaluate
@@ -375,7 +376,7 @@ def filter_seq(data, width=0):
 
 def visualize_whole(df, gf, name, base_dir='../../../'):
     split_dir = Path('/dvlresearch/jenny/Waymo_Converted_GT/val')
-    split_dir = Path('/workspace/Waymo_Converted_val/val')
+    split_dir = Path('/workspace/Waymo_Converted_train//Waymo_Converted/train')
     # split_dir = Path('/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/download_for_vis/Waymo_Converted_train/Waymo_Converted/train')
     loader = AV2SensorDataLoader(data_dir=split_dir, labels_dir=split_dir)
     for seq in df['log_id'].unique():
@@ -618,6 +619,11 @@ def eval_detection(
 
     gts['category'] = [_class_dict[c] for c in gts['category']]
     dts['category'] = [_class_dict[c] for c in dts['category']]
+    if is_waymo:
+        print(f'\t Removing signs from GT. Shape before {gts.shape[0]}')
+        gts = gts[gts['category']!='TYPE_SIGN']
+        print(f'\t Removing signs from GT. Shape after {gts.shape[0]}')
+
     if print_detail:
         print(f' \t Min points {min_points}, Max points {max_points}')
 
@@ -627,10 +633,10 @@ def eval_detection(
     if just_eval:
         print("Evaluate now...")
 
-    gts_orig = gts
-    dts_orig = dts
+    gts_orig = gts #copy.deepcopy(gts)
+    dts_orig = dts #copy.deepcopy(dts)
     for affinity, tp_thresh, threshs, n_jobs in zip(
-        ['CENTER', 'IoU3D', 'IoU2D'], [2.0, 0.6, 0.6], [(0.5, 1.0, 2.0, 4.0), (0.2, 0.4, 0.6, 0.8), (0.2, 0.4, 0.6, 0.99)], [8, 1, 1]):
+        ['CENTER', 'IoU3D', 'IoU2D'], [2.0, 0.6, 0.6], [(0.5, 1.0, 2.0, 4.0), (0.2, 0.4, 0.6, 0.99), (0.2, 0.4, 0.6, 0.99)], [8, 1, 1]):
         
         if affinity != 'CENTER' and affinity != 'IoU3D':
             continue
@@ -651,10 +657,11 @@ def eval_detection(
             tp_threshold_m=tp_thresh,
             affinity_type=affinity,
             affinity_thresholds_m=threshs,
-            categories=categories
-            )
+            categories=categories,
+            max_num_dts_per_category=100000)
+        print(competition_cfg)
         
-        print(f"\t {affinity}, # gt {gts.shape[0]}, # dt {dts.shape[0]}\n")
+        print(f"\t {affinity}, # gt {gts_orig.shape[0]}, # dt {dts_orig.shape[0]}\n")
         dts, gts, metrics, np_tps, np_fns, _, all_results_df = evaluate(
             dts_orig,
             gts_orig,
