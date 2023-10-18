@@ -884,7 +884,7 @@ def train(rank, cfg, world_size):
         load_model(cfg, checkpoints_dir, logger, rank)
     
     if rank == 0 or not cfg.multi_gpu:
-        if not cfg.just_eval and os.path.isdir(experiment_dir + name) and not cfg.continue_from_existing:
+        if os.path.isdir(experiment_dir + name) and not cfg.continue_from_existing:
             shutil.rmtree(experiment_dir + name)
         if not cfg.just_eval and os.path.isdir(str(checkpoints_dir) + name) and not cfg.continue_from_existing:
             shutil.rmtree(str(checkpoints_dir) + name)
@@ -1054,7 +1054,7 @@ def train(rank, cfg, world_size):
    
     # final_evaluation
     dist.barrier()
-    if rank == 0 and not cfg.just_eval:
+    if rank == 0:
         for d in os.listdir(experiment_dir + name):
             shutil.rmtree(experiment_dir + name + f'/{d}')
     do_corr_clustering = True and cfg.do_corr_clustering
@@ -1082,7 +1082,7 @@ def train(rank, cfg, world_size):
 def on_return(rank, name, experiment_dir, checkpoints_dir, cfg):
     if not cfg.just_eval and not cfg.keep_checkpoint and rank == 0:
         shutil.rmtree(checkpoints_dir + name)
-    if not cfg.just_eval and not cfg.keep_detections and rank == 0:
+    if not cfg.keep_detections and rank == 0:
         shutil.rmtree(experiment_dir + name)
 
 
