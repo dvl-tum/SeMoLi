@@ -47,15 +47,15 @@ loss_hyperparams:
     node_loss: False
     focal_loss_node: True
     focal_loss_edge: True
-    alpha_edge: 0.25
-    gamma_edge: 2
-    alpha_node: 0.25
-    gamma_node: 2
+    alpha_edge: 0.5
+    gamma_edge: 3.5
+    alpha_node: 0.5
+    gamma_node: 4
     node_weight: 1
     edge_weight: 1
     ignore_stat_edges: 0
     ignore_stat_nodes: 0
-    set_3_to_false: True
+    set_3_to_false: False
     ignore_edges_between_background: 0
     classification_is_moving_node: 0
     classification_is_moving_edge: 0

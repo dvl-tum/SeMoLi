@@ -801,7 +801,6 @@ class ClusterGNN(MessagePassing):
             graph_edge_index = graph_edge_index[:, torch.logical_and(
                 graph_node_score[graph_edge_index[0]] > self.use_node_score, 
                 graph_node_score[graph_edge_index[1]] > self.use_node_score).squeeze()]
-
         # map nodes
         edges = torch.unique(graph_edge_index)
         mapping = torch.ones(end.item()-start.item()) * - 1
@@ -811,7 +810,7 @@ class ClusterGNN(MessagePassing):
         _edge_index = graph_edge_index
         _edge_index[0, :] = mapping[graph_edge_index[0, :]]
         _edge_index[1, :] = mapping[graph_edge_index[1, :]]
-        print(edges) 
+        
         # if not os.path.isfile(os.path.join('/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/vis_graph', 'mapped', data['log_id'][0] + '.png')):
         #     self.visualize(torch.arange(edges.shape[0]), _edge_index, pc[edges], torch.ones(edges.shape[0]), data.timestamps[i, 0], name='mapped', data=data)
         clusters = torch.ones(end.item()-start.item()) * - 1
@@ -820,6 +819,7 @@ class ClusterGNN(MessagePassing):
 
             if self.clustering == 'correlation':
                 # solve correlation clustering
+                '''
                 i = _edge_index[0, :].contiguous().to(torch.int32) # Can only be of dtype int32!
                 j = _edge_index[1, :].contiguous().to(torch.int32) # Can only be of dtype int32!
                 costs = ((graph_edge_score*2)-1).contiguous().to(torch.float32) # Can only be of dtype float32!
@@ -829,6 +829,13 @@ class ClusterGNN(MessagePassing):
                 self.opts.dump_timeline = True # Set to true to get intermediate results.
                 timeline = rama_py.rama_cuda_gpu_pointers(i.data_ptr(), j.data_ptr(), costs.data_ptr(), node_labels.data_ptr(), num_nodes, num_edges, i.device.index, self.opts)
                 mapped_clusters = node_labels
+                '''
+                rama_out = rama_cuda(
+                    [e[0] for e in _edge_index.T.cpu().numpy()],
+                    [e[1] for e in _edge_index.T.cpu().numpy()],
+                    (graph_edge_score.cpu().numpy()*2)-1,
+                    self.opts)
+                mapped_clusters = torch.tensor(rama_out[0]).to(self.rank).int()
             else:
                 from scipy.sparse import csr_matrix
                 input_graph = csr_matrix((np.ones(_edge_index.shape[1]), (_edge_index[0, :].cpu().numpy(), _edge_index[1, :].cpu().numpy())), shape=(edges.shape[0], edges.shape[0]))
