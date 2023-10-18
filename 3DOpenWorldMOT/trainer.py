@@ -622,41 +622,12 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
             if 'eval num edge neg' in log_dict.keys():
                 num_edge_neg[batch] = float(log_dict['eval num edge neg'])
 
-            '''
-            if rank == 0 and cfg.wandb:
-                if 'eval bce loss edge' in log_dict.keys():
-                    wandb.log({'eval bce loss edge': log_dict['eval bce loss edge'], "epoch": epoch})
-                if 'eval bce loss node' in log_dict.keys():
-                    wandb.log({'eval bce loss node': log_dict['eval bce loss node'], "epoch": epoch})
-                if 'eval accuracy edge' in log_dict.keys():
-                    wandb.log({'eval accuracy edge': log_dict['eval accuracy edge'], "epoch": epoch})
-                if 'eval accuracy node' in log_dict.keys():
-                    wandb.log({'eval accuracy node': log_dict['eval accuracy node'], "epoch": epoch})
-            '''
             if do_corr_clustering:
                 nmi = sum(_nmis) / len(_nmis)
                 nmis[0] += float(nmi)
                 nmis[1] += 1
             
             if is_neural_net and logits[0] is not None:
-                '''
-                if 'eval bce loss edge' in log_dict.keys():
-                    edge_loss[0] += float(
-                        log_dict['eval bce loss edge'])
-                    edge_loss[1] += 1
-                if 'eval bce loss node' in log_dict.keys():
-                    node_loss[0] += float(
-                        log_dict['eval bce loss node'])
-                    node_loss[1] += 1
-                if 'eval accuracy edge' in log_dict.keys():
-                    edge_acc[0] += float(
-                        log_dict['eval accuracy edge'])
-                    edge_acc[1] += 1
-                if 'eval accuracy node' in log_dict.keys():
-                    node_acc[0] += float(
-                        log_dict['eval accuracy node'])
-                    node_acc[1] += 1
-                '''
                 if not cfg.multi_gpu:
                     if 'edge num node pos' in log_dict.keys():
                         num_node_pos[batch] += float(
@@ -926,12 +897,6 @@ def train(rank, cfg, world_size):
                 val_data,
                 batch_size=cfg.training.batch_size_val)
         else:
-            '''val_sampler = DistributedTestSampler(
-                    val_data,
-                    num_replicas=torch.cuda.device_count(),
-                    rank=rank,
-                    shuffle=False,
-                    drop_last=False)'''
             val_sampler = DistributedSampler(
                     val_data,
                     num_replicas=torch.cuda.device_count(),
@@ -943,9 +908,6 @@ def train(rank, cfg, world_size):
                 batch_size=cfg.training.batch_size_val,
                 sampler=val_sampler)
 
-            '''val_loader = PyGDataLoader(
-                val_data,
-                batch_size=cfg.training.batch_size_val)'''
     else:
         val_loader = None
 
@@ -955,10 +917,6 @@ def train(rank, cfg, world_size):
                 test_data,
                 batch_size=cfg.training.batch_size_val)
         else:
-            '''test_sampler = DistributedTestSampler(
-                    test_data,
-                    num_replicas=torch.cuda.device_count(),
-                    rank=rank)'''
             test_sampler = DistributedSampler(
                     test_data,
                     num_replicas=torch.cuda.device_count(),
