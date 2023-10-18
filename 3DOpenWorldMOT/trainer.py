@@ -124,7 +124,6 @@ def load_model(cfg, checkpoints_dir, logger, rank=0):
             os.makedirs(checkpoints_dir + name, exist_ok=True)
 
             try:
-                #if True:
                 checkpoint = torch.load(cfg.models.weight_path)
                 chkpt_new = dict()
                 for k, v in checkpoint['model_state_dict'].items():
@@ -151,7 +150,7 @@ def load_model(cfg, checkpoints_dir, logger, rank=0):
                 else:
                     if rank == 0:
                         logger.info('No existing model, starting training from scratch...')
-            
+            '''
             if cfg.training.optim.optimizer.o_class == 'Adam':
                 optimizer = torch.optim.Adam(
                     model.parameters(),
@@ -801,8 +800,10 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
                     remove_non_move_thresh=cfg.data.remove_static_thresh,
                     filter_class=-2,
                     only_matched_gt=False,
-                    filter_moving_first=True,
-                    use_matched_category=False,
+                    filter_moving_first=False,
+                    filter_moving=cfg.filter_moving,
+                    use_matched_category=cfg.use_matched_category,
+                    heuristics=cfg.heuristics,
                     debug=cfg.data.debug,
                     name=name)
 
