@@ -346,7 +346,7 @@ class ClusterGNN(MessagePassing):
                     use_layernorm=layer_norm,
                     use_drop=drop_out,
                     skip_node_update=False)
-            for j in range(1, layers_edge.num_layers):
+            for j in range(layers_edge.num_layers):
                 if self.deep_supervision or j == len(layer_sizes_node)-1 :
                     final.append(nn.Linear(layers_edge.size, 1))
                     if self.use_node_score:
@@ -811,34 +811,35 @@ class ClusterGNN(MessagePassing):
         _edge_index = graph_edge_index
         _edge_index[0, :] = mapping[graph_edge_index[0, :]]
         _edge_index[1, :] = mapping[graph_edge_index[1, :]]
-        
+        print(edges) 
         # if not os.path.isfile(os.path.join('/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/vis_graph', 'mapped', data['log_id'][0] + '.png')):
         #     self.visualize(torch.arange(edges.shape[0]), _edge_index, pc[edges], torch.ones(edges.shape[0]), data.timestamps[i, 0], name='mapped', data=data)
-
-        if self.clustering == 'correlation':
-            # solve correlation clustering
-            try:
-                rama_out = rama_cuda(
-                    [e[0] for e in _edge_index.T.cpu().numpy()],
-                    [e[1] for e in _edge_index.T.cpu().numpy()], 
-                    (graph_edge_score.cpu().numpy()*2)-1,
-                    self.opts)
-                mapped_clusters = torch.tensor(rama_out[0]).to(self.rank).int()
-            except:
-                print('Could not resolve rama...')
-                mapped_clusters = torch.arange(edges.shape[0]).to(self.rank).int()
-        else:
-            from scipy.sparse import csr_matrix
-            input_graph = csr_matrix((np.ones(_edge_index.shape[1]), (_edge_index[0, :].cpu().numpy(), _edge_index[1, :].cpu().numpy())), shape=(edges.shape[0], edges.shape[0]))
-            _, mapped_clusters = connected_components(csgraph=input_graph, directed=False, return_labels=True)
-            mapped_clusters = torch.from_numpy(mapped_clusters).to(_edge_index.device)
-
-        # map back 
-        _edge_index[0, :] = edges[_edge_index[0, :]]
-        _edge_index[1, :] = edges[_edge_index[1, :]]
         clusters = torch.ones(end.item()-start.item()) * - 1
         clusters = clusters.int().to(self.rank)
-        clusters[edges] = mapped_clusters
+        if edges.shape[0]:
+
+            if self.clustering == 'correlation':
+                # solve correlation clustering
+                i = _edge_index[0, :].contiguous().to(torch.int32) # Can only be of dtype int32!
+                j = _edge_index[1, :].contiguous().to(torch.int32) # Can only be of dtype int32!
+                costs = ((graph_edge_score*2)-1).contiguous().to(torch.float32) # Can only be of dtype float32!
+                num_nodes = edges.shape[0]
+                node_labels = torch.ones(num_nodes, device = i.device).to(torch.int32)
+                num_edges = i.numel()
+                self.opts.dump_timeline = True # Set to true to get intermediate results.
+                timeline = rama_py.rama_cuda_gpu_pointers(i.data_ptr(), j.data_ptr(), costs.data_ptr(), node_labels.data_ptr(), num_nodes, num_edges, i.device.index, self.opts)
+                mapped_clusters = node_labels
+            else:
+                from scipy.sparse import csr_matrix
+                input_graph = csr_matrix((np.ones(_edge_index.shape[1]), (_edge_index[0, :].cpu().numpy(), _edge_index[1, :].cpu().numpy())), shape=(edges.shape[0], edges.shape[0]))
+                _, mapped_clusters = connected_components(csgraph=input_graph, directed=False, return_labels=True)
+                mapped_clusters = torch.from_numpy(mapped_clusters).to(_edge_index.device)
+
+            # map back 
+            _edge_index[0, :] = edges[_edge_index[0, :]]
+            _edge_index[1, :] = edges[_edge_index[1, :]]
+            clusters[edges] = mapped_clusters
+        
         clusters = clusters.cpu().numpy()
 
         # if clusters are < min_samples set to rubbish
@@ -950,7 +951,8 @@ class GNNLoss(nn.Module):
             ignore_edges_between_background=0,
             classification_is_moving_node=0,
             classification_is_moving_edge=0,
-            use_node_score=False) -> None:
+            use_node_score=False,
+            set_3_to_false=True) -> None:
         super().__init__()
         
         self.bce_loss = bce_loss
@@ -963,6 +965,7 @@ class GNNLoss(nn.Module):
         self.alpha_node = alpha_node
         self.gamma_node = gamma_node
         self.gamma_edge = gamma_edge
+        self.set_3_to_false = set_3_to_false
         self.max_iter = 2000
         self.rank = rank
         self.ignore_stat_edges = ignore_stat_edges
@@ -1010,7 +1013,8 @@ class GNNLoss(nn.Module):
             # setting edges that do not belong to object to zero as well as sign edges
             # --> instance 0 is no object
             point_instances[data.point_instances[edge_index[0, :]] == 0] = False
-            point_instances[data.point_categories[edge_index[0, :]] == 3] = False
+            if self.set_3_to_false:
+                point_instances[data.point_categories[edge_index[0, :]] == 3] = False
             point_instances = point_instances.to(self.rank)
 
             # if using moving vs non-moving / background as training objective
@@ -1118,7 +1122,8 @@ class GNNLoss(nn.Module):
         if self.node_loss:
             # get if point is object (sign is considered as no object)
             is_object = data.point_instances != 0
-            is_object[data.point_categories == 3] = False
+            if self.set_3_to_false:
+                is_object[data.point_categories == 3] = False
             is_object = is_object.type(torch.FloatTensor).to(self.rank)
             object_class = data.point_categories
 

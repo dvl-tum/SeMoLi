@@ -505,7 +505,8 @@ def eval_detection(
         store_matched=False,
         velocity_evaluation=False,
         min_num_interior_pts=20,
-        waymo_style=True):
+        waymo_style=True,
+        heuristics=False):
     
     if os.path.isdir(trackers_folder) and not len(os.listdir(trackers_folder)):
         return None, np.array([0, 2, 1, 3.142, 0]), None
@@ -534,16 +535,18 @@ def eval_detection(
         is_waymo=is_waymo)
     # print((gts['filter_moving'] == (gts['velocities'] > remove_non_move_thresh)).all())
     # quit()
-    print(gts.shape) 
+    print(f'Numer of gt before filter moving {gts.shape}') 
     if filter_moving_first:
         gts = gts[gts['filter_moving']]
-    print(gts.shape)
+    print(f'Numer of gt after filter moving {gts.shape}')
     gts = gts[gts['num_interior_pts'] > 0]
-    print(gts.shape)
+    print(f'Numer of gt after removing bss w 0 interior points {gts.shape}')
+    
     if waymo_style:
         gts = gts[np.logical_and(gts['tx_m'] < 50, gts['ty_m'] < 20)]
         gts = gts[np.logical_and(gts['tx_m'] > -50, gts['ty_m'] > -20)]
-    print(gts.shape)
+    print(f'Numer of gt after filter points waymo style {gts.shape}')
+    
     if velocity_evaluation:
         use_matched_category = True
         gts_categories = np.ones(gts.shape[0])
@@ -565,25 +568,28 @@ def eval_detection(
         is_waymo=is_waymo)
     dts = dts.drop_duplicates()
     print(f'Numer of detections {dts.shape[0]}')
-    dts = dts[np.logical_and(dts['height_m'] > 0.1, 
+    
+    #'''
+    if heuristics:
+        dts = dts[np.logical_and(dts['height_m'] > 0.1, 
                              np.logical_and(dts['length_m'] > 0.1, dts['width_m'] > 0.1))]  
-    print(f'Numer of detections after size threshold {dts.shape[0]}')
-    dts = dts[np.logical_or(dts['num_interior_pts'] > min_num_interior_pts, dts['num_interior_pts']==-1)]
-    print(f'Numer of detections after num interior threshold {dts.shape[0]}')
-    dts = dts[dts['width_m']<5]
-    print(f'Numer of detections after removing objexts with w > 5 {dts.shape[0]}')
-    dts = dts[dts['length_m']<20]
-    print(f'Numer of detections after removing objexts with l > 20 {dts.shape[0]}')
-    dts = dts[dts['height_m']<4]
-    print(f'Numer of detections after removing objexts with h > 4 {dts.shape[0]}')
-
+        print(f'Numer of detections after size threshold {dts.shape[0]}')
+        dts = dts[np.logical_or(dts['num_interior_pts'] > min_num_interior_pts, dts['num_interior_pts']==-1)]
+        print(f'Numer of detections after num interior threshold {dts.shape[0]}')
+        dts = dts[dts['width_m']<5]
+        print(f'Numer of detections after removing objexts with w > 5 {dts.shape[0]}')
+        dts = dts[dts['length_m']<20]
+        print(f'Numer of detections after removing objexts with l > 20 {dts.shape[0]}')
+        dts = dts[dts['height_m']<4]
+        print(f'Numer of detections after removing objexts with h > 4 {dts.shape[0]}')
+    # '''
+    
     if waymo_style:
         dts = dts[np.logical_and(dts['tx_m'] < 50, dts['ty_m'] < 20)]
+        dts = dts[np.logical_and(dts['tx_m'] > -50, dts['ty_m'] > -20)]
     
-    # dts = dts[dts['num_interior_pts'] > 50]
-    # dts = dts[dts['height_m'] < 3]
-    # dts = dts[dts['width_m'] < 4]
-    # dts = dts[dts['length_m'] < 7]
+    print(f'Numer of detections after filter points waymo style {dts.shape}')
+
     if print_detail:
         print(f'\t Num dts: {dts.shape}, Num gts: {gts.shape}')
 
@@ -626,8 +632,8 @@ def eval_detection(
     for affinity, tp_thresh, threshs, n_jobs in zip(
         ['CENTER', 'IoU3D', 'IoU2D'], [2.0, 0.6, 0.6], [(0.5, 1.0, 2.0, 4.0), (0.2, 0.4, 0.6, 0.8), (0.2, 0.4, 0.6, 0.99)], [8, 1, 1]):
         
-        # if affinity == 'CENTER' or affinity == 'IoU3D':
-        #     continue
+        if affinity != 'CENTER' and affinity != 'IoU3D':
+            continue
 
         # Evaluate instances.
         # Defaults to competition parameters.
@@ -647,7 +653,7 @@ def eval_detection(
             affinity_thresholds_m=threshs,
             categories=categories
             )
-
+        
         print(f"\t {affinity}, # gt {gts.shape[0]}, # dt {dts.shape[0]}\n")
         dts, gts, metrics, np_tps, np_fns, _, all_results_df = evaluate(
             dts_orig,

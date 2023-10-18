@@ -59,7 +59,7 @@ class FlowRegistration():
                     start_in_t0 = torch.cat([start_in_t1, cano1_in_t1])
 
                 dets.append(copy.deepcopy(track.detections[-1]))
-                # start_in_t0 = outlier_removal(start_in_t0, threshold=self.threshold, kNN=self.kNN)
+                start_in_t0 = outlier_removal(start_in_t0, threshold=self.threshold, kNN=self.kNN)
 
                 # setting last detection
                 lwh, translation = get_rotated_center_and_lwh(start_in_t0,  track.detections[-1].rot)

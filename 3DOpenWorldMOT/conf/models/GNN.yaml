@@ -55,6 +55,7 @@ loss_hyperparams:
     edge_weight: 1
     ignore_stat_edges: 0
     ignore_stat_nodes: 0
+    set_3_to_false: True
     ignore_edges_between_background: 0
     classification_is_moving_node: 0
     classification_is_moving_edge: 0

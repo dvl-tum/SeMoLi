@@ -72,13 +72,14 @@ class SimpleTracker():
         self.tps = 0
         self.fns = 0
         self.fps = 0
-        
-        self.active_tracks = [t for t in active_tracks if len(t) > self.len_thresh]
-
+        print(f'Before len thresh {len(self.active_tracks)}')
+        print([len(t) for t in active_tracks])
+        self.active_tracks = {t.track_id: t for t in active_tracks if len(t) > self.len_thresh}
+        print(f'After len thresh {len(self.active_tracks)}')
         #for track in self.active_tracks:    
         #    track.fill_detections(self.av2_loader, self.ordered_timestamps.numpy().tolist(), self.max_time)
         
-        return {t.track_id: t for t in active_tracks if len(t) > self.len_thresh}
+        return self.active_tracks
 
     def associate_timestamp(
             self,

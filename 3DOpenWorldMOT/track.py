@@ -280,8 +280,8 @@ def track(rank, cfg, world_size):
     for i, data in enumerate(dataloader):
         seq_name, dataset_path, gt_path, split, detection_set, percentage = data
         seq_name, dataset_path, gt_path, split, detection_set, percentage = seq_name[0], dataset_path[0], gt_path[0], split[0], detection_set[0], percentage[0]
-        if os.path.isdir(os.path.join(cfg.tracker_options.out_path_for_eval, cfg.tracker_options.registered_dets, split, seq_name)):
-            continue
+        # if os.path.isdir(os.path.join(cfg.tracker_options.out_path_for_eval, cfg.tracker_options.registered_dets, split, seq_name)):
+        #     continue
         print(i, len(dataloader))
         loader = AV2SensorDataLoader(data_dir=Path(f'{cfg.data.data_dir}_{split}/Waymo_Converted/{split}'), labels_dir=Path(f'{cfg.data.data_dir}_{split}/Waymo_Converted/{split}'))    
         detsprocessor = InitialDetProcessor(
