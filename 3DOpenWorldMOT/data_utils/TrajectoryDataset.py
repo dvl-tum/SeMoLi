@@ -58,7 +58,8 @@ class TrajectoryDataset(PyGDataset):
             vel_augment=False,
             remove_non_move_thresh=1,
             traj_channels=25,
-            pos_channels=3):
+            pos_channels=3,
+            waymo_style=False):
         
         if 'gt' in _processed_dir:
             self.trajectory_dir = Path(os.path.join(trajectory_dir, split))
@@ -89,6 +90,7 @@ class TrajectoryDataset(PyGDataset):
         self.remove_non_move_thresh = remove_non_move_thresh
         self.traj_channels = traj_channels
         self.pos_channels = pos_channels
+        self.waymo_style = waymo_style
         # for debugging
         if debug:
             if split == 'val' and 'Argo' in self.data_dir:
@@ -562,14 +564,14 @@ class TrajectoryDataset(PyGDataset):
         
         return data
 
-    def get(self, idx, waymo_style=True):
+    def get(self, idx):
         path = self._processed_paths[idx]
         data = torch.load(path)
         data['traj'] = data['traj'][:, :self.traj_channels, :self.pos_channels]
         data['pc_list'] = data['pc_list'][:, :self.pos_channels]
         data['timestamps'] = data['timestamps'][:self.traj_channels]
         
-        if waymo_style:
+        if self.waymo_style:
             mask = torch.logical_and(
                 torch.logical_and(data['pc_list'][:, 0] < 50, data['pc_list'][:, 0] > -50),
                 torch.logical_and(data['pc_list'][:, 1] < 20, data['pc_list'][:, 1] > -20))
@@ -656,7 +658,8 @@ def get_TrajectoryDataLoader(cfg, name=None, train=True, val=True, test=False):
             vel_augment=cfg.data.vels_augment,
             remove_non_move_thresh=cfg.data.remove_static_thresh,
             traj_channels=cfg.data.traj_channels,
-            pos_channels=cfg.data.pos_channels,)
+            pos_channels=cfg.data.pos_channels,
+            waymo_style=cfg.data.waymo_style)
     else:
         train_data = None
     if val:
@@ -683,7 +686,8 @@ def get_TrajectoryDataLoader(cfg, name=None, train=True, val=True, test=False):
                 detection_out_path=name,
                 get_vels=cfg.data.get_vels,
                 traj_channels=cfg.data.traj_channels,
-                pos_channels=cfg.data.pos_channels,)
+                pos_channels=cfg.data.pos_channels,
+                waymo_style=cfg.data.waymo_style)
     else:
         val_data = None
     if test:
