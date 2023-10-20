@@ -93,10 +93,8 @@ def evaluate(
     n_jobs: int = 4,
     min_points: int = 0,
     max_points: int = 10000,
-    filter_class: str = 'REGULAR_VEHICLE',
-    only_matched_gt: bool = False,
+    filter_class: str = "NO_FILTER",
     use_matched_category: bool = False,
-    filter_moving_first: bool = False,
     filter_moving: bool = True,
     _class_dict: dict = {}
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
@@ -118,6 +116,75 @@ def evaluate(
         RuntimeError: If accumulation fails.
         ValueError: If ROI pruning is enabled but a dataset directory is not specified.
     """
+
+    if filter_moving or use_matched_category:
+        # match detections to ignore regions first (static objects)
+        dts, _ = match_moving_and_category(dts, gts)
+        if filter_moving:
+            gts = gts[gts['filter_moving']]
+            dts = dts[dts[~dts_metrics[:, -3]]]
+        if use_matched_category:
+            dts['category'] = dts['matched_category'].apply(lambda x: _class_dict[x])
+
+    dts_list, gts_list, np_tps, np_fns = _evaluate(
+        dts,
+        gts,
+        cfg,
+        n_jobs,
+        min_points,
+        max_points,
+        filter_class,
+        use_matched_category)
+
+    METRIC_COLUMN_NAMES_DTS = cfg.affinity_thresholds_m + TP_ERROR_COLUMNS + ("is_evaluated",)
+    METRIC_COLUMN_NAMES_GTS = cfg.affinity_thresholds_m + TP_ERROR_COLUMNS + ("is_evaluated",)
+
+    dts_metrics: NDArrayFloat = np.concatenate(dts_list)  # type: ignore
+    dts_metrics = np.delete(dts_metrics, [-3, -2], axis=1)
+    gts_metrics: NDArrayFloat = np.concatenate(gts_list)  # type: ignore
+    # add column for matched categories
+    dts.loc[:, METRIC_COLUMN_NAMES_DTS] = dts_metrics
+    gts.loc[:, METRIC_COLUMN_NAMES_GTS] = gts_metrics
+
+    if len([t for t in np_tps if t is not None]):
+        np_tps = np.concatenate([t for t in np_tps if t is not None])
+    else:
+        np_tps = None
+    if [f for f in np_fns if f is not None]:
+        np_fns = np.concatenate([f for f in np_fns if f is not None])
+    else:
+        np_fns = None
+
+    # Compute summary metrics.
+    metrics, fps, all_results_df = summarize_metrics(dts, gts, cfg, use_matched_category)
+    metrics.loc["AVERAGE_METRICS"] = metrics.mean()
+    metrics = metrics.round(NUM_DECIMALS)
+    return dts, gts, metrics, np_tps, np_fns, fps, all_results_df
+
+def match_moving_and_category(dts, gts, cfg):
+    filter_cfg = DetectionCfg(
+            dataset_dir=cfg.dataset_dir, 
+            eval_only_roi_instances=cfg.eval_only_roi_instances, 
+            tp_threshold_m=0.99,
+            affinity_type='IoU3D',
+            affinity_thresholds_m=[0.99],
+            categories=cfg.categories)
+
+    dts_list, _, _, _ = _evaluate(dts, gts, filter_cfg, 1, use_matched_category=True)
+    dts_metrics: NDArrayFloat = np.concatenate(dts_list)  # type: ignore
+    dts['matched_to_static'] = dts_metrics[:, -3]
+    dts['matched_category'] = dts_metrics[:, -2]
+    return dts
+
+def _evaluate(dts: pd.DataFrame,
+    gts: pd.DataFrame,
+    cfg: DetectionCfg,
+    n_jobs: int = 4,
+    min_points: int = 0,
+    max_points: int = 10000,
+    filter_class: str = 'NO_FILTER',
+    use_matched_category: bool = False):
+
     if cfg.eval_only_roi_instances and cfg.dataset_dir is None:
         raise ValueError(
             "ROI pruning has been enabled, but the dataset directory has not be specified. "
@@ -131,11 +198,6 @@ def evaluate(
             )
     else:
         _UUID_COLUMN_NAMES = UUID_COLUMN_NAMES
-                
-    if filter_moving and filter_moving_first:
-        gts = gts[gts['filter_moving']]
-    elif not filter_moving:
-        gts['filter_moving'] = np.ones(gts.shape[0], dtype=bool)
 
     # Sort both the detections and annotations by lexicographic order for grouping.
     dts = dts.sort_values(list(_UUID_COLUMN_NAMES))
@@ -178,11 +240,11 @@ def evaluate(
         if uuid in uuid_to_gts:
             sweep_gts = uuid_to_gts[uuid]
 
-        args = sweep_dts, sweep_gts, cfg, None, None, min_points, max_points, int(timestamp_ns), filter_class, only_matched_gt
+        args = sweep_dts, sweep_gts, cfg, None, None, min_points, max_points, int(timestamp_ns), filter_class
         if log_id_to_avm is not None and log_id_to_timestamped_poses is not None:
             avm = log_id_to_avm[log_id]
             city_SE3_ego = log_id_to_timestamped_poses[log_id][int(timestamp_ns)]
-            args = sweep_dts, sweep_gts, cfg, avm, city_SE3_ego, min_points, max_points, int(timestamp_ns), filter_class, only_matched_gt
+            args = sweep_dts, sweep_gts, cfg, avm, city_SE3_ego, min_points, max_points, int(timestamp_ns), filter_class
         args_list.append(args)
 
     print("\t Starting evaluation ...")
@@ -246,7 +308,7 @@ def summarize_metrics(
 
     # unmatched_fps_dets = dts[np.logical_and(dts["is_evaluated"], dts["matched_category"]=='UNMATCHED')].shape[0]
     unmatched_fps_dets = dts[dts["matched_category"]=='TYPE_UNKNOWN'].shape[0]
-    print(f"\t Unmatched FP detections {unmatched_fps_dets} ...")
+    print(f"\t Unmatched FP detections when using matched categories {unmatched_fps_dets} ...")
 
     average_precisions = pd.DataFrame({t: 0.0 for t in cfg.affinity_thresholds_m}, index=cfg.categories)
     precisions = pd.DataFrame({t: 0.0 for t in cfg.affinity_thresholds_m}, index=cfg.categories)
@@ -256,10 +318,7 @@ def summarize_metrics(
     all_results_df['num gt'] = np.zeros(all_results_df.shape[0])
     for category in cfg.categories:
         # Find detections that have the current category.
-        if use_matched_category:
-            is_category_dts = dts["matched_category"] == category
-        else:
-            is_category_dts = dts["category"] == category
+        is_category_dts = dts["category"] == category
         # Only keep detections if they match the category and have NOT been filtered.
         is_valid_dts = np.logical_and(is_category_dts, dts["is_evaluated"])
 
@@ -284,96 +343,6 @@ def summarize_metrics(
             true_positives: NDArrayBool = category_dts[affinity_threshold_m].astype(bool).to_numpy()
             if affinity_threshold_m == cfg.tp_threshold_m:
                 fps += ~true_positives.sum()
-            
-            '''
-            ## GET STATS
-            fp_dets = category_dts[~true_positives]
-            tp_dets = category_dts[true_positives]
-            
-            num_pts_fp = fp_dets['num_interior_pts']
-            counts, bins = np.histogram(num_pts_fp, bins=np.linspace(0, 2000, 100))
-            plt.hist(bins[:-1], bins, weights=counts)
-
-            num_pts_tp = tp_dets['num_interior_pts']
-            counts, bins = np.histogram(num_pts_tp, bins=np.linspace(0, 2000, 100))
-            plt.hist(bins[:-1], bins, weights=counts)
-            plt.title("Number of points")
-            plt.legend(['num_pts_fp', 'num_pts_tp'])
-            plt.savefig(f'/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/stats/{affinity_threshold_m}_num_pts.png')
-            plt.close()
-
-            size_fp = np.abs(fp_dets[['length_m', 'width_m', 'height_m']].values)
-            counts, bins = np.histogram(size_fp[:, 0], bins=np.linspace(0, 10, 100))
-            plt.hist(bins[:-1], bins, weights=counts)
-            counts, bins = np.histogram(size_fp[:, 1], bins=np.linspace(0, 10, 100))
-            plt.hist(bins[:-1], bins, weights=counts)
-            counts, bins = np.histogram(size_fp[:, 2], bins=np.linspace(0, 5, 100))
-            plt.hist(bins[:-1], bins, weights=counts)
-            plt.title("Length, Width, Height False Positives")
-            plt.legend(['length_m', 'width_m', 'height_m'])
-            plt.savefig(f'/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/stats/{affinity_threshold_m}_size_fp.png')
-            plt.close()
-
-            size_tp = np.abs(tp_dets[['length_m', 'width_m', 'height_m']].values)
-            counts, bins = np.histogram(size_tp[:, 0], bins=np.linspace(0, 10, 100))
-            plt.hist(bins[:-1], bins, weights=counts)
-            counts, bins = np.histogram(size_tp[:, 1], bins=np.linspace(0, 10, 100))
-            plt.hist(bins[:-1], bins, weights=counts)
-            counts, bins = np.histogram(size_tp[:, 2], bins=np.linspace(0, 5, 100))
-            plt.hist(bins[:-1], bins, weights=counts)
-            plt.title("Length, Width, Height True Positives")
-            plt.legend(['length_m', 'width_m', 'height_m'])
-            plt.savefig(f'/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/stats/{affinity_threshold_m}_size_tp.png')
-            plt.close()
-
-            if 'pts_density' in category_dts.columns.values.tolist():
-                density_tp = (size_fp[:, 0] * size_fp[:, 1] * size_fp[:, 2]) / num_pts_fp
-                counts, bins = np.histogram(density_tp, bins=np.linspace(0, 0.5, 100))
-                plt.hist(bins[:-1], bins, weights=counts)
-
-                density_tp = (size_tp[:, 0] * size_tp[:, 1] * size_tp[:, 2]) / num_pts_tp
-                counts, bins = np.histogram(density_tp, bins=np.linspace(0, 0.5, 100))
-                plt.hist(bins[:-1], bins, weights=counts)
-                plt.title(['Point Density'])
-                plt.legend(['density_fp', 'density_tp'])
-                plt.savefig(f'/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/stats/{affinity_threshold_m}_density_tp.png')
-                plt.close()
-            
-            all_ATE = list()
-            all_ASE = list()
-            all_AOE = list()
-            category_gts_thresh = category_gts[category_gts[affinity_threshold_m] == 0]
-            for track_uuid in category_gts_thresh['track_uuid'].unique():
-                track_category_gts_thresh = category_gts_thresh[
-                    category_gts_thresh['track_uuid'] == track_uuid]
-                all_ATE.append(np.var(
-                    track_category_gts_thresh['ATE'].values[1:] - \
-                        track_category_gts_thresh['ATE'].values[:1]))
-                all_ASE.append(np.var(
-                    track_category_gts_thresh['ASE'].values[1:] - \
-                        track_category_gts_thresh['ASE'].values[:1]))
-                all_AOE.append(np.var(
-                    track_category_gts_thresh['AOE'].values[1:] - \
-                        track_category_gts_thresh['AOE'].values[:1]))
-
-            counts, bins = np.histogram(np.asarray(all_ATE), bins=np.linspace(0, 5, 100))
-            plt.hist(bins[:-1], bins, weights=counts)
-            plt.title(['ATE'])
-            plt.savefig(f'/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/stats/{affinity_threshold_m}_all_ATE.png')
-            plt.close()
-
-            counts, bins = np.histogram(np.asarray(all_ASE), bins=np.linspace(0, 5, 100))
-            plt.hist(bins[:-1], bins, weights=counts)
-            plt.title(['ASE'])
-            plt.savefig(f'/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/stats/{affinity_threshold_m}_all_ASE.png')
-            plt.close()
-            
-            counts, bins = np.histogram(np.asarray(all_AOE), bins=np.linspace(0, 5, 100))
-            plt.hist(bins[:-1], bins, weights=counts)
-            plt.title(['AOE'])
-            plt.savefig(f'/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/stats/{affinity_threshold_m}_all_AOE.png')
-            plt.close()
-            '''
             
             # Continue if there aren't any true positives.
             if len(true_positives) == 0:
