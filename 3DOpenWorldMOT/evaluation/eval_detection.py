@@ -109,7 +109,7 @@ def get_feather_files(
     if is_gt:
         # get file name
         split = os.path.basename(paths)
-        file = 'filtered_version_city_w0.feather'
+        file = 'filtered_version_city_w0_withwaymovel.feather'
         file = 'remove_non_drive_' + file if remove_non_drive else file
         file = 'remove_far_' + file if remove_far else file
         file = 'remove_non_move_' + file if remove_non_move else file
@@ -119,7 +119,8 @@ def get_feather_files(
         file = split + '_' + file
         
         if is_waymo:
-            path_filtered = os.path.join('/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/Waymo_Converted_filtered', file)
+            path_filtered = os.path.join('/workspace/ExchangeWorkspace/Waymo_Converted_filtered', file)
+            # path_filtered = os.path.join('/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/Waymo_Converted_filtered', file)
             # path_filtered = os.path.join('/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/Waymo_Converted_filtered', file)
         else:
             path_filtered = os.path.join('/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/Argoverse2_filtered', file)
@@ -536,6 +537,9 @@ def eval_detection(
         is_waymo=is_waymo)
     # print((gts['filter_moving'] == (gts['velocities'] > remove_non_move_thresh)).all())
     # quit()
+    # print(gts)
+    # gts['filter_moving'] = gts['vel_waymo'] > remove_non_move_thresh
+    # print(gts)
     print(f'Numer of gt before filter moving {gts.shape}') 
     if filter_moving_first:
         gts = gts[gts['filter_moving']]
@@ -632,13 +636,13 @@ def eval_detection(
 
     if just_eval:
         print("Evaluate now...")
-
+    dts = dts[dts['score'] > 0.1]
     gts_orig = gts #copy.deepcopy(gts)
     dts_orig = dts #copy.deepcopy(dts)
     for affinity, tp_thresh, threshs, n_jobs in zip(
-        ['CENTER', 'IoU3D', 'IoU2D'], [2.0, 0.6, 0.6], [(0.5, 1.0, 2.0, 4.0), (0.2, 0.4, 0.6, 0.99), (0.2, 0.4, 0.6, 0.99)], [8, 1, 1]):
+        ['CENTER', 'IoU3D', 'IoU2D'], [2.0, 0.6, 0.6], [(0.5, 1.0, 2.0, 4.0), (0.3, 0.4, 0.6, 0.99), (0.2, 0.4, 0.6, 0.99)], [8, 1, 1]):
         
-        if affinity != 'CENTER' and affinity != 'IoU3D':
+        if affinity != 'IoU3D':
             continue
 
         # Evaluate instances.

@@ -281,7 +281,6 @@ def summarize_metrics(
             continue
         print('\t', category)    
         for affinity_threshold_m in cfg.affinity_thresholds_m:
-            print(category_dts[~category_dts[affinity_threshold_m]])
             true_positives: NDArrayBool = category_dts[affinity_threshold_m].astype(bool).to_numpy()
             if affinity_threshold_m == cfg.tp_threshold_m:
                 fps += ~true_positives.sum()

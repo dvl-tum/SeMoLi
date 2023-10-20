@@ -150,7 +150,7 @@ def load_model(cfg, checkpoints_dir, logger, rank=0):
                 else:
                     if rank == 0:
                         logger.info('No existing model, starting training from scratch...')
-            '''
+            
             if cfg.training.optim.optimizer.o_class == 'Adam':
                 optimizer = torch.optim.Adam(
                     model.parameters(),
