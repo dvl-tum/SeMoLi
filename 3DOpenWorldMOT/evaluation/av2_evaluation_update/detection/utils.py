@@ -110,8 +110,7 @@ def accumulate(
     min_points: int = 0,
     max_points: int = 10000,
     timestamp_ns: int = 0,
-    filter_category: int = 1,
-    only_matched_gt: bool = False
+    filter_category: int = 1
 ) -> Tuple[NDArrayFloat, NDArrayFloat]:
     """Accumulate the true / false positives (boolean flags) and true positive errors for each class.
 
@@ -159,11 +158,13 @@ def accumulate(
     is_evaluated_gts &= compute_evaluated_gts_mask(gts[..., :3], gts[..., -2], cfg)
 
     # Initialize results array.
-    # last +1 for tp, second last for assigned category
-    dts_augmented: NDArrayFloat = np.zeros((N, T + E + 1 + 1))
+    gts_augmented: NDArrayFloat = np.zeros((M, T + E + 1))
+    # matched to static + matched class + is evaluated
+    dts_augmented: NDArrayFloat = np.zeros((N, T + E + 1 + 1 + 1))
     # set matched class to -1
     dts_augmented[:, -2] = -1
-    gts_augmented: NDArrayFloat = np.zeros((M, T + E + 1))
+    # set matched to moving to 0
+    dts_augmented[:, -3] = 0
 
     # `is_evaluated` boolean flag is always the last column of the array.
     dts_augmented[is_evaluated_dts, -1] = True
@@ -171,14 +172,13 @@ def accumulate(
     
     if is_evaluated_dts.sum() > 0 and is_evaluated_gts.sum() > 0:
         # Compute true positives by assigning detections and ground truths.
-        dts_assignments, gts_assignments, np_tps, np_fns, keep_gts, rem_dts, dts_category = assign(
+        dts_assignments, gts_assignments, np_tps, np_fns, keep_gts, rem_dts, dts_category, matched_to_static = assign(
             dts[is_evaluated_dts],
             gts[is_evaluated_gts],
             cfg=cfg,
             min_points=min_points,
             max_points=max_points,
-            filter_category=filter_category,
-            only_matched_gt=only_matched_gt)
+            filter_category=filter_category)
         
         dts_augmented[is_evaluated_dts, :-2] = dts_assignments
         gts_augmented[is_evaluated_gts, :-1] = gts_assignments
@@ -187,11 +187,12 @@ def accumulate(
         gts_augmented[is_evaluated_gts, -1] = np.logical_and(
             keep_gts, gts_augmented[is_evaluated_gts, -1])
         dts_augmented[is_evaluated_dts, -2] = dts_category
+        dts_augmented[is_evaluated_dts, -3] = matched_to_static
     else:
         # if there are no detections to be evaluated
         if gts.shape[0]:
             is_moving = gts[..., -1].astype(bool)
-            if filter_category != -1:
+            if filter_category != 'NO_FILTER':
                 is_category = gts[..., -3] == filter_category
             else:
                 is_category = np.ones(gts.shape[0])
@@ -203,11 +204,6 @@ def accumulate(
                     is_moving,
                     is_category),
                 is_inpointrange)
-            
-            if only_matched_gt:
-                only_matches = np.zeros(gts_augmented.shape[0])
-                keep_gts = np.logical_and(
-                    keep_gts, only_matches)
                 
             np_fns = gts[:, -2][keep_gts]
             # remove static / wrong cat / wrong point range gts
@@ -236,8 +232,7 @@ def assign(
         cfg: DetectionCfg,
         min_points: int=0,
         max_points: int=1000,
-        filter_category=1,
-        only_matched_gt=False) -> Tuple[NDArrayFloat, NDArrayFloat]:
+        filter_category=1) -> Tuple[NDArrayFloat, NDArrayFloat]:
     """Attempt assignment of each detection to a ground truth label.
 
     The detections (gts) and ground truth annotations (gts) are expected to be shape (N,10) and (M,10)
@@ -267,11 +262,12 @@ def assign(
     all_dts = np.arange(dts.shape[0])
 
     dts_category = np.ones(dts.shape[0]) * -1
+    dts_matched_to_static = np.zeros(dts.shape[0], dtype=bool)
 
     # all gt objects that are moving, from another class or have
     # more/less than given number of points are filtered out
     is_moving = gts[..., -1].astype(bool)
-    if filter_category != -1:
+    if filter_category != 'NO_FILTER':
         is_category = gts[..., -3] == filter_category
     else:
         is_category = np.ones(gts.shape[0])
@@ -310,16 +306,15 @@ def assign(
     # static / wrong category / wrong pointrange
     rem_dts = np.isin(
         all_dts, idx_dts[~matched_mask])
+    
+    # all detections that where matched to static objects
+    stat_dts = np.isin(
+        all_dts, idx_dts[~is_moving[idx_gts]])
+    dts_matched_to_static[stat_dts] = True
 
     # filter matches
     idx_dts = idx_dts[matched_mask]
     idx_gts = idx_gts[matched_mask]
-
-    if only_matched_gt:
-        only_matches = np.isin(all_gts, idx_gts)
-        keep_gts = np.logical_and(
-            keep_gts,
-            only_matches)
 
     T, E = len(cfg.affinity_thresholds_m), 3
     dts_metrics: NDArrayFloat = np.zeros((len(dts), T + E))
@@ -357,7 +352,7 @@ def assign(
         dts_metrics[idx_tps_dts, 4:] = np.stack((translation_errors, scale_errors, orientation_errors), axis=-1)
         gts_metrics[idx_tps_gts, 4:] = np.stack((translation_errors, scale_errors, orientation_errors), axis=-1)
 
-    return dts_metrics, gts_metrics, np_tps, np_fns, keep_gts, rem_dts, dts_category
+    return dts_metrics, gts_metrics, np_tps, np_fns, keep_gts, rem_dts, dts_category, dts_matched_to_static
 
 
 def interpolate_precision(precision: NDArrayFloat, interpolation_method: InterpType = InterpType.ALL) -> NDArrayFloat:

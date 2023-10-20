@@ -497,9 +497,7 @@ def eval_detection(
         max_points=1000000,
         base_dir='../../../',
         print_detail=False,
-        filter_class=-2,
-        only_matched_gt=False,
-        filter_moving_first=False,
+        filter_class="CONVERT_ALL_TO_CARS",
         use_matched_category=False,
         filter_moving=True,
         store_matched=False,
@@ -535,10 +533,8 @@ def eval_detection(
         is_waymo=is_waymo)
     # print((gts['filter_moving'] == (gts['velocities'] > remove_non_move_thresh)).all())
     # quit()
-    print(f'Numer of gt before filter moving {gts.shape}') 
-    if filter_moving_first:
-        gts = gts[gts['filter_moving']]
-    print(f'Numer of gt after filter moving {gts.shape}')
+    num_mov = gts[gts['filter_moving']].shape[0]
+    print(f'Numer of gt of moving objects {num_mov}')
     gts = gts[gts['num_interior_pts'] > 0]
     print(f'Numer of gt after removing bss w 0 interior points {gts.shape}')
     
@@ -600,14 +596,7 @@ def eval_detection(
             return None, np.array([0, 2, 1, 3.142, 0]), None
 
     if use_matched_category:
-        filter_class = -1
-    
-    if filter_class == -2:
-        gts['category_int'] = [1] * gts.shape[0]    
-        gts['category'] = [1] * gts.shape[0]
-        filter_class = 1 # 'REGULAR_VEHICLE'
-    else:                                                                                                                                                           
-         gts['category_int'] = gts['category'] 
+        filter_class = "NO_FILTER"
     
     if velocity_evaluation:
         _class_dict = _class_dict_velocities
@@ -615,9 +604,22 @@ def eval_detection(
         _class_dict = _class_dict_waymo
     else:
         _class_dict = _class_dict_argo
+    
+    if filter_class == 'CONVERT_ALL_TO_CARS':
+        # KEEP ORIGINAL CATEGORIES
+        gts['category_orig'] = [_class_dict[c] for c in gts['category']]
+        gts['category_orig_int'] = gts['category']
+        # THE SET EVERYTHING TO CAR
+        gts['category_int'] = [1] * gts.shape[0]    
+        gts['category'] = [1] * gts.shape[0]
+        filter_class = 1
+    else:                                                                                                                                                           
+         gts['category_int'] = gts['category'] 
 
+    # CONVERT INT TO STRING
     gts['category'] = [_class_dict[c] for c in gts['category']]
     dts['category'] = [_class_dict[c] for c in dts['category']]
+
     if print_detail:
         print(f' \t Min points {min_points}, Max points {max_points}')
 
@@ -651,8 +653,7 @@ def eval_detection(
             tp_threshold_m=tp_thresh,
             affinity_type=affinity,
             affinity_thresholds_m=threshs,
-            categories=categories
-            )
+            categories=categories)
         
         print(f"\t {affinity}, # gt {gts.shape[0]}, # dt {dts.shape[0]}\n")
         dts, gts, metrics, np_tps, np_fns, _, all_results_df = evaluate(
@@ -662,8 +663,6 @@ def eval_detection(
             min_points=min_points,
             max_points=max_points,
             filter_class=filter_class,
-            only_matched_gt=only_matched_gt,
-            filter_moving_first=filter_moving_first,
             use_matched_category=use_matched_category,
             _class_dict=_class_dict,
             n_jobs=n_jobs,
@@ -702,8 +701,8 @@ def eval_detection(
             print(f'More than 25 points: TP {np_tps[np_tps >= 25].shape[0]}, FN {np_fns[np_fns >= 25].shape[0]}')
             
         # AP    ATE    ASE    AOE    CDS
-        _filter_class = filter_class if filter_class == -1 else _class_dict[filter_class]
-        if _filter_class == -1:
+        _filter_class = filter_class if filter_class == "NO_FILTER" else _class_dict[filter_class]
+        if _filter_class == "NO_FILTER":
             print('\tDetection metrics: ', metrics.loc['AVERAGE_METRICS'].values)
             metric = metrics.loc['AVERAGE_METRICS'].values
         else:
@@ -759,8 +758,6 @@ if __name__ == '__main__':
             base_dir='',
             print_detail=False,
             filter_class=c,
-            only_matched_gt=False,
-            filter_moving_first=False,
             use_matched_category=False,
             filter_moving=True)
         
