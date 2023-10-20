@@ -179,7 +179,7 @@ def accumulate(
             max_points=max_points,
             filter_category=filter_category)
         
-        dts_augmented[is_evaluated_dts, :-2] = dts_assignments
+        dts_augmented[is_evaluated_dts, :-3] = dts_assignments
         gts_augmented[is_evaluated_gts, :-1] = gts_assignments
         dts_augmented[is_evaluated_dts, -1] = np.logical_and(
             ~rem_dts, dts_augmented[is_evaluated_dts, -1])

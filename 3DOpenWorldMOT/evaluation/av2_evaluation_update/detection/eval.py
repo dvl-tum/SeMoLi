@@ -119,13 +119,16 @@ def evaluate(
 
     if filter_moving or use_matched_category:
         # match detections to ignore regions first (static objects)
-        dts, _ = match_moving_and_category(dts, gts)
+        dts = match_moving_and_category(dts, gts, cfg)
         if filter_moving:
             gts = gts[gts['filter_moving']]
-            dts = dts[dts[~dts_metrics[:, -3]]]
+            print(dts.shape, dts['matched_to_static'].sum())
+            dts = dts[~(dts['matched_to_static'].values.astype(bool))]
+        print(dts.shape)
         if use_matched_category:
+            print((dts['matched_category']==-1).sum())
             dts['category'] = dts['matched_category'].apply(lambda x: _class_dict[x])
-
+    print(dts['category'], dts['category'].unique())
     dts_list, gts_list, np_tps, np_fns = _evaluate(
         dts,
         gts,
@@ -133,8 +136,7 @@ def evaluate(
         n_jobs,
         min_points,
         max_points,
-        filter_class,
-        use_matched_category)
+        filter_class)
 
     METRIC_COLUMN_NAMES_DTS = cfg.affinity_thresholds_m + TP_ERROR_COLUMNS + ("is_evaluated",)
     METRIC_COLUMN_NAMES_GTS = cfg.affinity_thresholds_m + TP_ERROR_COLUMNS + ("is_evaluated",)
@@ -167,7 +169,7 @@ def match_moving_and_category(dts, gts, cfg):
             eval_only_roi_instances=cfg.eval_only_roi_instances, 
             tp_threshold_m=0.99,
             affinity_type='IoU3D',
-            affinity_thresholds_m=[0.99],
+            affinity_thresholds_m=[0.95, 0.96, 0.97, 0.99],
             categories=cfg.categories)
 
     dts_list, _, _, _ = _evaluate(dts, gts, filter_cfg, 1, use_matched_category=True)
@@ -255,31 +257,7 @@ def _evaluate(dts: pd.DataFrame,
         raise RuntimeError("Accumulation has failed! Please check the integrity of your detections and annotations.")
     dts_list, gts_list, np_tps, np_fns = zip(*outputs)
 
-    METRIC_COLUMN_NAMES_DTS = cfg.affinity_thresholds_m + TP_ERROR_COLUMNS + ("matched_category",) + ("is_evaluated",)
-    METRIC_COLUMN_NAMES_GTS = cfg.affinity_thresholds_m + TP_ERROR_COLUMNS + ("is_evaluated",)
-
-    dts_metrics: NDArrayFloat = np.concatenate(dts_list)  # type: ignore
-    gts_metrics: NDArrayFloat = np.concatenate(gts_list)  # type: ignore
-    # add column for matched categories
-    dts['matched_category'] = np.ones(dts.shape[0]) * -1
-    dts.loc[:, METRIC_COLUMN_NAMES_DTS] = dts_metrics
-    gts.loc[:, METRIC_COLUMN_NAMES_GTS] = gts_metrics
-    dts['matched_category'] = dts['matched_category'].apply(lambda x: _class_dict[x])
-    
-    if len([t for t in np_tps if t is not None]):
-        np_tps = np.concatenate([t for t in np_tps if t is not None])
-    else:
-        np_tps = None
-    if [f for f in np_fns if f is not None]:
-        np_fns = np.concatenate([f for f in np_fns if f is not None])
-    else:
-        np_fns = None
-
-    # Compute summary metrics.
-    metrics, fps, all_results_df = summarize_metrics(dts, gts, cfg, use_matched_category)
-    metrics.loc["AVERAGE_METRICS"] = metrics.mean()
-    metrics = metrics.round(NUM_DECIMALS)
-    return dts, gts, metrics, np_tps, np_fns, fps, all_results_df
+    return dts_list, gts_list, np_tps, np_fns
 
 
 def summarize_metrics(
@@ -305,10 +283,11 @@ def summarize_metrics(
     summary = pd.DataFrame(
         {s.value: cfg.metrics_defaults[i] for i, s in enumerate(tuple(MetricNames))}, index=cfg.categories
     )
-
-    # unmatched_fps_dets = dts[np.logical_and(dts["is_evaluated"], dts["matched_category"]=='UNMATCHED')].shape[0]
-    unmatched_fps_dets = dts[dts["matched_category"]=='TYPE_UNKNOWN'].shape[0]
-    print(f"\t Unmatched FP detections when using matched categories {unmatched_fps_dets} ...")
+    
+    if use_matched_category:
+        # unmatched_fps_dets = dts[np.logical_and(dts["is_evaluated"], dts["matched_category"]=='UNMATCHED')].shape[0]
+        unmatched_fps_dets = dts[dts["category"]=='TYPE_UNKNOWN'].shape[0]
+        print(f"\t Unmatched FP detections when using matched categories {unmatched_fps_dets} ...")
 
     average_precisions = pd.DataFrame({t: 0.0 for t in cfg.affinity_thresholds_m}, index=cfg.categories)
     precisions = pd.DataFrame({t: 0.0 for t in cfg.affinity_thresholds_m}, index=cfg.categories)
