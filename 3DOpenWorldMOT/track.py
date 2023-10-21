@@ -82,6 +82,9 @@ class InitialDetProcessor():
         if detections is None:
             detections = self.dataset(self.initial_dets_path, self.gt_path, log_id, self.split, self.detection_set).dets
         tracks = tracker.associate(detections)
+        p = f'{self.tracked_dets_path}/{self.split}/{log_id}'
+        if os.path.isdir(p):
+            shutil.rmtree(p)
         store_initial_detections(tracks, log_id, self.tracked_dets_path, split, tracks=True)
         return tracks
     
@@ -90,7 +93,10 @@ class InitialDetProcessor():
             tracks = self.dataset(self.tracked_dets_path, self.gt_path, log_id, self.split, self.detection_set, tracks=True).dets
         tracks = self._registration(
             tracks, self.av2_loader, log_id, self.outlier_threshold, self.outlier_kNN).register()
-        store_initial_detections(tracks, log_id, self.tracked_dets_path, split, tracks=False)
+        p = f'{self.registered_dets_path}/{self.split}/{log_id}'
+        if os.path.isdir(p):
+            shutil.rmtree(p)
+        store_initial_detections(tracks, log_id, self.registered_dets_path, split, tracks=False)
         return tracks
 
     def collaps(self, log_id, split, detections=None):
@@ -102,6 +108,7 @@ class InitialDetProcessor():
         return detections
     
     def get_initial_dets(self, log_id, split):
+        print(self.initial_dets_path, self.gt_path, log_id, self.split, self.detection_set)
         detections = self.dataset(self.initial_dets_path, self.gt_path, log_id, self.split, self.detection_set).dets
         if self.filter_by_width:
             detections_new = dict()
@@ -118,6 +125,9 @@ class InitialDetProcessor():
         return detections
 
     def to_feather(self, detections, log_id, out_path, split):
+        p = f'{out_path}/{self.split}/{log_id}'
+        if os.path.isdir(p):
+            shutil.rmtree(p)
         to_feather(detections, log_id, out_path, self.split, self.rank, precomp_dets=False)
         write_path = os.path.join(out_path, split, log_id, 'annotations.feather')
         logger.info(f'wrote {write_path}')
@@ -134,9 +144,7 @@ class InitialDetProcessor():
                     remove_non_move=cfg.data.remove_static_gt,
                     remove_non_move_strategy=cfg.data.remove_static_strategy,
                     remove_non_move_thresh=cfg.data.remove_static_thresh,
-                    filter_class=-2,
-                    only_matched_gt=False,
-                    filter_moving_first=False,
+                    filter_class='CONVERT_ALL_TO_CARS',
                     use_matched_category=False,
                     debug=cfg.data.debug,
                     name=name)

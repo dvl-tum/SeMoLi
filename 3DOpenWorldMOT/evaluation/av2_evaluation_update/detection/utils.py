@@ -179,14 +179,14 @@ def accumulate(
             max_points=max_points,
             filter_category=filter_category)
         
-        dts_augmented[is_evaluated_dts, :-3] = dts_assignments
+        dts_augmented[is_evaluated_dts, :-1] = dts_assignments
         gts_augmented[is_evaluated_gts, :-1] = gts_assignments
-        dts_augmented[is_evaluated_dts, -1] = np.logical_and(
-            ~rem_dts, dts_augmented[is_evaluated_dts, -1])
+        # dts_augmented[is_evaluated_dts, -1] = np.logical_and(
+        #     ~rem_dts, dts_augmented[is_evaluated_dts, -1])
         gts_augmented[is_evaluated_gts, -1] = np.logical_and(
             keep_gts, gts_augmented[is_evaluated_gts, -1])
-        dts_augmented[is_evaluated_dts, -2] = dts_category
-        dts_augmented[is_evaluated_dts, -3] = matched_to_static
+        # dts_augmented[is_evaluated_dts, -2] = dts_category
+        # dts_augmented[is_evaluated_dts, -3] = matched_to_static
     else:
         # if there are no detections to be evaluated
         if gts.shape[0]:
@@ -272,14 +272,12 @@ def assign(
     is_inpointrange = np.logical_and(
         gts[:, -2] >= min_points,
         gts[:, -2] < max_points)
-
     # get gts mask for moving, class and point range
     keep_gts = np.logical_and(
-        np.logical_and(
-            is_category,
-            is_moving),
+        #np.logical_and(
+        #    is_category,
+        is_moving,
         is_inpointrange)
-
     # get affinity matrix
     affinity_matrix = compute_affinity_matrix(dts, gts, cfg.affinity_type)
 
@@ -315,8 +313,10 @@ def assign(
     idx_gts = idx_gts[matched_mask]
 
     T, E = len(cfg.affinity_thresholds_m), 3
-    dts_metrics: NDArrayFloat = np.zeros((len(dts), T + E))
-    dts_metrics[:, 4:] = cfg.metrics_defaults[1:4]
+    dts_metrics: NDArrayFloat = np.zeros((len(dts), T + E + 1 + 1))
+    dts_metrics[:, -2] = dts_matched_to_static
+    dts_metrics[:, -1] = -1
+    dts_metrics[:, 4:-2] = cfg.metrics_defaults[1:4]
     gts_metrics: NDArrayFloat = np.zeros((len(gts), T + E))
     gts_metrics[:, 4:] = cfg.metrics_defaults[1:4]
     np_tps = None
@@ -326,14 +326,14 @@ def assign(
 
         dts_metrics[idx_dts[is_tp], i] = True
         gts_metrics[idx_gts, i] = True
-        dts_category[idx_dts[is_tp]] = gts[..., -3][idx_gts[is_tp]]
-
         if threshold_m != cfg.tp_threshold_m:
             continue  # Skip if threshold isn't the true positive threshold.
         # print(i, msg, is_tp.sum() == is_tp.shape[0], is_tp.sum(), is_tp.shape, dts_metrics.shape[0])
         if not np.any(is_tp):
             continue  # Skip if no true positives exist.
-        
+        # dts_category[idx_dts[is_tp]] = gts[:, -3][idx_gts[is_tp]]
+        dts_metrics[idx_dts[is_tp], -1] = gts[:, -3][idx_gts[is_tp]]
+        # print(dts_metrics.shape, is_tp.sum(), gts_metrics.shape)   
         # getting category detection was matched to
         # dts_category[idx_dts[is_tp]] = gts[..., -3][idx_gts[is_tp]]
         np_tps = gts[idx_gts[is_tp]][:, -2]
@@ -348,7 +348,7 @@ def assign(
         translation_errors = distance(tps_dts[:, :3], tps_gts[:, :3], DistanceType.TRANSLATION)
         scale_errors = distance(tps_dts[:, 3:6], tps_gts[:, 3:6], DistanceType.SCALE)
         orientation_errors = distance(tps_dts[:, 6:10], tps_gts[:, 6:10], DistanceType.ORIENTATION)
-        dts_metrics[idx_tps_dts, 4:] = np.stack((translation_errors, scale_errors, orientation_errors), axis=-1)
+        dts_metrics[idx_tps_dts, 4:-2] = np.stack((translation_errors, scale_errors, orientation_errors), axis=-1)
         gts_metrics[idx_tps_gts, 4:] = np.stack((translation_errors, scale_errors, orientation_errors), axis=-1)
 
     return dts_metrics, gts_metrics, np_tps, np_fns, keep_gts, rem_dts, dts_category, dts_matched_to_static

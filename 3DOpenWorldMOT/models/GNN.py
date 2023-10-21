@@ -327,7 +327,7 @@ class ClusterGNN(MessagePassing):
             self.encode_edge = torch.nn.Linear(edge_dim, self.inflation_layer_edge.dim)
             edge_dim = self.inflation_layer_edge.dim
         if self.inflation_layer_node.use:
-            self.encode_node = torch.nn.Linear(edge_dim, self.inflation_layer_node.dim)
+            self.encode_node = torch.nn.Linear(node_dim, self.inflation_layer_node.dim)
             node_dim = self.inflation_layer_node.dim
 
         self.encode_layer = ClusterLayer(
@@ -631,8 +631,8 @@ class ClusterGNN(MessagePassing):
         _idxs_0, _idxs_1 = list(), list()
         for ith, (start, end) in enumerate(zip(batch_idx[:-1], batch_idx[1:])):
             # iterate over frames in batch
-            X = node_attr[start:end]
-            P = pos[start:end]
+            X = pos[start:end]
+            P = node_attr[start:end]
             # get distances between nodes
             x_shape = X.shape
             num_neighbors = min(65, x_shape[0])
@@ -725,8 +725,8 @@ class ClusterGNN(MessagePassing):
         if self.inflation_layer_edge.use:
             edge_attr = self.encode_edge(edge_attr)
         if self.inflation_layer_node.use:
-            edge_attr = self.encode_node(node_attr)
-
+            node_attr = self.encode_node(node_attr)
+        
         if not self.initial_edge_as_input:
             # forward pass thourgh layers
             final, score = list(), None
@@ -738,7 +738,6 @@ class ClusterGNN(MessagePassing):
                 if self.use_node_score:
                     node_score = self.final_node[0](node_attr)
                     final_node.append(node_score)
-    
             for i in range(self.num_layers):
                 if self.reuse:
                     if self.gradient_checkpointing:

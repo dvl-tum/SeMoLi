@@ -1,6 +1,6 @@
 # @package training
 # Those arguments defines the training hyper-parameters
-epochs: 100
+epochs: 30
 hypersearch: False
 eval_every_x: 1
 eval_corr_every_x: 101

@@ -21,8 +21,9 @@ class FlowRegistration():
         self.ordered_timestamps = av2_loader.get_ordered_log_lidar_timestamps(log_id)
         self.threshold = threshold
         self.kNN = kNN
+        self.log_id = log_id
     
-    def register(self, visualize=False):
+    def register(self, visualize=True):
         detections = dict()
         for j, track in enumerate(self.active_tracks.values()):
             # we start from timestep with most points and then go
@@ -81,15 +82,15 @@ class FlowRegistration():
 
             # track.fill_detections(self.av2_loader, self.ordered_timestamps, max_time=5)
             if visualize:
-                self.visualize(dets, track.detections, track.track_id, start_in_t0)
+                self.visualize(dets, track.detections, track.track_id, start_in_t0, self.log_id)
             track_dets = track.detections
 
             detections[j] = track_dets
 
         return detections
 
-    def visualize(self, dets, registered_dets, track_id, start_in_t0):
-        os.makedirs('/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/Visualization_reg', exist_ok=True)
+    def visualize(self, dets, registered_dets, track_id, start_in_t0, log_id):
+        os.makedirs('/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/Visualization_reg', exist_ok=True)
         fig, ax = plt.subplots()
         plt.scatter(start_in_t0[:, 0], start_in_t0[:, 1], color='green', s=2)
         for det in dets:
@@ -99,7 +100,7 @@ class FlowRegistration():
             self.add_patch(ax, det, color='blue', add=10)
         ax.axis('equal')
         plt.savefig(
-                f'/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/Visualization_reg/frame_{track_id}.jpg', dpi=1000)
+                f'/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/Visualization_reg/frame_{track_id}_{log_id}.jpg', dpi=1000)
         plt.close()
         
     def add_patch(self, ax, det, color='black', add=0):

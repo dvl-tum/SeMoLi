@@ -91,6 +91,7 @@ class TrajectoryDataset(PyGDataset):
         self.traj_channels = traj_channels
         self.pos_channels = pos_channels
         self.waymo_style = waymo_style
+        print(f"USING WAYMO STYLE {self.waymo_style}")
         # for debugging
         if debug:
             if split == 'val' and 'Argo' in self.data_dir:
@@ -663,7 +664,7 @@ def get_TrajectoryDataLoader(cfg, name=None, train=True, val=True, test=False):
     else:
         train_data = None
     if val:
-        if cfg.data.detection_set == 'evaluation':
+        if 'evaluation' in cfg.data.detection_set:
             split = 'val'
         else:
             split = 'train'

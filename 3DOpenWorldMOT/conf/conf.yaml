@@ -36,6 +36,7 @@ store_matched: False
 do_corr_clustering: True
 vel_evaluation: False
 heuristics: False
+waymo_style: True
 
 tracker_options: # Extra options for the tracker
   a_threshold: 0.4

@@ -34,10 +34,10 @@ hyperparams:
     augment: False
     inflation_layer_edge:
         use: False
-        dim: 32
+        dim: 64
     inflation_layer_node:
         use: False
-        dim: 32
+        dim: 64
     layers_edge: 
         size: 64
         num_layers: 3

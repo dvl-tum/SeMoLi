@@ -641,7 +641,7 @@ def eval_detection(
     gts_orig = gts #copy.deepcopy(gts)
     dts_orig = dts #copy.deepcopy(dts)
     for affinity, tp_thresh, threshs, n_jobs in zip(
-        ['CENTER', 'IoU3D', 'IoU2D'], [2.0, 0.6, 0.6], [(0.5, 1.0, 2.0, 4.0), (0.3, 0.4, 0.6, 0.99), (0.2, 0.4, 0.6, 0.99)], [8, 1, 1]):
+        ['CENTER', 'IoU3D', 'IoU2D'], [2.0, 0.6, 0.6], [(0.5, 1.0, 2.0, 4.0), (0.2, 0.4, 0.6, 0.8), (0.2, 0.4, 0.6, 0.99)], [8, 1, 1]):
         
         if affinity != 'IoU3D':
             continue

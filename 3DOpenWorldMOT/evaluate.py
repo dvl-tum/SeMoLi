@@ -85,7 +85,8 @@ def main(cfg):
         name=name,
         store_matched=cfg.store_matched,
         velocity_evaluation=cfg.vel_evaluation,
-        heuristics=cfg.heuristics)
+        heuristics=cfg.heuristics,
+        waymo_style=cfg.waymo_style)
 
 
 if __name__ == "__main__":

@@ -116,47 +116,25 @@ def evaluate(
         RuntimeError: If accumulation fails.
         ValueError: If ROI pruning is enabled but a dataset directory is not specified.
     """
-
     if filter_moving or use_matched_category:
         # match detections to ignore regions first (static objects)
         dts = match_moving_and_category(dts, gts, cfg)
         if filter_moving:
             gts = gts[gts['filter_moving']]
-            print(dts.shape, dts['matched_to_static'].sum())
             dts = dts[~(dts['matched_to_static'].values.astype(bool))]
-        print(dts.shape)
         if use_matched_category:
-            print((dts['matched_category']==-1).sum())
             dts['category'] = dts['matched_category'].apply(lambda x: _class_dict[x])
-    print(dts['category'], dts['category'].unique())
-    dts_list, gts_list, np_tps, np_fns = _evaluate(
+    gts['filter_moving'] = True
+    dts, gts, np_tps, np_fns = _evaluate(
         dts,
         gts,
         cfg,
         n_jobs,
         min_points,
         max_points,
-        filter_class)
-
-    METRIC_COLUMN_NAMES_DTS = cfg.affinity_thresholds_m + TP_ERROR_COLUMNS + ("is_evaluated",)
-    METRIC_COLUMN_NAMES_GTS = cfg.affinity_thresholds_m + TP_ERROR_COLUMNS + ("is_evaluated",)
-
-    dts_metrics: NDArrayFloat = np.concatenate(dts_list)  # type: ignore
-    dts_metrics = np.delete(dts_metrics, [-3, -2], axis=1)
-    gts_metrics: NDArrayFloat = np.concatenate(gts_list)  # type: ignore
-    # add column for matched categories
-    dts.loc[:, METRIC_COLUMN_NAMES_DTS] = dts_metrics
-    gts.loc[:, METRIC_COLUMN_NAMES_GTS] = gts_metrics
-
-    if len([t for t in np_tps if t is not None]):
-        np_tps = np.concatenate([t for t in np_tps if t is not None])
-    else:
-        np_tps = None
-    if [f for f in np_fns if f is not None]:
-        np_fns = np.concatenate([f for f in np_fns if f is not None])
-    else:
-        np_fns = None
-
+        filter_class,
+        use_matched_category=False)#use_matched_category)
+    
     # Compute summary metrics.
     metrics, fps, all_results_df = summarize_metrics(dts, gts, cfg, use_matched_category)
     metrics.loc["AVERAGE_METRICS"] = metrics.mean()
@@ -167,15 +145,12 @@ def match_moving_and_category(dts, gts, cfg):
     filter_cfg = DetectionCfg(
             dataset_dir=cfg.dataset_dir, 
             eval_only_roi_instances=cfg.eval_only_roi_instances, 
-            tp_threshold_m=0.99,
+            tp_threshold_m=0.98,
             affinity_type='IoU3D',
-            affinity_thresholds_m=[0.95, 0.96, 0.97, 0.99],
+            affinity_thresholds_m=[0.98, 0.98, 0.98, 0.98],
             categories=cfg.categories)
 
-    dts_list, _, _, _ = _evaluate(dts, gts, filter_cfg, 1, use_matched_category=True)
-    dts_metrics: NDArrayFloat = np.concatenate(dts_list)  # type: ignore
-    dts['matched_to_static'] = dts_metrics[:, -3]
-    dts['matched_category'] = dts_metrics[:, -2]
+    dts  = _evaluate(dts, gts, filter_cfg, 1, use_matched_category=True, pre_filtering=True)
     return dts
 
 def _evaluate(dts: pd.DataFrame,
@@ -185,8 +160,8 @@ def _evaluate(dts: pd.DataFrame,
     min_points: int = 0,
     max_points: int = 10000,
     filter_class: str = 'NO_FILTER',
-    use_matched_category: bool = False):
-
+    use_matched_category: bool = False,
+    pre_filtering=False):
     if cfg.eval_only_roi_instances and cfg.dataset_dir is None:
         raise ValueError(
             "ROI pruning has been enabled, but the dataset directory has not be specified. "
@@ -200,7 +175,9 @@ def _evaluate(dts: pd.DataFrame,
             )
     else:
         _UUID_COLUMN_NAMES = UUID_COLUMN_NAMES
-
+    dts = dts[dts['category'] != 'TYPE_UNKNOWN']
+    gts = gts.astype({'timestamp_ns': int, 'log_id': str, 'category': str})
+    dts = dts.astype({'timestamp_ns': int, 'log_id': str, 'category': str})
     # Sort both the detections and annotations by lexicographic order for grouping.
     dts = dts.sort_values(list(_UUID_COLUMN_NAMES))
     gts = gts.sort_values(list(_UUID_COLUMN_NAMES))
@@ -209,14 +186,14 @@ def _evaluate(dts: pd.DataFrame,
     gts_npy: NDArrayFloat = gts[list(GTS_COLUMN_NAMES)].to_numpy().astype(float)
     dts_uuids: List[str] = dts[list(_UUID_COLUMN_NAMES)].to_numpy().tolist()
     gts_uuids: List[str] = gts[list(_UUID_COLUMN_NAMES)].to_numpy().tolist()
-
+    
     # We merge the unique identifier -- the tuple of ("log_id", "timestamp_ns", "category")
     # into a single string to optimize the subsequent grouping operation.
     # `groupby_mapping` produces a mapping from the uuid to the group of detections / annotations
     # which fall into that group.
     uuid_to_dts = groupby([":".join(map(str, x)) for x in dts_uuids], dts_npy)
     uuid_to_gts = groupby([":".join(map(str, x)) for x in gts_uuids], gts_npy)
-
+    
     log_id_to_avm: Optional[Dict[str, ArgoverseStaticMap]] = None
     log_id_to_timestamped_poses: Optional[Dict[str, TimestampedCitySE3EgoPoses]] = None
     
@@ -256,8 +233,32 @@ def _evaluate(dts: pd.DataFrame,
     if outputs is None:
         raise RuntimeError("Accumulation has failed! Please check the integrity of your detections and annotations.")
     dts_list, gts_list, np_tps, np_fns = zip(*outputs)
+    
+    if pre_filtering:
+        dts_metrics: NDArrayFloat = np.concatenate(dts_list)  # type: ignore
+        dts['matched_to_static'] = dts_metrics[:, -3]
+        dts['matched_category'] = dts_metrics[:, -2]
+        return dts
+    else:
+        METRIC_COLUMN_NAMES_DTS = cfg.affinity_thresholds_m + TP_ERROR_COLUMNS + ("is_evaluated",)
+        METRIC_COLUMN_NAMES_GTS = cfg.affinity_thresholds_m + TP_ERROR_COLUMNS + ("is_evaluated",)
 
-    return dts_list, gts_list, np_tps, np_fns
+        dts_metrics: NDArrayFloat = np.concatenate(dts_list)  # type: ignore
+        dts_metrics = np.delete(dts_metrics, [-3, -2], axis=1)
+        gts_metrics: NDArrayFloat = np.concatenate(gts_list)  # type: ignore
+        # add column for matched categories
+        dts.loc[:, METRIC_COLUMN_NAMES_DTS] = dts_metrics
+        gts.loc[:, METRIC_COLUMN_NAMES_GTS] = gts_metrics
+
+        if len([t for t in np_tps if t is not None]):
+            np_tps = np.concatenate([t for t in np_tps if t is not None])
+        else:
+            np_tps = None
+        if [f for f in np_fns if f is not None]:
+            np_fns = np.concatenate([f for f in np_fns if f is not None])
+        else:
+            np_fns = None
+        return dts, gts, np_tps, np_fns
 
 
 def summarize_metrics(
