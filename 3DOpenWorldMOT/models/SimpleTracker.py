@@ -12,7 +12,7 @@ import matplotlib
 
 
 class SimpleTracker():
-    def __init__(self, every_x_frame, overlap, av2_loader, log_id, rank, logger, a_threshold=0.8, i_threshold=0.8, len_thresh=5, max_time=5, filter_by_width=False, inact_patience=5, fixed_time=False, l_change_thresh=2, w_change_thresh=2):
+    def __init__(self, every_x_frame, overlap, av2_loader, log_id, rank, logger, a_threshold=0.8, i_threshold=0.8, len_thresh=5, max_time=5, filter_by_width=False, inact_patience=5, fixed_time=False, l_change_thresh=2, w_change_thresh=2, use_temporal_weight=False):
         self.active_tracks = list()
         self.inactive_tracks = list()
         # self.every_x_frame = every_x_frame
@@ -36,6 +36,7 @@ class SimpleTracker():
         self.fixed_time = fixed_time
         self.l_change_thresh = l_change_thresh
         self.w_change_thresh = w_change_thresh
+        self.use_temporal_weight = use_temporal_weight
     
     def associate(self, detections):
         # per timestampdetections
@@ -385,9 +386,11 @@ class SimpleTracker():
             for i in range(num_tracks):
                 if visualize:
                     self.add_patch(ax, propagared_bbs_tracks[i], color='red')
-                weight = torch.arange(traj_lens[i])
-                weight = torch.exp(-weight)/torch.exp(-weight).sum()
-                weight = torch.ones(traj_lens[i])
+                if self.use_temporal_weight:
+                    weight = torch.arange(traj_lens[i])/2
+                    weight = torch.exp(-weight)/torch.exp(-weight).sum()
+                else:
+                    weight = torch.ones(traj_lens[i])
                 weight = weight.to(device)
                 l_change_2d[k, i] = (weight.float().unsqueeze(1) * torch.abs(propagared_bbs_tracks[i]['lwh'][:, 0]-\
                                       propagared_bbs_dets[k]['lwh'][:traj_lens[i], 0]).float()).mean()

@@ -32,7 +32,8 @@ class InitialDetProcessor():
                  every_x_frame, overlap, av2_loader, rank, track_data_path, initial_dets_path, 
                  collapsed_dets_path, tracked_dets_path, registered_dets_path, gt_path, split,
                  detection_set, percentage, a_threshold, i_threshold, len_thresh, outlier_threshold,
-                 outlier_kNN, max_time_track, filter_by_width, fixed_time, l_change_thresh, w_change_thresh):
+                 outlier_kNN, max_time_track, filter_by_width, fixed_time, l_change_thresh,
+                 w_change_thresh, inact_patience, use_temporal_weight_track, exp_weight_rot):
         self.every_x_frame = every_x_frame
         self.overlap = overlap
         self.av2_loader = av2_loader
@@ -60,6 +61,9 @@ class InitialDetProcessor():
         self.fixed_time = fixed_time
         self.l_change_thresh = l_change_thresh
         self.w_change_thresh = w_change_thresh
+        self.inact_patience = inact_patience
+        self.use_temporal_weight_track = use_temporal_weight_track
+        self.exp_weight_rot = exp_weight_rot
 
     def track(self, log_id, split, detections=None):
         tracker = self._tracker(
@@ -75,8 +79,11 @@ class InitialDetProcessor():
             self.max_time_track,
             self.filter_by_width,
             self.fixed_time,
+            self.inact_patience,
+            self.fixed_time,
             self.l_change_thresh,
-            self.w_change_thresh)
+            self.w_change_thresh,
+            self.use_temporal_weight_track)
 
         # detections = self.dataset(self.collapsed_dets_path, self.gt_path, log_id, self.split).dets
         if detections is None:
@@ -92,7 +99,7 @@ class InitialDetProcessor():
         if tracks is None:
             tracks = self.dataset(self.tracked_dets_path, self.gt_path, log_id, self.split, self.detection_set, tracks=True).dets
         tracks = self._registration(
-            tracks, self.av2_loader, log_id, self.outlier_threshold, self.outlier_kNN).register()
+            tracks, self.av2_loader, log_id, self.outlier_threshold, self.outlier_kNN, self.exp_weight_rot).register()
         p = f'{self.registered_dets_path}/{self.split}/{log_id}'
         if os.path.isdir(p):
             shutil.rmtree(p)
@@ -170,10 +177,7 @@ def main(cfg):
         'fps 0.2', 'fps 0.4', 'fps 0.6', 'fps 0.8',
         'fns 0.2', 'fns 0.4', 'fns 0.6', 'fns 0.8',
         'num gt'])
-    cfg.tracker_options.initial_dets = f'{cfg.tracker_options.initial_dets}/{cfg.tracker_options.model}'
-    cfg.tracker_options.collapsed_dets = f'{cfg.tracker_options.collapsed_dets}/{cfg.tracker_options.model}' 
-    cfg.tracker_options.tracked_dets = f'{cfg.tracker_options.tracked_dets}/{cfg.tracker_options.model}'
-    cfg.tracker_options.registered_dets = f'{cfg.tracker_options.registered_dets}/{cfg.tracker_options.model}'
+    
     # threshs = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
     # lens = [2, 4, 6, 8, 10]
     # max_times = [-1, 1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23]
@@ -186,6 +190,18 @@ def main(cfg):
         # cfg.tracker_options.max_time_track = t
         # cfg.tracker_options.inact_patience = t
         # print(f"\n \n {t} \n")
+
+    params = f'{cfg.tracker_options.filter_by_width}_{cfg.tracker_options.a_threshold}_{cfg.tracker_options.len_thresh}_\
+        {cfg.tracker_options.max_time_track}_{cfg.tracker_options.fixed_time}_{cfg.tracker_options.l_change_thresh}_\
+            {cfg.tracker_options.w_change_thresh}_{cfg.tracker_options.inact_patience}_\
+                {cfg.tracker_options.use_temporal_weight_track}_{cfg.tracker_options.outlier_threshold}_\
+                    {cfg.tracker_options.outlier_kNN}'
+
+    cfg.tracker_options.initial_dets = f'{cfg.tracker_options.initial_dets}/{cfg.tracker_options.model}'
+    cfg.tracker_options.collapsed_dets = f'{cfg.tracker_options.collapsed_dets}/{cfg.tracker_options.model}/{params}' 
+    cfg.tracker_options.tracked_dets = f'{cfg.tracker_options.tracked_dets}/{cfg.tracker_options.model}/{params}'
+    cfg.tracker_options.registered_dets = f'{cfg.tracker_options.registered_dets}/{cfg.tracker_options.model}/{params}'
+
     results_df = _main(cfg, results_df=results_df)
     # cfg.tracker_options.convert_initial = False
     if os.path.isdir(os.path.join(
@@ -319,7 +335,10 @@ def track(rank, cfg, world_size):
             filter_by_width=cfg.tracker_options.filter_by_width,
             fixed_time=cfg.tracker_options.fixed_time,
             l_change_thresh=cfg.tracker_options.l_change_thresh,
-            w_change_thresh=cfg.tracker_options.w_change_thresh)
+            w_change_thresh=cfg.tracker_options.w_change_thresh, 
+            inact_patience=cfg.tracker_options.inact_patience,
+            use_temporal_weight_track=cfg.tracker_options.use_temporal_weight_track,
+            exp_weight_rot=cfg.tracker_options.exp_weight_rot,)
         detections = None
         tracks = None
         if cfg.tracker_options.convert_initial:
