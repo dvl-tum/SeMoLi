@@ -447,6 +447,53 @@ class CuboidList:
         return cls(cuboids=cuboid_list)
 
     @classmethod
+    def _get_num_interior_from_feather_all(cls, annotations_feather_path: Path, log_id: int, get_moving: bool, pc) -> CuboidList:
+        """Read annotations from a feather file.
+
+        Args:
+            annotations_feather_path: Feather file path.
+
+        Returns:
+            Constructed cuboids.
+        """
+        data = read_feather(annotations_feather_path)
+        data = data[data['log_id'] == log_id]
+        if get_moving:
+            data = data[data['filter_moving']]
+        else:
+            data = data[~data['filter_moving']]
+        if data.shape[0] == 0:
+            cuboid_list: List[Cuboid] = []
+            return cls(cuboids=cuboid_list)
+        data['num_interior_filtered'] = 0
+        rotation = quat_to_mat(data.loc[:, ["qw", "qx", "qy", "qz"]].to_numpy())
+        translation_m = data.loc[:, ["tx_m", "ty_m", "tz_m"]].to_numpy()
+        length_m = data.loc[:, "length_m"].to_numpy()
+        width_m = data.loc[:, "width_m"].to_numpy()
+        height_m = data.loc[:, "height_m"].to_numpy()
+        category = data.loc[:, "category"].to_numpy()
+        timestamp_ns = data.loc[:, "timestamp_ns"].to_numpy()
+        track_id = data.loc[:, "track_uuid"].to_numpy()
+        N = len(data)
+
+        cuboid_list: List[Cuboid] = []
+        for i in range(N):
+            ego_SE3_object = SE3(rotation=rotation[i], translation=translation_m[i])
+            cuboid = Cuboid(
+                dst_SE3_object=ego_SE3_object,
+                length_m=length_m[i],
+                width_m=width_m[i],
+                height_m=height_m[i],
+                category=category[i],
+                timestamp_ns=timestamp_ns[i],
+		        track_id=track_id[i]
+            )
+            pts, _ = cuboid.compute_interior_points(pc)
+            num_interior = pts.shape[0]
+            data.iloc[data.indices[i], 'num_interior_filtered'] = num_interior
+        return data
+
+    @classmethod
     def from_dataframe(cls, data: pd.DataFrame) -> CuboidList:
         """Read annotations from a feather file.
 
