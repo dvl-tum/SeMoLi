@@ -572,8 +572,8 @@ def eval_detection(
     
     #'''
     if heuristics:
-        dts = dts[np.logical_and(dts['height_m'] > 0.1, 
-                             np.logical_and(dts['length_m'] > 0.1, dts['width_m'] > 0.1))]  
+        dts = dts[np.logical_and(dts['height_m'] > 0.5, 
+                             np.logical_and(dts['length_m'] > 0.5, dts['width_m'] > 0.5))]  
         print(f'Numer of detections after size threshold {dts.shape[0]}')
         dts = dts[np.logical_or(dts['num_interior_pts'] > min_num_interior_pts, dts['num_interior_pts']==-1)]
         print(f'Numer of detections after num interior threshold {dts.shape[0]}')
@@ -699,7 +699,7 @@ def eval_detection(
             print('GT objects with less than 25 points and more than 20: ', gts[np.logical_and(gts['num_interior_pts'] < 25, gts['num_interior_pts'] >= 20)].shape[0])
             print('GT objects with more than 25 points: ', gts[gts['num_interior_pts'] >= 25].shape[0])
 
-        if visualize and dts.shape[0] and gts.shape[0] and affinity == 'CENTER':
+        if visualize and dts.shape[0] and gts.shape[0] and affinity == 'IoU3D':
             visualize_whole(dts, gts[gts['num_interior_pts']>0], name, base_dir)
 
         if print_detail:

@@ -26,7 +26,7 @@ class SimpleTracker():
         self.fns = 0
         self.fps = 0
         self.a_threshold = a_threshold
-        self.i_threshold = i_threshold
+        self.i_threshold = a_threshold
         self.rank = rank
         self.logger = logger
         self.len_thresh = len_thresh
@@ -387,14 +387,15 @@ class SimpleTracker():
                 if visualize:
                     self.add_patch(ax, propagared_bbs_tracks[i], color='red')
                 if self.use_temporal_weight:
-                    weight = torch.arange(traj_lens[i])/2
+                    weight = torch.arange(traj_lens[i])/self.use_temporal_weight
                     weight = torch.exp(-weight)/torch.exp(-weight).sum()
                 else:
                     weight = torch.ones(traj_lens[i])
+                    weight = weight/weight.sum()
                 weight = weight.to(device)
-                l_change_2d[k, i] = (weight.float().unsqueeze(1) * torch.abs(propagared_bbs_tracks[i]['lwh'][:, 0]-\
+                l_change_2d[k, i] = (torch.abs(propagared_bbs_tracks[i]['lwh'][:, 0]-\
                                       propagared_bbs_dets[k]['lwh'][:traj_lens[i], 0]).float()).mean()
-                h_change_2d[k, i] = (weight.float().unsqueeze(1) * torch.abs(propagared_bbs_tracks[i]['lwh'][:, 1]-\
+                h_change_2d[k, i] = (torch.abs(propagared_bbs_tracks[i]['lwh'][:, 1]-\
                                       propagared_bbs_dets[k]['lwh'][:traj_lens[i], 1]).float()).mean()
                 l2_center_2d[k, i] = (weight * self.pdist(propagared_bbs_tracks[i]['translation'], 
                                        propagared_bbs_dets[k]['translation'][:traj_lens[i]])).mean()
@@ -403,8 +404,7 @@ class SimpleTracker():
                 #                        propagared_bbs_dets[k]['corners'][:traj_lens[i]]))).mean()
                 
                 bb_iou_2d[k, i] = 1 - (weight * IoUs2D(propagared_bbs_tracks[i]['xylwa'].unsqueeze(0), 
-                                       propagared_bbs_dets[k]['xylwa'][:traj_lens[i]].unsqueeze(0))).mean()
-                
+                                       propagared_bbs_dets[k]['xylwa'][:traj_lens[i]].unsqueeze(0))).sum()
                 cd_dist_track = chamferDist(
                         propagated_pos_tracks[i].permute(1, 0, 2), propagated_pos_dets[k][:, :traj_lens[i]].permute(1, 0, 2))[0]
                 # for t in range(traj_lens[i]):

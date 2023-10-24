@@ -99,7 +99,7 @@ class TrajectoryDataset(PyGDataset):
             elif split == 'train' and 'Argo' in self.data_dir:
                 self.seqs = ['00a6ffc1-6ce9-3bc3-a060-6006e9893a1a']
             elif split == 'val':
-                self.seqs = ['16473613811052081539']
+                self.seqs = ['10023947602400723454'] #['16473613811052081539']
             else:
                 self.seqs = ['2400780041057579262']
         else:

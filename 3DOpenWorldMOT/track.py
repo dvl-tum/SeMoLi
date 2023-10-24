@@ -78,7 +78,6 @@ class InitialDetProcessor():
             self.len_thresh,
             self.max_time_track,
             self.filter_by_width,
-            self.fixed_time,
             self.inact_patience,
             self.fixed_time,
             self.l_change_thresh,
@@ -115,7 +114,6 @@ class InitialDetProcessor():
         return detections
     
     def get_initial_dets(self, log_id, split):
-        print(self.initial_dets_path, self.gt_path, log_id, self.split, self.detection_set)
         detections = self.dataset(self.initial_dets_path, self.gt_path, log_id, self.split, self.detection_set).dets
         if self.filter_by_width:
             detections_new = dict()
@@ -191,17 +189,14 @@ def main(cfg):
         # cfg.tracker_options.inact_patience = t
         # print(f"\n \n {t} \n")
 
-    params = f'{cfg.tracker_options.filter_by_width}_{cfg.tracker_options.a_threshold}_{cfg.tracker_options.len_thresh}_\
-        {cfg.tracker_options.max_time_track}_{cfg.tracker_options.fixed_time}_{cfg.tracker_options.l_change_thresh}_\
-            {cfg.tracker_options.w_change_thresh}_{cfg.tracker_options.inact_patience}_\
-                {cfg.tracker_options.use_temporal_weight_track}_{cfg.tracker_options.outlier_threshold}_\
-                    {cfg.tracker_options.outlier_kNN}'
+    _params = f'{cfg.tracker_options.filter_by_width}_{cfg.tracker_options.a_threshold}_{cfg.tracker_options.len_thresh}_{cfg.tracker_options.max_time_track}_{cfg.tracker_options.fixed_time}_{cfg.tracker_options.l_change_thresh}_{cfg.tracker_options.w_change_thresh}_{cfg.tracker_options.inact_patience}_{cfg.tracker_options.use_temporal_weight_track}_{cfg.tracker_options.outlier_threshold}_{cfg.tracker_options.outlier_kNN}'
 
     cfg.tracker_options.initial_dets = f'{cfg.tracker_options.initial_dets}/{cfg.tracker_options.model}'
-    cfg.tracker_options.collapsed_dets = f'{cfg.tracker_options.collapsed_dets}/{cfg.tracker_options.model}/{params}' 
-    cfg.tracker_options.tracked_dets = f'{cfg.tracker_options.tracked_dets}/{cfg.tracker_options.model}/{params}'
-    cfg.tracker_options.registered_dets = f'{cfg.tracker_options.registered_dets}/{cfg.tracker_options.model}/{params}'
-
+    cfg.tracker_options.collapsed_dets = f'{cfg.tracker_options.collapsed_dets}/{cfg.tracker_options.model}/{_params}' 
+    cfg.tracker_options.tracked_dets = f'{cfg.tracker_options.tracked_dets}/{cfg.tracker_options.model}/{_params}'
+    cfg.tracker_options.registered_dets = f'{cfg.tracker_options.registered_dets}/{cfg.tracker_options.model}/{_params}'
+    print(cfg.tracker_options.registered_dets)
+    
     results_df = _main(cfg, results_df=results_df)
     # cfg.tracker_options.convert_initial = False
     if os.path.isdir(os.path.join(
@@ -216,13 +211,14 @@ def main(cfg):
     # results_df.to_csv('/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/track_reg_results.csv')
 
 def _main(cfg, results_df):
+    #'''
     if cfg.multi_gpu:
         world_size = torch.cuda.device_count()
         in_args = (cfg, world_size)
         mp.spawn(track, args=in_args, nprocs=world_size, join=True)
     else:
         track(1, cfg, world_size=1)
-
+    #'''
     params = [cfg.tracker_options.a_threshold,
               cfg.tracker_options.len_thresh,
               cfg.tracker_options.max_time_track,

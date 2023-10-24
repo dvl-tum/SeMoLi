@@ -24,7 +24,7 @@ class FlowRegistration():
         self.log_id = log_id
         self.exp_weight_rot = exp_weight_rot
 
-    def register(self, visualize=True):
+    def register(self, visualize=False):
         detections = dict()
         for j, track in enumerate(self.active_tracks.values()):
             # we start from timestep with most points and then go
@@ -47,7 +47,10 @@ class FlowRegistration():
                     t0 = track.detections[i].timestamps[0, 0].item()
                     t1 = track.detections[i+1].timestamps[0, 0].item()
                     dt = self.ordered_timestamps.index(t1) - self.ordered_timestamps.index(t0)
-                    flow = self.exp_weight_rot * flow + (1-self.exp_weight_rot) * traj_in_t0[:, dt].mean(dim=0)
+                    # if len(flows):
+                    #     flow = self.exp_weight_rot * flows[-1] + (1-self.exp_weight_rot) * traj_in_t0[:, dt].mean(dim=0)
+                    # else:
+                    flow = traj_in_t0[:, dt].mean(dim=0)
                     start_in_t0 += flow
                     flows.append(flow)
                     start_in_t1 = track._convert_time(t0, t1, self.av2_loader, start_in_t0)
@@ -63,29 +66,30 @@ class FlowRegistration():
 
                 dets.append(copy.deepcopy(track.detections[-1]))
                 start_in_t0 = outlier_removal(start_in_t0, threshold=self.threshold, kNN=self.kNN)
-
-                # setting last detection
-                rotation = track.detections[-1].rot
-                lwh, translation = get_rotated_center_and_lwh(start_in_t0,  rotation)
-                track.detections[-1].lwh = lwh
-                track.detections[-1].translation = translation #dets[-1].translation #translation
-                num_interior = start_in_t0.shape[0]
-                track.detections[-1].num_interior = num_interior
-                flow = flows[i]
-                for i in range(len(track)-1, 0, -1):
-                    t0 = track.detections[i].timestamps[0, 0].item()
-                    t1 = track.detections[i-1].timestamps[0, 0].item()
-                    start_in_t0 = track._convert_time(t0, t1, self.av2_loader, start_in_t0)
-                    # flow = self.exp_weight_rot * flow + (1-self.exp_weight_rot) * flows[i-1]
-                    start_in_t0 -= flows[i-1]
-                    rotation = self.exp_weight_rot * rotation + (1-self.exp_weight_rot) * track.detections[i-1].rot
-                    track.detections[i-1].rot = rotation
-                    _, translation = get_rotated_center_and_lwh(start_in_t0, rotation)
+                if start_in_t0.shape[0] != 0:
 
                     # setting last detection
-                    track.detections[i-1].lwh = lwh
-                    track.detections[i-1].translation = translation #dets[i-1].translation #translation
-                    track.detections[i-1].num_interior = num_interior
+                    rotation = track.detections[-1].rot
+                    lwh, translation = get_rotated_center_and_lwh(start_in_t0,  rotation)
+                    track.detections[-1].lwh = lwh
+                    track.detections[-1].translation = translation #dets[-1].translation #translation
+                    num_interior = start_in_t0.shape[0]
+                    track.detections[-1].num_interior = num_interior
+                    flow = flows[i]
+                    for i in range(len(track)-1, 0, -1):
+                        t0 = track.detections[i].timestamps[0, 0].item()
+                        t1 = track.detections[i-1].timestamps[0, 0].item()
+                        start_in_t0 = track._convert_time(t0, t1, self.av2_loader, start_in_t0)
+                        # flow = self.exp_weight_rot * flow + (1-self.exp_weight_rot) * flows[i-1]
+                        start_in_t0 -= flows[i-1]
+                        rotation = self.exp_weight_rot * rotation + (1-self.exp_weight_rot) * track.detections[i-1].rot
+                        track.detections[i-1].rot = rotation
+                        _, translation = get_rotated_center_and_lwh(start_in_t0, rotation)
+    
+                        # setting last detection
+                        track.detections[i-1].lwh = lwh
+                        track.detections[i-1].translation = translation #dets[i-1].translation #translation
+                        track.detections[i-1].num_interior = num_interior
 
             # track.fill_detections(self.av2_loader, self.ordered_timestamps, max_time=5)
             if visualize:

@@ -494,7 +494,8 @@ class ClusterGNN(MessagePassing):
             edge_attr.append(get_per_time_vel_diff(x1, timestamps, batch, self.dataset, edge_index, pos_dim))
             edge_dim += int(traj_dim / 3) -1
         
-        edge_attr = torch.stack(edge_attr).squeeze().float()
+        edge_attr = torch.hstack(edge_attr).squeeze().float()
+        
         return edge_attr, edge_dim
     
     def initial_node_attributes(self, x1, x2, _type, timestamps=None, batch=None):

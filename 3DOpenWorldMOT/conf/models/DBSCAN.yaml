@@ -5,4 +5,4 @@ hyperparams:
     min_samples: 0
     input: traj_pos # pos # traj
     dataset: ${data.dataset_name}
-    flow_thresh: 1.0
+    flow_thresh: 0.0 #1.0
