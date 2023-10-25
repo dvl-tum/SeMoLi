@@ -10,6 +10,7 @@ from lapsolver import solve_dense
 from pyarrow import feather
 import pandas as pd
 import copy
+from av2.geometry.se3 import SE3
 
 
 _class_dict = {
@@ -352,7 +353,14 @@ class Detection():
 def get_rotated_center_and_lwh(pc, rot):
     # translation = get_center(pc)
     # translation = translation.cpu()
-    
+    translation = get_center(pc)
+    ego_SE3_object = SE3(rotation=rot, translation=translation)
+    print(pc_obj)
+    pc_obj = ego_SE3_object.inverse().transform_point_cloud(pc)
+    print(pc_obj)
+    lwh = get_lwh(pc_obj)
+    print(lwh, translation)
+
     pc = pc @ rot.T # + (-translation.double() @ rot.T)
     translation = get_center(pc)
     translation = translation.to(pc.device)
@@ -361,6 +369,8 @@ def get_rotated_center_and_lwh(pc, rot):
     lwh = get_lwh(pc)
     # but translatoin needs to be rotated to get correct translation
     translation = rot.T @ translation.double()
+    print(lwh, translation)
+    quit()
     return lwh, translation
 
 
