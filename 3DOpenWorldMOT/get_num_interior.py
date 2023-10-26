@@ -46,7 +46,7 @@ def get_interior_one_seq(inp):
         data = torch.load(time_p)
         lidar_timestamp_ns = int(data['timestamps'][0])
         log_id = data['log_id']
-        _data = CuboidList._get_num_interior_from_feather_all( annotations_feather_path, log_id, lidar_timestamp_ns, get_moving=False, pc=data['pc_list'].numpy())
+        _data = CuboidList._get_num_interior_from_feather_all( annotations_feather_path, log_id, lidar_timestamp_ns, get_moving_only=False, pc=data['pc_list'].numpy())
         if data_feather is None:
             data_feather = _data
         else:
@@ -59,6 +59,6 @@ if __name__ == "__main__":
     for split in ['train', 'val']:
         path = f'/workspace/all_egocomp_margin0.6_width25/all_egocomp_margin0.6_width25_{split}'
         out_path = f'/workspace/ExchangeWorkspace/Waymo_Converted_filtered'
-        out_file = f'{split}_1.0_per_frame_remove_non_move_remove_far_filtered_version_city_w0_withwaymovel_w_num_interior_filtered_stats.feather'
+        out_file = f'{split}_1.0_per_frame_remove_non_move_remove_far_filtered_version_city_w0_withwaymovel_w_num_interior_filtered.feather'
         annotations_feather_path = f'/workspace/ExchangeWorkspace/Waymo_Converted_filtered/{split}_1.0_per_frame_remove_non_move_remove_far_filtered_version_city_w0_withwaymovel.feather'
         just_get_interior_pts(path, out_path, out_file, annotations_feather_path)

@@ -447,7 +447,7 @@ class CuboidList:
         return cls(cuboids=cuboid_list)
 
     @classmethod
-    def _get_num_interior_from_feather_all(cls, annotations_feather_path: Path, log_id: int, timestamp_ns, get_moving: bool, pc) -> CuboidList:
+    def _get_num_interior_from_feather_all(cls, annotations_feather_path: Path, log_id: int, timestamp_ns, get_moving_only: bool, pc, return_mask: bool) -> CuboidList:
         """Read annotations from a feather file.
 
         Args:
@@ -456,6 +456,7 @@ class CuboidList:
         Returns:
             Constructed cuboids.
         """
+        
         if type(annotations_feather_path) == str:
             data = read_feather(annotations_feather_path)
         else: 
@@ -463,12 +464,11 @@ class CuboidList:
         data = data[data['log_id'] == log_id]
         data = data[data['timestamp_ns'] == str(timestamp_ns)]
         data['num_interior_filtered'] = 0
-        if get_moving:
+        if get_moving_only:
             data = data[data['filter_moving']]
         else:
             data = data[~data['filter_moving']]
         if data.shape[0] == 0:
-            cuboid_list: List[Cuboid] = []
             return data
         data['num_interior_filtered'] = 0
         rotation = quat_to_mat(data.loc[:, ["qw", "qx", "qy", "qz"]].to_numpy())
@@ -481,7 +481,8 @@ class CuboidList:
         track_id = data.loc[:, "track_uuid"].to_numpy()
         N = len(data)
 
-        cuboid_list: List[Cuboid] = []
+        if return_mask:
+            masks = list()
         for i in range(N):
             ego_SE3_object = SE3(rotation=rotation[i], translation=translation_m[i])
             cuboid = Cuboid(
@@ -493,11 +494,17 @@ class CuboidList:
                 timestamp_ns=timestamp_ns[i],
 		        track_id=track_id[i]
             )
-            pts, _ = cuboid.compute_interior_points(pc)
-            num_interior = pts.shape[0]
-            data.loc[data.index[i], 'num_interior_filtered'] = num_interior
-        return data
-
+            pts, mask = cuboid.compute_interior_points(pc)
+            if return_mask:
+                masks.append(mask)
+            else:
+                num_interior = pts.shape[0]
+                data.iloc[data.index[i], 'num_interior_filtered'] = num_interior
+        if return_mask:
+            return np.stack(masks)
+        else:
+            return data
+        
     @classmethod
     def from_dataframe(cls, data: pd.DataFrame) -> CuboidList:
         """Read annotations from a feather file.

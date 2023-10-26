@@ -219,11 +219,11 @@ def _evaluate(dts: pd.DataFrame,
         if uuid in uuid_to_gts:
             sweep_gts = uuid_to_gts[uuid]
 
-        args = sweep_dts, sweep_gts, cfg, None, None, min_points, max_points, int(timestamp_ns), filter_class
+        args = sweep_dts, sweep_gts, cfg, None, None, min_points, max_points, int(timestamp_ns), filter_class, log_id
         if log_id_to_avm is not None and log_id_to_timestamped_poses is not None:
             avm = log_id_to_avm[log_id]
             city_SE3_ego = log_id_to_timestamped_poses[log_id][int(timestamp_ns)]
-            args = sweep_dts, sweep_gts, cfg, avm, city_SE3_ego, min_points, max_points, int(timestamp_ns), filter_class
+            args = sweep_dts, sweep_gts, cfg, avm, city_SE3_ego, min_points, max_points, int(timestamp_ns), filter_class, log_id
         args_list.append(args)
 
     print("\t Starting evaluation ...")

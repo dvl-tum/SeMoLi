@@ -44,6 +44,7 @@ from pytorch3d.ops import box3d_overlap
 import torch
 from .iou import IoUs2D
 from scipy.spatial.transform import Rotation as R
+import os
 
 
 logger = logging.getLogger(__name__)
@@ -110,7 +111,8 @@ def accumulate(
     min_points: int = 0,
     max_points: int = 10000,
     timestamp_ns: int = 0,
-    filter_category: int = 1
+    filter_category: int = 1,
+    log_id = None
 ) -> Tuple[NDArrayFloat, NDArrayFloat]:
     """Accumulate the true / false positives (boolean flags) and true positive errors for each class.
 
@@ -177,7 +179,9 @@ def accumulate(
             cfg=cfg,
             min_points=min_points,
             max_points=max_points,
-            filter_category=filter_category)
+            filter_category=filter_category,
+            timestamp_ns=timestamp_ns,
+            log_id=log_id)
         
         dts_augmented[is_evaluated_dts, :-1] = dts_assignments
         gts_augmented[is_evaluated_gts, :-1] = gts_assignments
@@ -230,7 +234,9 @@ def assign(
         cfg: DetectionCfg,
         min_points: int=0,
         max_points: int=1000,
-        filter_category=1) -> Tuple[NDArrayFloat, NDArrayFloat]:
+        filter_category=1,
+        timestamp_ns=0,
+        log_id=None) -> Tuple[NDArrayFloat, NDArrayFloat]:
     """Attempt assignment of each detection to a ground truth label.
 
     The detections (gts) and ground truth annotations (gts) are expected to be shape (N,10) and (M,10)
@@ -279,7 +285,7 @@ def assign(
         is_moving,
         is_inpointrange)
     # get affinity matrix
-    affinity_matrix = compute_affinity_matrix(dts, gts, cfg.affinity_type)
+    affinity_matrix = compute_affinity_matrix(dts, gts, cfg.affinity_type, timestamp_ns, log_id)
 
     # Get the GT label for each max-affinity GT label, detection pair.
     idx_gts = affinity_matrix.argmax(axis=1)[None]
@@ -384,7 +390,7 @@ def interpolate_precision(precision: NDArrayFloat, interpolation_method: InterpT
     return precision_interpolated
 
 
-def compute_affinity_matrix(dts: NDArrayFloat, gts: NDArrayFloat, metric: AffinityType) -> NDArrayFloat:
+def compute_affinity_matrix(dts: NDArrayFloat, gts: NDArrayFloat, metric: AffinityType, timestamp_ns, log_id) -> NDArrayFloat:
     """Calculate the affinity matrix between detections and ground truth annotations.
 
     Args:
@@ -448,6 +454,9 @@ def compute_affinity_matrix(dts: NDArrayFloat, gts: NDArrayFloat, metric: Affini
         # get 2D IoU
         iou_2d = IoUs2D(torch.from_numpy(dts_corners[idx_d]).unsqueeze(0).cuda(), torch.from_numpy(gts_corners[idx_g]).unsqueeze(0).cuda()).view(dts.shape[0], gts.shape[0]).cpu().numpy()
         affinities = -(1-iou_2d)
+    elif metric == AffinityType.SegIoU:
+        iou_seg = compute_sem_seg(dts, gts, timestamp_ns, log_id)
+        affinities = -(1-iou_seg)
     else:
         raise NotImplementedError("This affinity metric is not implemented!")
     return affinities
@@ -474,6 +483,47 @@ def create_box(xyz, lwh, rot):
     vertices_dst_xyz_m = vertices_obj_xyz_m @ rot.T + xyz
     vertices_dst_xyz_m = vertices_dst_xyz_m.type(torch.float32)
     return vertices_dst_xyz_m
+
+def get_masks(dts, data):
+    mask_dets = list()
+    for d in dts:
+        rotation = quat_to_mat(d[6:])
+        ego_SE3_object = SE3(rotation=rotation, translation=d[:3])
+        cuboid = Cuboid(
+                dst_SE3_object=ego_SE3_object,
+                length_m=d[3],
+                width_m=d[4],
+                height_m=d[5],
+                category='REGULAR_VEHILE',
+                timestamp_ns=0,
+		        track_id=0
+            )
+        _, mask = cuboid.compute_interior_points(data)
+        mask_dets.append(mask)
+    return np.stack(mask_dets)
+
+
+def compute_sem_seg(dts, gts, timestamp_ns, log_id):
+    pc_path=f'/workspace/all_egocomp_margin0.6_width25/all_egocomp_margin0.6_width25_train'
+    time_p = os.path.join(pc_path, log_id, f'{timestamp_ns}.pt')
+    # pc_path = '/workspace/Waymo_Converted_train/Waymo_Converted/train/' 
+    # time_p = os.path.join(pc_path, log_id, f'{timestamp_ns}.feather')
+    masks_dets = get_masks(dts, pc_path)
+    masks_gt = get_masks(gts, pc_path)
+    data = torch.load(time_p)['pc_list'].numpy()
+    PC_IoU = np.zeros(masks_dets.shape[0], masks_gt.shape[0])
+    for i, mask_dets in enumerate(masks_dets):
+        for j, mask_gt in enumerate(masks_gt):
+            PC_IoU[i, j] = calculate_iou_pointcloud_binary(mask_dets, mask_gt, data)
+
+    return PC_IoU
+
+
+def calculate_iou_pointcloud_binary(pred_mask, gt_mask):
+    intersection = np.sum(pred_mask & gt_mask)
+    union = np.sum(pred_mask | gt_mask)
+    iou = intersection / union if union != 0 else 0
+    return iou
 
 
 def compute_average_precision(

@@ -103,6 +103,7 @@ class AffinityType(str, Enum):
     CENTER = "CENTER"
     IoU3D = "IoU3D"
     IoU2D = "IoU2D"
+    SegIoU = "SegIoU"
 
 
 @unique
