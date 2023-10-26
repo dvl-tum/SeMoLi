@@ -6,7 +6,7 @@ hyperparams:
     thresh_traj: 0.1
     min_samples_traj: 0
     input_traj: traj # scene_flow
-    flow_thresh: 1.0
+    flow_thresh: 0.0 #1.0
     min_samples_after: 0
     dataset: ${data.dataset_name}
     visualization: False

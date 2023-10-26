@@ -291,8 +291,12 @@ def summarize_metrics(
         print(f"\t Unmatched FP detections when using matched categories {unmatched_fps_dets} ...")
 
     average_precisions = pd.DataFrame({t: 0.0 for t in cfg.affinity_thresholds_m}, index=cfg.categories)
+    weighted_average_precisions = pd.DataFrame({t: 0.0 for t in cfg.affinity_thresholds_m}, index=['ALL'])
     precisions = pd.DataFrame({t: 0.0 for t in cfg.affinity_thresholds_m}, index=cfg.categories)
+    weighted_precisions = pd.DataFrame({t: 0.0 for t in cfg.affinity_thresholds_m}, index=['ALL'])
     recalls = pd.DataFrame({t: 0.0 for t in cfg.affinity_thresholds_m}, index=cfg.categories)
+    weighted_recalls = pd.DataFrame({t: 0.0 for t in cfg.affinity_thresholds_m}, index=['ALL'])
+    all_gts = 0
     fps = 0
     all_results_df = pd.DataFrame({f'{met} {t}': 0.0 for met in ['pr', 'ap', 'tps', 'fps', 'fns'] for t in cfg.affinity_thresholds_m}, index=cfg.categories)
     all_results_df['num gt'] = np.zeros(all_results_df.shape[0])
@@ -336,8 +340,12 @@ def summarize_metrics(
             threshold_average_precision, _ = compute_average_precision(true_positives, recall_interpolated, num_gts)
             # Record the average precision.
             average_precisions.loc[category, affinity_threshold_m] = threshold_average_precision
+            weighted_average_precisions.loc['ALL', affinity_threshold_m] += threshold_average_precision * num_gts
             precisions.loc[category, affinity_threshold_m] = true_positives.sum()/(true_positives.sum()+(~true_positives).sum())
+            weighted_precisions.loc['ALL', affinity_threshold_m] += (true_positives.sum()/(true_positives.sum()+(~true_positives).sum())) * num_gts
             recalls.loc[category, affinity_threshold_m] = true_positives.sum()/num_gts
+            weighted_recalls.loc['ALL', affinity_threshold_m] += (true_positives.sum()/num_gts) * num_gts
+            all_gts += num_gts
             all_results_df.loc[category, f'pr {affinity_threshold_m}'] = true_positives.sum()/(true_positives.sum()+(~true_positives).sum())
             all_results_df.loc[category, f'ap {affinity_threshold_m}'] = threshold_average_precision
 
@@ -368,6 +376,8 @@ def summarize_metrics(
         # Compute Composite Detection Score (CDS).
         cds = mean_average_precisions * np.mean(tp_scores)
         summary.loc[category] = np.array([mean_average_precisions, *tp_errors, cds])
-
+    print('\t WEIGHTED AVERAGE PRECISIONS ,', weighted_average_precisions.values/all_gts)
+    print('\t WEIGHTED PRECISIONS ,', weighted_precisions.values/all_gts)
+    print('\t WEIGHTED RECALLS ,', weighted_recalls.values/all_gt)
     # Return the summary.
     return summary, fps, all_results_df

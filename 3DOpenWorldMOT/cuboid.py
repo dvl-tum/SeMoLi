@@ -456,7 +456,10 @@ class CuboidList:
         Returns:
             Constructed cuboids.
         """
-        data = read_feather(annotations_feather_path)
+        if type(annotations_feather_path) == str:
+            data = read_feather(annotations_feather_path)
+        else: 
+            data = annotations_feather_path
         data = data[data['log_id'] == log_id]
         data = data[data['timestamp_ns'] == str(timestamp_ns)]
         data['num_interior_filtered'] = 0

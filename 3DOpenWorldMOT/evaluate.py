@@ -67,6 +67,8 @@ def main(cfg):
         detector_dir = os.path.join(experiment_dir + name, cfg.data.detection_set)
     else:
         detector_dir = cfg.eval_dir
+
+    print(detector_dir, cfg.filter_moving, '\n\n')
     # evaluate detection
     _, detection_metric, _ = eval_detection.eval_detection(
         gt_folder=os.path.join(os.getcwd(), cfg.data.data_dir),
@@ -78,7 +80,8 @@ def main(cfg):
         remove_non_move=cfg.data.remove_static_gt,
         remove_non_move_strategy=cfg.data.remove_static_strategy,
         remove_non_move_thresh=cfg.data.remove_static_thresh,
-        filter_class='CONVERT_ALL_TO_CARS',
+        visualize=False,
+        filter_class=cfg.filter_class, #'NO_FILTER', #'CONVERT_ALL_TO_CARS',
         filter_moving=cfg.filter_moving,
         use_matched_category=cfg.use_matched_category,
         debug=cfg.data.debug,
@@ -87,7 +90,7 @@ def main(cfg):
         velocity_evaluation=cfg.vel_evaluation,
         heuristics=cfg.heuristics,
         waymo_style=cfg.waymo_style)
-
+    print('\n\n\n\n')
 
 if __name__ == "__main__":
         main()

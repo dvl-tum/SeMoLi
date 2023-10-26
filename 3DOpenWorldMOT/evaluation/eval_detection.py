@@ -142,8 +142,9 @@ def get_feather_files(
                     df = df.append(data)
         else:
             df = feather.read_feather(paths)
-        
+            df = df[df['log_id'].isin(seq_list)]
         if df['category'].dtypes != int:
+
             if not is_waymo:
                 def convert2int(x): return class_dict_argo[x]
                 df['category'] = df['category'].apply(convert2int)
@@ -559,7 +560,7 @@ def eval_detection(
 
     if just_eval:
         print("Loaded ground truth...")
-    
+    is_pp = 'detections_from_pp_sv2_format' in trackers_folder
     dts = get_feather_files(
         trackers_folder,
         seq_list=seq_to_eval,
@@ -567,6 +568,10 @@ def eval_detection(
         loader=loader,
         gt_folder=gt_folder,
         is_waymo=is_waymo)
+    if 'filter_moving' in dts.keys():
+        dts = dts[dts['filter_moving']]
+    dts['category'] = 1
+    print(dts['category'].unique())
     dts = dts.drop_duplicates()
     print(f'Numer of detections {dts.shape[0]}')
     
@@ -640,8 +645,9 @@ def eval_detection(
     dts = dts[dts['score'] > 0.1]
     gts_orig = gts #copy.deepcopy(gts)
     dts_orig = dts #copy.deepcopy(dts)
+    smallest = 0.3 if is_pp else 0.2
     for affinity, tp_thresh, threshs, n_jobs in zip(
-        ['CENTER', 'IoU3D', 'IoU2D'], [2.0, 0.6, 0.6], [(0.5, 1.0, 2.0, 4.0), (0.2, 0.4, 0.6, 0.8), (0.2, 0.4, 0.6, 0.99)], [8, 1, 1]):
+        ['CENTER', 'IoU3D', 'IoU2D'], [2.0, 0.6, 0.6], [(0.5, 1.0, 2.0, 4.0), (smallest, 0.4, 0.6, 0.8), (0.2, 0.4, 0.6, 0.99)], [8, 1, 1]):
         
         if affinity != 'IoU3D':
             continue
