@@ -27,7 +27,9 @@ class Detector3D():
             overlap=5, 
             av2_loader=None, 
             rank=0,
-            precomp_dets=False) -> None:
+            precomp_dets=False,
+            kNN=0,
+            threshold=0.5) -> None:
         
         self.detections = dict()
         self.log_id = -1
@@ -40,6 +42,8 @@ class Detector3D():
         self.rank = rank
         self.name = os.path.basename(out_path)
         self.out_path = os.path.join(out_path,  f'rank_{self.rank}')
+        self.threshold = threshold
+        self.kNN = kNN
     
     def new_log_id(self, log_id):
         # save tracks to feather and reset variables
@@ -96,9 +100,13 @@ class Detector3D():
                 continue
             # get points, bounding boxes
             point_cluster = points[clusters==c]
-
             # generate new detected trajectory
             traj_cluster = traj[clusters==c]
+
+            if self.kNN > 0:
+                point_cluster, mask = outlier_removal(point_cluster, threshold=self.threshold, kNN=self.kNN)
+                traj_cluster = traj_cluster[mask]
+
             detections.append(Detection(
                 traj_cluster.cpu(),
                 point_cluster.cpu(),

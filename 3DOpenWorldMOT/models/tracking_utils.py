@@ -160,10 +160,16 @@ class Track():
         self.log_id = detection.log_id
         self.dead = False
         self.final = list()
+        self.max_num_interior = detection.num_interior
+        self.min_num_interior = detection.num_interior
 
     def add_detection(self, detection):
         self.detections.append(detection)
         detection.track_id = self.track_id
+        if detection.num_interior > self.max_num_interior:
+            self.max_num_interior = detection.num_interior
+        if detection.num_interior < self.min_num_interior:
+            self.min_num_interior = detection.num_interior
     
     def fill_detections(self, av2_loader, ordered_timestamps, max_time):
         filled_detections = list()
@@ -217,8 +223,7 @@ class Track():
         index = torch.where(self.detections[-1].timestamps[0]==t1)[0][0].item()
         traj = copy.deepcopy(self._get_traj(i))[:, index:]
         cano = self._get_canonical_points()
-        traj = torch.tile(
-                cano.unsqueeze(1), (1, traj.shape[1], 1)) + traj
+        traj = torch.tile(cano.unsqueeze(1), (1, traj.shape[1], 1)) + traj
         
         t0 = self.detections[i].timestamps[0, 0].item()
         if not city:
@@ -658,7 +663,7 @@ def to_feather(detections, log_id, out_path, split, rank, precomp_dets=False, na
 
             # quaternion rotation around z axis
             # quat = torch.tensor([torch.cos(det.alpha/2), 0, 0, torch.sin(det.alpha/2)]).numpy()
-            quat = Rotation.from_euler('z', self.alpha).as_quat)
+            quat = Rotation.from_euler('z', det.alpha).as_quat()
             # REGULAR_VEHICLE = only dummy class
             values = [
                 det.translation[0].item(),

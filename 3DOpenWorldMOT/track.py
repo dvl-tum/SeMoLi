@@ -33,7 +33,8 @@ class InitialDetProcessor():
                  collapsed_dets_path, tracked_dets_path, registered_dets_path, gt_path, split,
                  detection_set, percentage, a_threshold, i_threshold, len_thresh, outlier_threshold,
                  outlier_kNN, max_time_track, filter_by_width, fixed_time, l_change_thresh,
-                 w_change_thresh, inact_patience, use_temporal_weight_track, exp_weight_rot):
+                 w_change_thresh, inact_patience, use_temporal_weight_track, exp_weight_rot, 
+                 registration_len_thresh, min_pts_thresh):
         self.every_x_frame = every_x_frame
         self.overlap = overlap
         self.av2_loader = av2_loader
@@ -64,6 +65,8 @@ class InitialDetProcessor():
         self.inact_patience = inact_patience
         self.use_temporal_weight_track = use_temporal_weight_track
         self.exp_weight_rot = exp_weight_rot
+        self.min_pts_thresh = min_pts_thresh
+        self.registration_len_thresh = registration_len_thresh
 
     def track(self, log_id, split, detections=None):
         tracker = self._tracker(
@@ -98,7 +101,14 @@ class InitialDetProcessor():
         if tracks is None:
             tracks = self.dataset(self.tracked_dets_path, self.gt_path, log_id, self.split, self.detection_set, tracks=True).dets
         tracks = self._registration(
-            tracks, self.av2_loader, log_id, self.outlier_threshold, self.outlier_kNN, self.exp_weight_rot).register()
+            tracks,
+            self.av2_loader,
+            log_id,
+            self.outlier_threshold,
+            self.outlier_kNN,
+            self.exp_weight_rot,
+            self.registration_len_thresh,
+            self.min_pts_thresh).register()
         p = f'{self.registered_dets_path}/{self.split}/{log_id}'
         if os.path.isdir(p):
             shutil.rmtree(p)
