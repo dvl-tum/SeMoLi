@@ -1,3 +1,4 @@
+from scipy.spatial.transform import Rotation
 from pytorch3d.ops import knn_points
 import shutil
 import torch
@@ -354,13 +355,11 @@ def get_rotated_center_and_lwh(pc, rot):
     # translation = get_center(pc)
     # translation = translation.cpu()
     translation = get_center(pc)
-    ego_SE3_object = SE3(rotation=rot, translation=translation)
-    print(pc_obj)
+    ego_SE3_object = SE3(rotation=rot.cpu().numpy(), translation=translation.cpu().numpy())
     pc_obj = ego_SE3_object.inverse().transform_point_cloud(pc)
-    print(pc_obj)
     lwh = get_lwh(pc_obj)
-    print(lwh, translation)
-
+    
+    '''
     pc = pc @ rot.T # + (-translation.double() @ rot.T)
     translation = get_center(pc)
     translation = translation.to(pc.device)
@@ -369,16 +368,15 @@ def get_rotated_center_and_lwh(pc, rot):
     lwh = get_lwh(pc)
     # but translatoin needs to be rotated to get correct translation
     translation = rot.T @ translation.double()
-    print(lwh, translation)
-    quit()
+    '''
     return lwh, translation
 
 
 def get_alpha_rot_t0_to_t1(t0=None, t1=None, trajectory=None, traj_t0=None, traj_t1=None):
     if trajectory is not None:
-        mean_flow = (trajectory[:, t1, :] - trajectory[:, t0, :]).mean(dim=0)
+        mean_flow = (trajectory[:, t1, :] - trajectory[:, t0, :]).mean(dim=0) # (trajectory[:, t1, :] - trajectory[:, t0, :]).median(dim=0)
     else:
-        mean_flow = (traj_t1 - traj_t0).mean(dim=0)
+        mean_flow = (traj_t1 - traj_t0).mean(dim=0) # (traj_t1 - traj_t0).median(dim=0)
     alpha = torch.atan2(mean_flow[1], mean_flow[0])
     rot = torch.tensor([
         [torch.cos(alpha), -torch.sin(alpha), 0],
@@ -427,10 +425,10 @@ def get_propagated_bbs(propagated_pos_tracks, get_trans=True, get_lwh=True, _2d=
 
 
 def get_center(canonical_points):
-    points_c_time = canonical_points
-    mins, maxs = points_c_time.min(dim=0), points_c_time.max(dim=0)
-    translation = (maxs.values + mins.values)/2
-
+    # points_c_time = canonical_points
+    # mins, maxs = points_c_time.min(dim=0), points_c_time.max(dim=0)
+    # translation = (maxs.values + mins.values)/2
+    translation = torch.mean(canonical_points, dim=0) # np.median(canonical_points.cpu().numpy(), axis=0)
     return translation
 
 
@@ -659,7 +657,8 @@ def to_feather(detections, log_id, out_path, split, rank, precomp_dets=False, na
                 continue
 
             # quaternion rotation around z axis
-            quat = torch.tensor([torch.cos(det.alpha/2), 0, 0, torch.sin(det.alpha/2)]).numpy()
+            # quat = torch.tensor([torch.cos(det.alpha/2), 0, 0, torch.sin(det.alpha/2)]).numpy()
+            quat = Rotation.from_euler('z', self.alpha).as_quat)
             # REGULAR_VEHICLE = only dummy class
             values = [
                 det.translation[0].item(),
@@ -668,10 +667,10 @@ def to_feather(detections, log_id, out_path, split, rank, precomp_dets=False, na
                 det.lwh[0].item(),
                 det.lwh[1].item(),
                 det.lwh[2].item(),
+                quat[3],
                 quat[0],
                 quat[1],
                 quat[2],
-                quat[3],
                 int(det.timestamp.item()) if type(det.timestamp) is not int else det.timestamp,
                 'REGULAR_VEHICLE',
                 det.gt_id,
@@ -711,4 +710,4 @@ def outlier_removal(pc, threshold=0.1, kNN=10):
         pc.unsqueeze(0).float(),
         pc.unsqueeze(0).float(),
         K=kNN)
-    return pc[nn_dists[0,:,1:].mean(1) < threshold]
+    return pc[nn_dists[0,:,1:].mean(1) < threshold], nn_dists[0,:,1:].mean(1) < threshold
