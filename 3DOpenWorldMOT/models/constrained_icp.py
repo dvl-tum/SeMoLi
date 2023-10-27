@@ -26,19 +26,31 @@ class ConstrainedICPRegistration():
         init = np.eye(4)
         init[:3, 3] = approx_translation
         return init
+    
+    def get_grid_init(self, translation, lwh):
+        inits = list()
+        for prod_l in [-0.5, -0.25, 0, 0.25, 0.5]:
+            for prod_w in [-0.5, -0.25, 0, 0.25, 0.5]:
+                inits.append(translation-lwh*np.array(prod_l, prod_w, 1))
+        
+        return inits
 
-    def icp_p2point(self, pc1, pc2, radius=0.2, its=30, init=None, with_constraint=True):
+    def icp_p2point(self, pc1, pc2, translation, lwh, radius=0.2, its=30, init=None, with_constraint=True):
         pc1, pc2, pc1_centroid = self.load_pointclouds(pc1, pc2)
-        if init is None:
-            #  init = get_median_init(pc1, pc2)
-            init = self.get_centroid_init(pc1, pc2)
-        reg_p2p = o3.registration_icp(
-            pc1,
-            pc2,
-            radius,
-            init,
-            o3.TransformationEstimationPointToPoint(with_constraint=with_constraint, with_scaling=False),
-            o3.registration.ICPConvergenceCriteria(max_iteration=its))
+        # init = self.get_centroid_init(pc1, pc2)
+        inits = self.get_grid_init(translation, lwh)
+        inlier_rmse = 100000000
+        reg_p2p = None
+        for init in inits:
+            _reg_p2p = o3.registration_icp(
+                pc1,
+                pc2,
+                radius,
+                init,
+                o3.TransformationEstimationPointToPoint(with_constraint=with_constraint, with_scaling=False),
+                o3.registration.ICPConvergenceCriteria(max_iteration=its))
+            if _reg_p2p.inlier_rmse < inlier_rmse:
+                reg_p2p = _reg_p2p
         pc1.transform(reg_p2p.transformation)
         rotation = reg_p2p.transformation[:-1, :-1]
         translation = reg_p2p.transformation[:-1, -1]
@@ -76,7 +88,11 @@ class ConstrainedICPRegistration():
 
                         # if track.detections[i+1].num_interior > self.min_pts_thresh:
                         # ICP
-                        start_registered, cano1_in_t1, translation, rotation = self.icp_p2point(start_in_t1, cano1_in_t1)
+                        start_registered, cano1_in_t1, translation, rotation = self.icp_p2point(
+                            start_in_t1,
+                            cano1_in_t1,
+                            track.detections[i+increment].translation,
+                            track.detections[i+increment].lwh)
                         track.detections[i+increment].update_after_registration(torch.from_numpy(start_registered), translation, rotation)
                         '''else:
                             traj_in_t0 = torch.atleast_2d(track._get_traj(i=i))
