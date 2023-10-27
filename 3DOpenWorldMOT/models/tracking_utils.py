@@ -354,21 +354,22 @@ class Detection():
 def get_rotated_center_and_lwh(pc, rot):
     # translation = get_center(pc)
     # translation = translation.cpu()
+    ''' 
     translation = get_center(pc)
-    ego_SE3_object = SE3(rotation=rot.cpu().numpy(), translation=translation.cpu().numpy())
+    ego_SE3_object = SE3(rotation=rot.cpu().numpy(), translation=translation)
     pc_obj = ego_SE3_object.inverse().transform_point_cloud(pc)
     lwh = get_lwh(pc_obj)
     
-    '''
+    ''' 
     pc = pc @ rot.T # + (-translation.double() @ rot.T)
-    translation = get_center(pc)
+    translation = torch.from_numpy(get_center(pc))
     translation = translation.to(pc.device)
     # rot.T @ translation not needed since taken from already rotated pc
     pc = pc + (-translation.double())
     lwh = get_lwh(pc)
     # but translatoin needs to be rotated to get correct translation
     translation = rot.T @ translation.double()
-    '''
+    
     return lwh, translation
 
 
@@ -425,10 +426,11 @@ def get_propagated_bbs(propagated_pos_tracks, get_trans=True, get_lwh=True, _2d=
 
 
 def get_center(canonical_points):
-    # points_c_time = canonical_points
-    # mins, maxs = points_c_time.min(dim=0), points_c_time.max(dim=0)
-    # translation = (maxs.values + mins.values)/2
-    translation = torch.mean(canonical_points, dim=0) # np.median(canonical_points.cpu().numpy(), axis=0)
+    points_c_time = canonical_points
+    mins, maxs = points_c_time.min(dim=0), points_c_time.max(dim=0)
+    translation = (maxs.values + mins.values)/2
+    # translation = torch.mean(canonical_points, dim=0) # np.median(canonical_points.cpu().numpy(), axis=0)
+    # translation = np.median(canonical_points.cpu().numpy(), axis=0)
     return translation
 
 
@@ -658,7 +660,7 @@ def to_feather(detections, log_id, out_path, split, rank, precomp_dets=False, na
 
             # quaternion rotation around z axis
             # quat = torch.tensor([torch.cos(det.alpha/2), 0, 0, torch.sin(det.alpha/2)]).numpy()
-            quat = Rotation.from_euler('z', self.alpha).as_quat)
+            quat = Rotation.from_euler('z', det.alpha).as_quat()
             # REGULAR_VEHICLE = only dummy class
             values = [
                 det.translation[0].item(),
