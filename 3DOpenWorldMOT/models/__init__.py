@@ -7,6 +7,7 @@ from .SimpleGraph import SimpleGraph, SimpleGraphLoss
 from .SimpleTracker import SimpleTracker
 from .OracleTracker import OnlineOracleTracker, OfflineOracleTracker
 from .icp_registration import ICPRegistration
+from .constrained_icp import ConstrainedICPRegistration
 from .flow_registration import FlowRegistration
 from .collapse import Collapser
 
@@ -28,7 +29,8 @@ _tracker_factory = {
     'OfflineOracleTracker': OfflineOracleTracker}
 _registration_factory = {
     'ICP': ICPRegistration,
-    'Flow': FlowRegistration
+    'Flow': FlowRegistration,
+    'ConstICP': ConstrainedICPRegistration
 }
 _collaps_factory = {
     'SimpleCollaps': Collapser,
