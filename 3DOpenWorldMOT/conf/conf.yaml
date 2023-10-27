@@ -80,3 +80,5 @@ detection_options:
   overlap: 5
   num_interior: 0
   precomp_dets: False
+  kNN: 0
+  threshold: 0.5
