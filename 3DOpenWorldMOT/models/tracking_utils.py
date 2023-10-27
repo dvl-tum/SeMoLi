@@ -323,6 +323,11 @@ class Detection():
     def rotation(self):
         return self.rot
 
+    def update_after_registration(self, canonical_points_registered):
+        self.lwh, self.translation = self.get_rotated_center_and_lwh(canonical_points_registered, self.rot)
+        self.num_interior = canonical_points_registered.shape[0]
+        self.pts_density = ((self.lwh[0] * self.lwh[1] * self.lwh[2]) / self.num_interior).item()
+
     def get_alpha_rot_t0_to_t1(self, t0=None, t1=None, trajectory=None, traj_t0=None, traj_t1=None):
         rot, alpha = get_alpha_rot_t0_to_t1(t0, t1, trajectory, traj_t0, traj_t1, median=self.median)
         return rot, alpha
