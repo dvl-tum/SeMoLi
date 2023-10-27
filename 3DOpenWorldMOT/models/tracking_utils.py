@@ -242,6 +242,12 @@ class Track():
             canonical_points = self._convert_city(t0, av2_loader, canonical_points)
         # print(self.log_id, self.track_id, t1, t0, canonical_points[0])
         return canonical_points
+        
+    def t1_SE3_t0(self,t0, t1, av2_loader):
+        city_SE3_t0 = av2_loader.get_city_SE3_ego(self.log_id, t0)
+        city_SE3_t1 = av2_loader.get_city_SE3_ego(self.log_id, t1)
+        t1_SE3_t0 = city_SE3_t1.inverse().compose(city_SE3_t0)
+        return t1_SE3_t0
 
     def _convert_time(self, t0, t1, av2_loader, points):
         city_SE3_t0 = av2_loader.get_city_SE3_ego(self.log_id, t0)
@@ -323,8 +329,12 @@ class Detection():
     def rotation(self):
         return self.rot
 
-    def update_after_registration(self, canonical_points_registered):
-        self.lwh, self.translation = self.get_rotated_center_and_lwh(canonical_points_registered, self.rot)
+    def update_after_registration(self, canonical_points_registered, translation, rotation):
+        # new_SE3_old = SE3(rotation=rotation, translation=translation)
+        # ego_SE3_old = SE3(rotation=self.rot.cpu().numpy(), translation=self.translation.cpu().numpy())
+        # chained = ego_SE3_old.compose(new_SE3_old.inverse())
+        # self.rot = torch.from_numpy(chained.rotation).to(self.rot.device)
+        self.lwh, self.translation = self.get_rotated_center_and_lwh(canonical_points_registered, self.rot) #, translation=torch.from_numpy(chained.translation).to(self.rot.device))
         self.num_interior = canonical_points_registered.shape[0]
         self.pts_density = ((self.lwh[0] * self.lwh[1] * self.lwh[2]) / self.num_interior).item()
 
@@ -332,10 +342,10 @@ class Detection():
         rot, alpha = get_alpha_rot_t0_to_t1(t0, t1, trajectory, traj_t0, traj_t1, median=self.median)
         return rot, alpha
     
-    def get_rotated_center_and_lwh(self, canonical_points, rot=None, trajectory=None, traj_t0=None, traj_t1=None):
+    def get_rotated_center_and_lwh(self, canonical_points, rot=None, trajectory=None, traj_t0=None, traj_t1=None, translation=None):
         if rot is None:
             rot, _ = self.get_alpha_rot_t0_to_t1(0, 1, trajectory, traj_t0, traj_t1, median=self.median)
-        lwh, translation = get_rotated_center_and_lwh(canonical_points, rot)
+        lwh, translation = get_rotated_center_and_lwh(canonical_points, rot, translation)
         return lwh, translation
     
     def _get_propagated_bbs(self, propagated_pos=None):
@@ -362,11 +372,12 @@ class Detection():
         return city_SE3_t0.transform_point_cloud(canonical_points)
 
 
-def get_rotated_center_and_lwh(pc, rot):
+def get_rotated_center_and_lwh(pc, rot, translation=None):
     # translation = get_center(pc)
     # translation = translation.cpu()
-     
     translation = get_center(pc)
+    if type(translation) == np.ndarray:
+        translation = torch.from_numpy(translation).to(pc.device)
     ego_SE3_object = SE3(rotation=rot.cpu().numpy(), translation=translation.cpu().numpy())
     if type(pc) == torch.Tensor:
         pc_obj = ego_SE3_object.inverse().transform_point_cloud(pc.cpu().numpy())
@@ -374,7 +385,6 @@ def get_rotated_center_and_lwh(pc, rot):
     else:
         pc_obj = ego_SE3_object.inverse().transform_point_cloud(pc)
     lwh = get_lwh(pc_obj)
-    
     ''' 
     pc = pc @ rot.T # + (-translation.double() @ rot.T)
     translation = get_center(pc)
@@ -454,8 +464,8 @@ def get_center(canonical_points):
     points_c_time = canonical_points
     mins, maxs = points_c_time.min(dim=0), points_c_time.max(dim=0)
     translation = (maxs.values + mins.values)/2
-    # translation = torch.mean(canonical_points, dim=0) # np.median(canonical_points.cpu().numpy(), axis=0)
-    # translation = np.median(canonical_points.cpu().numpy(), axis=0)
+    translation = torch.mean(canonical_points, dim=0) # np.median(canonical_points.cpu().numpy(), axis=0)
+    translation = np.median(canonical_points.cpu().numpy(), axis=0)
     return translation
 
 

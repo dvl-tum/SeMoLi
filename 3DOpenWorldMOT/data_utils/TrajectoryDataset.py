@@ -116,7 +116,6 @@ class TrajectoryDataset(PyGDataset):
             self.already_evaluated = [os.path.basename(os.path.dirname(p)) for p in glob.glob(f'{detection_out_path}/*/{detection_set}/*/*')]
         else:
             self.already_evaluated = list()
-
         self.class_dict = ARGOVERSE_CLASSES if 'Argo' in self.data_dir else WAYMO_CLASSES
         super().__init__()
         

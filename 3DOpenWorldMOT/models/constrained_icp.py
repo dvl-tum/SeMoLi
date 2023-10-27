@@ -11,14 +11,14 @@ class ConstrainedICPRegistration():
         self.min_pts_thresh = min_pts_thresh
         self.registration_len_thresh = registration_len_thresh
 
-    def load_pointclouds(self, pc1, pc2, return_numpy=False):
-        pc1_centroid = pc1.mean(axis=0)
+    def load_pointclouds(self, pt1, pt2, return_numpy=False):
+        pc1_centroid = pt1.mean(axis=0)
         if return_numpy:
-            return pc1, pc2, pc1_centroid
+            return pt1, pt2, pc1_centroid
         pc1 = o3.geometry.PointCloud()
-        pc1.points = o3.Vector3dVector(pc1)
+        pc1.points = o3.Vector3dVector(pt1)
         pc2 = o3.geometry.PointCloud()
-        pc2.points = o3.Vector3dVector(pc2)
+        pc2.points = o3.Vector3dVector(pt2)
         return pc1, pc2, pc1_centroid
     
     def get_centroid_init(self, pc1, pc2):
@@ -39,17 +39,22 @@ class ConstrainedICPRegistration():
             init,
             o3.TransformationEstimationPointToPoint(with_constraint=with_constraint, with_scaling=False),
             o3.registration.ICPConvergenceCriteria(max_iteration=its))
-        return reg_p2p.transformation
+        pc1.transform(reg_p2p.transformation)
+        rotation = reg_p2p.transformation[:-1, :-1]
+        translation = reg_p2p.transformation[:-1, -1]
+        return np.asarray(pc1.points), np.asarray(pc2.points), translation, rotation
 
     def register(self, max_interior_thresh=50):
         detections = dict()
         for j, track in enumerate(self.active_tracks):
+            print(len(track), self.registration_len_thresh, self.min_pts_thresh, track.max_num_interior, track.min_num_interior, len(track) > self.registration_len_thresh and track.min_num_interior >= self.min_pts_thresh)
             track_dets = list()
             # we start from timestep with most points and then go
             # from max -> end -> start -> max
             max_interior_idx = torch.argmax(torch.tensor([d.num_interior for d in track.detections])).item()
             max_interior = torch.max(torch.tensor([d.num_interior for d in track.detections])).item()
             max_interior_pc = torch.atleast_2d(track._get_canonical_points(i=max_interior_idx))
+            start_in_t0 = max_interior_pc
             if len(track) > self.registration_len_thresh and track.min_num_interior >= self.min_pts_thresh:
                 max_to_end = range(max_interior_idx, len(track)-1)
                 end_to_start = range(len(track)-1, 0, -1)
@@ -63,25 +68,16 @@ class ConstrainedICPRegistration():
                     for i in iterator:
                         # convert pc and trajectory t0 --> t1 from ego frame t=i to ego frame t=i+1
                         t0 = track.detections[i].timestamps[0, 0].item()
-                        t1 = track.detections[i+1].timestamps[0, 0].item()
+                        t1 = track.detections[i+increment].timestamps[0, 0].item()
                         start_in_t1 = track._convert_time(t0, t1, self.av2_loader, start_in_t0)
 
                         # get points in time t_1
-                        cano1_in_t1 = torch.atleast_2d(track._get_canonical_points(i=i+1))
+                        cano1_in_t1 = torch.atleast_2d(track._get_canonical_points(i=i+increment))
 
                         # if track.detections[i+1].num_interior > self.min_pts_thresh:
                         # ICP
-                        transform = self.icp_p2point(start_in_t1, cano1_in_t1)
-
-                        ### use registered solution, could be some rotation around z-axis
-                        start_registered = torch.atleast_2d(transform@start_in_t1)
-
-                        # store for later
-                        if SimilarityTransforms[i+increment] is None:
-                            SimilarityTransforms[i+increment] = transform
-                        
-                        track.detections[i+increment].update_after_registration(start_registered)
-                        
+                        start_registered, cano1_in_t1, translation, rotation = self.icp_p2point(start_in_t1, cano1_in_t1)
+                        track.detections[i+increment].update_after_registration(torch.from_numpy(start_registered), translation, rotation)
                         '''else:
                             traj_in_t0 = torch.atleast_2d(track._get_traj(i=i))
                             t0 = track.detections[i].timestamps[0, 0].item()
@@ -107,6 +103,5 @@ class ConstrainedICPRegistration():
                         # concatenate cano points at t+increment and registered points as
                         # point cloud for next timestamp / final point cloud
                         start_in_t0 = start_registered # torch.cat([start_registered, cano1_in_t1])
-
                 
         return detections
