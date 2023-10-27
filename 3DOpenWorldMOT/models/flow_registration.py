@@ -49,15 +49,20 @@ class FlowRegistration():
                         t1 = track.detections[i+1].timestamps[0, 0].item()
                         dt = self.ordered_timestamps.index(t1) - self.ordered_timestamps.index(t0)
 
-                        # move point cloud and get mean flow
-                        start_in_t0 += traj_in_t0[:, dt].median(dim=0).values
-                        flows.append(traj_in_t0[:, dt].median(dim=0).values)
-                        start_in_t1 = track._convert_time(t0, t1, self.av2_loader, start_in_t0)
+                        # getting object to ego in timestamp 0
+                        ego0_SE3_old = SE3(rotation=track.detections[i].rot.cpu().numpy(), translation=track.detections[i].translation)
+
+                        # getting object to ego in timestamp 1 using rotation from one and translated translation vector
+                        new_trans_t0 = torch.atleast_2d(track.detections[i].translation + traj_in_t0[:, dt].mean(dim=0).values)
+                        new_trans_t1 = track._convert_time(t0, t1, self.av2_loader, new_trans_t0)
+                        ego1_SE3_new = SE3(rotation=track.detections[i+1].rot.cpu().numpy(), translation=new_trans_t1)
+
+                        # going over object reference frame
+                        start_in_t1 = ego1_SE3_new.compose(ego0_SE3_old.inverse()).transform_point_cloud(start_in_t0)
 
                         # stack points
                         cano1_in_t1 = torch.atleast_2d(track._get_canonical_points(i=i+1))
                         start_in_t0 = torch.cat([start_in_t1, cano1_in_t1])
-
 
                     dets.append(copy.deepcopy(track.detections[-1]))
 
