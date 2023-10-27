@@ -5,10 +5,11 @@ import pytorch3d
 
 
 class ICPRegistration():
-    def __init__(self, active_tracks, av2_loader, min_pts_thresh):
+    def __init__(self, active_tracks, av2_loader, log_id, threshold=0.1, kNN=10, exp_weight_rot=0, registration_len_thresh=4, min_pts_thresh=25):
         self.active_tracks = active_tracks
         self.av2_loader = av2_loader
         self.min_pts_thresh = min_pts_thresh
+        self.registration_len_thresh = registration_len_thresh
 
     def load_pointclouds(self, pc1, pc2, return_numpy=False):
         pc1_centroid = pc1.mean(axis=0)
@@ -49,7 +50,7 @@ class ICPRegistration():
             max_interior_idx = torch.argmax(torch.tensor([d.num_interior for d in track.detections])).item()
             max_interior = torch.max(torch.tensor([d.num_interior for d in track.detections])).item()
             max_interior_pc = torch.atleast_2d(track._get_canonical_points(i=max_interior_idx))
-            if len(track) > 1 and max_interior > max_interior_thresh:
+            if len(track) > self.registration_len_thresh and track.min_num_interior >= self.min_pts_thresh:
                 max_to_end = range(max_interior_idx, len(track)-1)
                 end_to_start = range(len(track)-1, 0, -1)
                 start_to_max = range(0, max_interior_idx)
@@ -68,19 +69,19 @@ class ICPRegistration():
                         # get points in time t_1
                         cano1_in_t1 = torch.atleast_2d(track._get_canonical_points(i=i+1))
 
-                        if track.detections[i+1].num_interior > self.min_pts_thresh:
-                            # ICP
-                            transform = self.icp_p2point(start_in_t1, cano1_in_t1)
+                        # if track.detections[i+1].num_interior > self.min_pts_thresh:
+                        # ICP
+                        transform = self.icp_p2point(start_in_t1, cano1_in_t1)
 
-                            ### use registered solution, could be some rotation around z-axis
-                            start_registered = torch.atleast_2d(transform@start_in_t1)
+                        ### use registered solution, could be some rotation around z-axis
+                        start_registered = torch.atleast_2d(transform@start_in_t1)
 
-                            # store for later
-                            if SimilarityTransforms[i+increment] is None:
-                                SimilarityTransforms[i+increment] = transform
-                            
-                            track.detections[i+increment].update_after_registration(start_registered)
-                            
+                        # store for later
+                        if SimilarityTransforms[i+increment] is None:
+                            SimilarityTransforms[i+increment] = transform
+                        
+                        track.detections[i+increment].update_after_registration(start_registered)
+                        
                         '''else:
                             traj_in_t0 = torch.atleast_2d(track._get_traj(i=i))
                             t0 = track.detections[i].timestamps[0, 0].item()
