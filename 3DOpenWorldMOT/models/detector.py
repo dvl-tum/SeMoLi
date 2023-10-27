@@ -29,7 +29,8 @@ class Detector3D():
             rank=0,
             precomp_dets=False,
             kNN=0,
-            threshold=0.5) -> None:
+            threshold=0.5,
+            median=False) -> None:
         
         self.detections = dict()
         self.log_id = -1
@@ -44,6 +45,7 @@ class Detector3D():
         self.out_path = os.path.join(out_path,  f'rank_{self.rank}')
         self.threshold = threshold
         self.kNN = kNN
+        self.median = median
     
     def new_log_id(self, log_id):
         # save tracks to feather and reset variables
@@ -92,9 +94,6 @@ class Detector3D():
             gt_id = (torch.bincount(gt_instance_ids[clusters==c]).argmax()).item()
             gt_cat = (torch.bincount(gt_instance_cats[clusters==c]).argmax()).item()
 
-            # filter if cluster too small
-            if num_interior < self.num_interior:
-                continue
             # filter if 'junk' cluster
             if c == -1:
                 continue
@@ -106,6 +105,10 @@ class Detector3D():
             if self.kNN > 0:
                 point_cluster, mask = outlier_removal(point_cluster, threshold=self.threshold, kNN=self.kNN)
                 traj_cluster = traj_cluster[mask]
+                num_interior = torch.sum(clusters==c).item()
+            # filter if cluster too small
+            if num_interior < max(2, self.num_interior):
+                continue
 
             detections.append(Detection(
                 traj_cluster.cpu(),
@@ -115,7 +118,8 @@ class Detector3D():
                 num_interior=num_interior,
                 overlap=self.overlap,
                 gt_id=gt_id,
-                gt_cat=gt_cat))
+                gt_cat=gt_cat, 
+                median=self.median))
         
         self.detections[timestamps.cpu()[0, 0].item()] = detections
 

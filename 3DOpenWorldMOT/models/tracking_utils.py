@@ -274,7 +274,7 @@ class Track():
 
 
 class Detection():
-    def __init__(self, trajectory, canonical_points, timestamps, log_id, num_interior, overlap=None, gt_id=None, gt_id_box=None, rot=None, alpha=None, gt_cat=-10, lwh=None, translation=None, pts_density=None) -> None:
+    def __init__(self, trajectory, canonical_points, timestamps, log_id, num_interior, overlap=None, gt_id=None, gt_id_box=None, rot=None, alpha=None, gt_cat=-10, lwh=None, translation=None, pts_density=None, median=False) -> None:
         self.trajectory = trajectory
         self.canonical_points = canonical_points
         self.timestamps = torch.atleast_2d(timestamps)
@@ -287,6 +287,7 @@ class Detection():
         self.length = trajectory.shape[0] if len(trajectory.shape) < 3 else trajectory.shape[1]
         self.track_id = 0
         self.pts_density = pts_density
+        self.median = median
         
         if rot is not None:
             self.rot = rot
@@ -323,12 +324,12 @@ class Detection():
         return self.rot
 
     def get_alpha_rot_t0_to_t1(self, t0=None, t1=None, trajectory=None, traj_t0=None, traj_t1=None):
-        rot, alpha = get_alpha_rot_t0_to_t1(t0, t1, trajectory, traj_t0, traj_t1)
+        rot, alpha = get_alpha_rot_t0_to_t1(t0, t1, trajectory, traj_t0, traj_t1, median=self.median)
         return rot, alpha
     
     def get_rotated_center_and_lwh(self, canonical_points, rot=None, trajectory=None, traj_t0=None, traj_t1=None):
         if rot is None:
-            rot, _ = self.get_alpha_rot_t0_to_t1(0, 1, trajectory, traj_t0, traj_t1)
+            rot, _ = self.get_alpha_rot_t0_to_t1(0, 1, trajectory, traj_t0, traj_t1, median=self.median)
         lwh, translation = get_rotated_center_and_lwh(canonical_points, rot)
         return lwh, translation
     
@@ -359,30 +360,40 @@ class Detection():
 def get_rotated_center_and_lwh(pc, rot):
     # translation = get_center(pc)
     # translation = translation.cpu()
-    ''' 
+     
     translation = get_center(pc)
-    ego_SE3_object = SE3(rotation=rot.cpu().numpy(), translation=translation)
-    pc_obj = ego_SE3_object.inverse().transform_point_cloud(pc)
+    ego_SE3_object = SE3(rotation=rot.cpu().numpy(), translation=translation.cpu().numpy())
+    if type(pc) == torch.Tensor:
+        pc_obj = ego_SE3_object.inverse().transform_point_cloud(pc.cpu().numpy())
+        pc_obj = torch.from_numpy(pc_obj).to(pc.device)
+    else:
+        pc_obj = ego_SE3_object.inverse().transform_point_cloud(pc)
     lwh = get_lwh(pc_obj)
     
     ''' 
     pc = pc @ rot.T # + (-translation.double() @ rot.T)
-    translation = torch.from_numpy(get_center(pc))
+    translation = get_center(pc)
     translation = translation.to(pc.device)
     # rot.T @ translation not needed since taken from already rotated pc
     pc = pc + (-translation.double())
     lwh = get_lwh(pc)
     # but translatoin needs to be rotated to get correct translation
     translation = rot.T @ translation.double()
-    
+    '''
     return lwh, translation
 
 
-def get_alpha_rot_t0_to_t1(t0=None, t1=None, trajectory=None, traj_t0=None, traj_t1=None):
+def get_alpha_rot_t0_to_t1(t0=None, t1=None, trajectory=None, traj_t0=None, traj_t1=None, median=False):
     if trajectory is not None:
-        mean_flow = (trajectory[:, t1, :] - trajectory[:, t0, :]).mean(dim=0) # (trajectory[:, t1, :] - trajectory[:, t0, :]).median(dim=0)
+        if median:
+            mean_flow = (trajectory[:, t1, :] - trajectory[:, t0, :]).median(dim=0)
+        else:
+            mean_flow = (trajectory[:, t1, :] - trajectory[:, t0, :]).mean(dim=0) # (trajectory[:, t1, :] - trajectory[:, t0, :]).median(dim=0)
     else:
-        mean_flow = (traj_t1 - traj_t0).mean(dim=0) # (traj_t1 - traj_t0).median(dim=0)
+        if median:
+            mean_flow = (traj_t1 - traj_t0).median(dim=0)
+        else:
+            mean_flow = (traj_t1 - traj_t0).mean(dim=0) # (traj_t1 - traj_t0).median(dim=0)
     alpha = torch.atan2(mean_flow[1], mean_flow[0])
     rot = torch.tensor([
         [torch.cos(alpha), -torch.sin(alpha), 0],
@@ -403,6 +414,10 @@ def get_propagated_bbs(propagated_pos_tracks, get_trans=True, get_lwh=True, _2d=
         rot, alpha = get_alpha_rot_t0_to_t1(t_0, t_1, propagated_pos_tracks)
         rot = rot.to(propagated_pos_tracks.device)
         lwh, translation = get_rotated_center_and_lwh(propagated_pos_tracks[:, t, :].double(), rot)
+        # if type(translation) == torch.Tensor:
+        #     translation = translation.cpu()
+        # if type(alpha)  == torch.Tensor:
+        #     alpha = alpha.cpu()
         if _2d:
             lwh = lwh[:-1]
             translation = translation[:-1]

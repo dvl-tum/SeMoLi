@@ -62,8 +62,7 @@ class SimpleTracker():
             # associate
             active_tracks = self.associate_timestamp(
                 dets,
-                timestamp=time,
-                last=len(detections)==i+1)
+                timestamp=time)
         
         self.active_tracks += self.inactive_tracks
         if self.tps+self.fps and self.tps+self.fns:

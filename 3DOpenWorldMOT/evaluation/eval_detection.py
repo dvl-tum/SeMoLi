@@ -647,9 +647,9 @@ def eval_detection(
     dts_orig = dts #copy.deepcopy(dts)
     smallest = 0.3 if is_pp else 0.2
     for affinity, tp_thresh, threshs, n_jobs in zip(
-        ['CENTER', 'IoU3D', 'IoU2D', 'SedIoU'], [2.0, 0.6, 0.6, 0.6], [(0.5, 1.0, 2.0, 4.0), (smallest, 0.4, 0.6, 0.8), (0.2, 0.4, 0.6, 0.99), (0.2, 0.4, 0.6, 0.8)], [8, 1, 1, 8]):
+        ['CENTER', 'IoU3D', 'IoU2D', 'SegIoU'], [2.0, 0.6, 0.6, 0.6], [(0.5, 1.0, 2.0, 4.0), (smallest, 0.4, 0.6, 0.8), (0.2, 0.4, 0.6, 0.99), (0.2, 0.4, 0.6, 0.8)], [8, 1, 1, 8]):
         
-        if affinity != 'IoU3D':
+        if affinity != 'IoU3D': # 'SegIoU':
             continue
 
         # Evaluate instances.

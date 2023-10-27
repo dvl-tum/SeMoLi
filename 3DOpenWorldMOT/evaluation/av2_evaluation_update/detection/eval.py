@@ -378,6 +378,6 @@ def summarize_metrics(
         summary.loc[category] = np.array([mean_average_precisions, *tp_errors, cds])
     print('\t WEIGHTED AVERAGE PRECISIONS ,', weighted_average_precisions.values/all_gts)
     print('\t WEIGHTED PRECISIONS ,', weighted_precisions.values/all_gts)
-    print('\t WEIGHTED RECALLS ,', weighted_recalls.values/all_gt)
+    print('\t WEIGHTED RECALLS ,', weighted_recalls.values/all_gts)
     # Return the summary.
     return summary, fps, all_results_df
