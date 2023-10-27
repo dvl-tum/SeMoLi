@@ -35,9 +35,9 @@ class MOT3DTrackDataset:
             elif split == 'train' and 'Argo' in self.dataset_path:
                 self.data = ['00a6ffc1-6ce9-3bc3-a060-6006e9893a1a']
             elif split == 'val':
-                self.data = ['809159138284604331']
+                self.data = ['10023947602400723454']#['809159138284604331']
             else:
-                self.data = ['809159138284604331']
+                self.data = ['10023947602400723454'] #['809159138284604331']
         else:
             # self.seqs = get_seq_list(
             self.data = get_seq_list_fixed_val(

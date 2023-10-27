@@ -344,7 +344,9 @@ def track(rank, cfg, world_size):
             w_change_thresh=cfg.tracker_options.w_change_thresh, 
             inact_patience=cfg.tracker_options.inact_patience,
             use_temporal_weight_track=cfg.tracker_options.use_temporal_weight_track,
-            exp_weight_rot=cfg.tracker_options.exp_weight_rot,)
+            exp_weight_rot=cfg.tracker_options.exp_weight_rot,
+            registration_len_thresh=cfg.tracker_options.registration_len_thresh,
+            min_pts_thresh=cfg.tracker_options.min_pts_thresh)
         detections = None
         tracks = None
         if cfg.tracker_options.convert_initial:

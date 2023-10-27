@@ -857,6 +857,8 @@ def train(rank, cfg, world_size):
     
     if rank == 0 or not cfg.multi_gpu:
         if os.path.isdir(experiment_dir + name) and not cfg.continue_from_existing:
+            # print('whut?')
+            # quit()
             shutil.rmtree(experiment_dir + name)
         if not cfg.just_eval and os.path.isdir(str(checkpoints_dir) + name) and not cfg.continue_from_existing:
             shutil.rmtree(str(checkpoints_dir) + name)

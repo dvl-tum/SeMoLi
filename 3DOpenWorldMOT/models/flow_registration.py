@@ -29,6 +29,7 @@ class FlowRegistration():
     def register(self, visualize=False):
         detections = dict()
         for j, track in enumerate(self.active_tracks.values()):
+            print(track.min_num_interior, self.min_pts_thresh)
             # only do registration if criteria fullfilled
             if track.min_num_interior >= self.min_pts_thresh and \
                 len(track) >= self.registration_len_thresh:
@@ -49,8 +50,8 @@ class FlowRegistration():
                         dt = self.ordered_timestamps.index(t1) - self.ordered_timestamps.index(t0)
 
                         # move point cloud and get mean flow
-                        start_in_t0 += traj_in_t0[:, dt]
-                        flows.append(traj_in_t0[:, dt].mean(dim=0))
+                        start_in_t0 += traj_in_t0[:, dt].median(dim=0).values
+                        flows.append(traj_in_t0[:, dt].median(dim=0).values)
                         start_in_t1 = track._convert_time(t0, t1, self.av2_loader, start_in_t0)
 
                         # stack points
@@ -84,9 +85,9 @@ class FlowRegistration():
                             track.detections[i-1].translation = translation #dets[i-1].translation #translation
                             track.detections[i-1].num_interior = num_interior
 
-            # track.fill_detections(self.av2_loader, self.ordered_timestamps, max_time=5)
-            if visualize:
-                self.visualize(dets, track.detections, track.track_id, start_in_t0, self.log_id)
+                # track.fill_detections(self.av2_loader, self.ordered_timestamps, max_time=5)
+                if visualize:
+                    self.visualize(dets, track.detections, track.track_id, start_in_t0, self.log_id)
             track_dets = track.detections
 
             detections[j] = track_dets
