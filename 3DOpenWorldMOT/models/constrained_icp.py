@@ -46,8 +46,8 @@ class ConstrainedICPRegistration():
 
     def register(self, max_interior_thresh=50):
         detections = dict()
-        for j, track in enumerate(self.active_tracks):
-            print(len(track), self.registration_len_thresh, self.min_pts_thresh, track.max_num_interior, track.min_num_interior, len(track) > self.registration_len_thresh and track.min_num_interior >= self.min_pts_thresh)
+        for j, track in enumerate(self.active_tracks.values()):
+            #print(len(track), self.registration_len_thresh, self.min_pts_thresh, track.max_num_interior, track.min_num_interior, len(track) > self.registration_len_thresh and track.min_num_interior >= self.min_pts_thresh)
             track_dets = list()
             # we start from timestep with most points and then go
             # from max -> end -> start -> max
