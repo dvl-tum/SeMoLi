@@ -524,7 +524,9 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
             overlap=cfg.detection_options.overlap,
             av2_loader=val_data.loader,
             rank=rank,
-            precomp_dets=cfg.detection_options.precomp_dets)
+            precomp_dets=cfg.detection_options.precomp_dets,
+            kNN=cfg.detection_options.kNN,
+            threshold=cfg.detection_options.threshold)
 
     with torch.no_grad():
         if is_neural_net:

@@ -70,14 +70,12 @@ class SimpleTracker():
             self.logger.info(f'TPA: {self.tps}, FNA: {self.fns}, FPS: {self.fps}, Pr: {self.tps/(self.tps+self.fps)}, Re: {self.tps/(self.tps+self.fns)}')
         else:
             self.logger.info(f'TPA: {self.tps}, FNA: {self.fns}, FPS: {self.fps}')
-        self.tps = 0
-        self.fns = 0
-        self.fps = 0
+        self.tps, self.fns, self.fps = 0, 0, 0
         print(f'Before len thresh {len(self.active_tracks)}')
-        print([len(t) for t in active_tracks])
+        # print([len(t) for t in active_tracks])
         self.active_tracks = {t.track_id: t for t in active_tracks if len(t) > self.len_thresh}
         print(f'After len thresh {len(self.active_tracks)}')
-        #for track in self.active_tracks:    
+        # for track in self.active_tracks:    
         #    track.fill_detections(self.av2_loader, self.ordered_timestamps.numpy().tolist(), self.max_time)
         
         return self.active_tracks
@@ -86,11 +84,9 @@ class SimpleTracker():
             self,
             detections,
             matching='hungarian',
-            timestamp=None,
-            alpha=0.0,
-            make_cost_mat_dist=False,
-            last=False):
+            timestamp=None):
 
+        # if last detections where too long ago set all inactive
         out_of_bounds = False
         if len(self.active_tracks):
             t0 = torch.where(
@@ -112,6 +108,7 @@ class SimpleTracker():
                 self.track_id += 1
             return self.active_tracks
         
+        # if no detections increase inactive count and set inactive
         if not len(detections):
             # move all tracks to inactive track
             for tr in self.active_tracks:
@@ -143,29 +140,13 @@ class SimpleTracker():
             [self.inactive_tracks[i].detections[-1].gt_cat for i in inactive_tracks_to_use]
  
         # match detections and tracks
-        if matching == 'greedy':
-            re_activate, matched_tracks, matched_dets, tps, fps = self.greedy(
+        re_activate, matched_tracks, matched_dets, tps, fps = self.hungarian(
                 cost_mat,
                 num_act,
                 detections,
                 inactive_tracks_to_use,
-                active_first=True,
-                timestamp=timestamp,
                 gt_id_tracks=gt_id_tracks,
                 gt_id_detections=gt_id_detections)
-            
-        elif matching == 'hungarian':
-            re_activate, matched_tracks, matched_dets, tps, fps = self.hungarian(
-                    cost_mat,
-                num_act,
-                detections,
-                inactive_tracks_to_use,
-                active_first=True,
-                timestamp=timestamp,
-                gt_id_tracks=gt_id_tracks,
-                gt_id_detections=gt_id_detections,
-                gt_cat_tracks=gt_cat_tracks,
-                gt_cat_detections=gt_cat_detections)
         
         fns = gt_matches - tps
         self.tps += tps
@@ -226,12 +207,8 @@ class SimpleTracker():
             num_act,
             detections,
             inactive_tracks_to_use,
-            active_first=False,
-            timestamp=None,
             gt_id_tracks=None,
-            gt_id_detections=None,
-            gt_cat_tracks=None,
-            gt_cat_detections=None):
+            gt_id_detections=None):
         re_activate = list()
         matched_tracks = list()
         matched_dets = list()
@@ -261,58 +238,7 @@ class SimpleTracker():
         
         return re_activate, matched_tracks, matched_dets, tps, fps
 
-    def greedy(
-            self,
-            cost_mat,
-            num_act,
-            detections,
-            inactive_tracks_to_use,
-            active_first=False,
-            timestamp=None,
-            gt_id_tracks=None,
-            gt_id_detections=None):
-        
-        cost_mat = cost_mat.t
-
-        re_activate = list()
-        matched_tracks = list()
-        matched_dets = list()
-        fps = 0
-        tps = 0
-
-        # greedy matching: first match the one with lowest cost
-        if active_first:
-            act = torch.argsort(torch.min(cost_mat[:num_act], dim=1).values)
-            inact = torch.argsort(torch.min(cost_mat[num_act:], dim=1).values) + num_act
-            min_idx = torch.cat([act, inact])
-        else:
-            min_idx = torch.argsort(torch.min(cost_mat, dim=1).values)
-
-        for idx in min_idx:
-            # check if active or inactive track and get threshold
-            act = idx < num_act
-            thresh = self.a_threshold if act else self.i_threshold
-            det_traj = torch.argmin(cost_mat[idx])
-            # match only of cost smaller than threshold
-
-            if cost_mat[idx, det_traj] < thresh:
-                matched_dets.append(det_traj.item())
-                # if matched to inactive track, reactivate
-                if act: 
-                    self.active_tracks[idx].add_detection(detections[det_traj])
-                    matched_tracks.append(idx.item())
-                else:
-                    inactive_idx = inactive_tracks_to_use[idx-num_act]
-                    self.inactive_tracks[inactive_idx].add_detection(detections[det_traj])
-                    re_activate.append(inactive_idx)
-                tps = tps + 1 if gt_id_tracks[idx] == gt_id_detections[det_traj] else tps
-                fps = fps + 1 if gt_id_tracks[idx] != gt_id_detections[det_traj] else fps
-                # set costs of all other tracks to det to 1000 to not get matches again
-                cost_mat[:, det_traj] = 10000
-
-        return re_activate, matched_tracks, matched_dets, tps, fps
-
-    def _calculate_traj_dist(self, detections, timestamp, alpha=0.0, dist='L2Center', visualize=False): # L2Center, 2dIoU
+    def _calculate_traj_dist(self, detections, timestamp, visualize=False): # L2Center, 2dIoU
         # get detections and canonical points of last x frames 
         # and convert to current time for all active tracks
         trajs = [t._get_whole_traj_and_convert_time(
@@ -366,7 +292,7 @@ class SimpleTracker():
             torch.tile(det_cano_points[i].unsqueeze(1), (1, det_trajs[i].shape[1], 1)) + det_trajs[i] \
                 for i in range(len(det_trajs))]
         propagared_bbs_dets = [
-            get_propagated_bbs(ppd, _2d=True, get_corners=True) for ppd in propagated_pos_dets]
+            get_propagated_bbs(ppd, _2d=True) for ppd in propagated_pos_dets]
 
         # initialize position distances and trajectory distances
         chamferDist = pytorch3d.loss.chamfer_distance
@@ -398,17 +324,11 @@ class SimpleTracker():
                 h_change_2d[k, i] = (torch.abs(propagared_bbs_tracks[i]['lwh'][:, 1]-\
                                       propagared_bbs_dets[k]['lwh'][:traj_lens[i], 1]).float()).mean()
                 l2_center_2d[k, i] = (weight * self.pdist(propagared_bbs_tracks[i]['translation'], 
-                                       propagared_bbs_dets[k]['translation'][:traj_lens[i]])).mean()
-                
-                # bb_iou_2d[k, i] = 1 - (weight * torch.diagonal(torchvision.ops.box_iou(propagared_bbs_tracks[i]['corners'], 
-                #                        propagared_bbs_dets[k]['corners'][:traj_lens[i]]))).mean()
-                
+                                       propagared_bbs_dets[k]['translation'][:traj_lens[i]])).mean()                
                 bb_iou_2d[k, i] = 1 - (weight * IoUs2D(propagared_bbs_tracks[i]['xylwa'].unsqueeze(0), 
                                        propagared_bbs_dets[k]['xylwa'][:traj_lens[i]].unsqueeze(0))).sum()
                 cd_dist_track = chamferDist(
                         propagated_pos_tracks[i].permute(1, 0, 2), propagated_pos_dets[k][:, :traj_lens[i]].permute(1, 0, 2))[0]
-                # for t in range(traj_lens[i]):
-                #     print(propagated_pos_tracks[i].permute(1, 0, 2)[t].mean(), propagated_pos_dets[k][:, :traj_lens[i]].permute(1, 0, 2)[t].mean())
                 mean_dist[k, i] = (weight * self.pdist(propagated_pos_tracks[i].permute(1, 0, 2).mean(dim=1),
                         propagated_pos_dets[k][:, :traj_lens[i]].permute(1, 0, 2).mean(dim=1))).mean()
                 cd_dists[k, i] = cd_dist_track
@@ -418,15 +338,6 @@ class SimpleTracker():
                 f'/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/Visualization_tracks/frame_{timestamp}.jpg', dpi=1000)
             plt.close()
 
-        if dist == 'cd':
-            dists = cd_dists
-        elif dist == 'mean_point':
-            dists = mean_dist
-        elif dist == '2dIoU':
-            dists = bb_iou_2d
-        elif dist == 'L2Center':
-            dists = l2_center_2d
-        
         l_mask = torch.where(l_change_2d > self.l_change_thresh)
         h_mask = torch.where(h_change_2d > self.w_change_thresh)
         bb_iou_2d[l_mask[0], l_mask[1]] = torch.nan
