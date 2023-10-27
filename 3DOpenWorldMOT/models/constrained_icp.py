@@ -4,7 +4,7 @@ import torch
 import pytorch3d
 
 
-class ICPRegistration():
+class ConstrainedICPRegistration():
     def __init__(self, active_tracks, av2_loader, log_id, threshold=0.1, kNN=10, exp_weight_rot=0, registration_len_thresh=4, min_pts_thresh=25):
         self.active_tracks = active_tracks
         self.av2_loader = av2_loader
