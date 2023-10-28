@@ -8,7 +8,7 @@ from .SimpleTracker import SimpleTracker
 from .OracleTracker import OnlineOracleTracker, OfflineOracleTracker
 from .icp_registration import ICPRegistration
 from .constrained_icp import ConstrainedICPRegistration
-from .flow_registration import FlowRegistration
+from .flow_registration import FlowRegistration, FlowRegistration_From_Max
 from .collapse import Collapser
 
 _model_factory = {
@@ -30,7 +30,8 @@ _tracker_factory = {
 _registration_factory = {
     'ICP': ICPRegistration,
     'Flow': FlowRegistration,
-    'ConstICP': ConstrainedICPRegistration
+    'ConstICP': ConstrainedICPRegistration,
+    'FlowMax': FlowRegistration_From_Max
 }
 _collaps_factory = {
     'SimpleCollaps': Collapser,
