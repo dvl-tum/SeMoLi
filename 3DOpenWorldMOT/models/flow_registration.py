@@ -36,6 +36,7 @@ class FlowRegistration():
                 # we start from t=0
                 flows = list()
                 dets = list()
+                ego1_SE3_ego0 = list()
                 if len(track) > 1:
                     start_in_t0 = torch.atleast_2d(track._get_canonical_points(i=0))
                     for i in range(len(track)-1):
@@ -53,9 +54,10 @@ class FlowRegistration():
                         ego0_SE3_old = SE3(rotation=track.detections[i].rot.cpu().numpy(), translation=track.detections[i].translation)
 
                         # getting object to ego in timestamp 1 using rotation from one and translated translation vector
-                        new_trans_t0 = torch.atleast_2d(track.detections[i].translation + traj_in_t0[:, dt].mean(dim=0).values)
-                        new_trans_t1 = track._convert_time(t0, t1, self.av2_loader, new_trans_t0)
+                        new_trans_t0 = torch.atleast_2d(track.detections[i].translation + traj_in_t0[:, dt].mean(dim=0))
+                        new_trans_t1 = track._convert_time(t0, t1, self.av2_loader, new_trans_t0).squeeze().numpy()
                         ego1_SE3_new = SE3(rotation=track.detections[i+1].rot.cpu().numpy(), translation=new_trans_t1)
+                        ego1_SE3_ego0.append(ego1_SE3_new.compose(ego0_SE3_old.inverse()))
 
                         # going over object reference frame
                         start_in_t1 = ego1_SE3_new.compose(ego0_SE3_old.inverse()).transform_point_cloud(start_in_t0)
@@ -82,8 +84,9 @@ class FlowRegistration():
                         for i in range(len(track)-1, 0, -1):
                             t0 = track.detections[i].timestamps[0, 0].item()
                             t1 = track.detections[i-1].timestamps[0, 0].item()
-                            start_in_t0 = track._convert_time(t0, t1, self.av2_loader, start_in_t0)
-                            start_in_t0 -= flows[i-1]
+                            start_in_t0 = ego1_SE3_ego0[i-1].inverse().transform_point_cloud(start_in_t0)
+                            # start_in_t0 = track._convert_time(t0, t1, self.av2_loader, start_in_t0)
+                            # start_in_t0 -= flows[i-1]
                             lwh, translation = get_rotated_center_and_lwh(start_in_t0, track.detections[i-1].rot)
                             # setting last detection
                             track.detections[i-1].lwh = lwh
