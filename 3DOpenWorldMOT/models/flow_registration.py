@@ -41,31 +41,26 @@ class FlowRegistration():
             if track.min_num_interior >= self.min_pts_thresh and \
                 len(track) >= self.registration_len_thresh:
                 print(track.min_num_interior, self.min_pts_thresh, len(track), self.registration_len_thresh, track.min_num_interior >= self.min_pts_thresh and len(track) >= self.registration_len_thresh)
-                _pcs = [track._get_canonical_points(i=i) for i in range(len(track))]
-                _trajs = [track._get_traj(i=i) for i in range(len(track))]
+                pcs = [track._get_canonical_points(i=i) for i in range(len(track))]
+                trajs = [track._get_traj(i=i) for i in range(len(track))]
                 times = [d.timestamps[0, 0].item() for d in track.detections]
-                ego_se3_objs = [SE3(rotation=get_rot(d.alpha), translation=d.translation) for d in track.detections]
-                pcs = [track._convert_time(times[i], times[-1], self.av2_loader, _pcs[i]) for i in range(len(track))]
-                trajs = [track._convert_time(times[i], times[-1], self.av2_loader, _pcs[i].unsqueeze(1) + _trajs[i]) for i in range(len(track))]
-                trajs = [trajs[i] - pcs[i].unsqueeze(1) for i in range(len(track))]
+                ego_SE3_objs = [SE3(rotation=self.get_rot(d.alpha).numpy(), translation=d.translation.numpy()) for d in track.detections]
+                pcs_obj = [ego_SE3_objs[i].inverse().transform_point_cloud(pcs[i].numpy()) for i in range(len(track))]
+                trajs_obj = [ego_SE3_objs[i].inverse().transform_point_cloud(pcs[i].unsqueeze(1) + trajs[i]) for i in range(len(track))]
 
                 # we start from t=0
-                alphas = list()
                 dets = list()
                 old_SE3_news = list()
                 translation_old = None
                 alpha_old = None
                 registered_pc = pcs[0]
                 if len(track) > 1:
-                    start_in_t0 = torch.atleast_2d(track._get_canonical_points(i=0))
+                    start_in_t0 = pcs_obj[0]
                     for i in range(len(track)-1):
                         dets.append(copy.deepcopy(track.detections[i]))
                         
-                        _, alpha_1 = get_alpha_rot_t0_to_t1(0, 1, trajs[i+1])
-                        _, alpha_0 = get_alpha_rot_t0_to_t1(0, 1, trajs[i])
-                        if i == 0:
-                            alphas.append(alpha_0)
-                        alphas.append(alpha_1)
+                        _, alpha_1 = get_alpha_rot_t0_to_t1(0, 1, trajs_obj[i+1])
+                        _, alpha_0 = get_alpha_rot_t0_to_t1(0, 1, trajs_obj[i])
                         alpha = alpha_1 - alpha_0
 
                         t0 = self.ordered_timestamps.index(track.detections[i].timestamps[0, 0].item())
@@ -101,8 +96,8 @@ class FlowRegistration():
                     if registered_pc.shape[0] != 0:
                         # setting last detection
                         rotation = torch.tensor([
-                            [torch.cos(alphas[-1]), -torch.sin(alphas[-1]), 0],
-                            [torch.sin(alphas[-1]), torch.cos(alphas[-1]), 0],
+                            [1, 0, 0],
+                            [0, 1, 0],
                             [0, 0, 1]]).double()
 
                         lwh, translation = get_rotated_center_and_lwh(registered_pc, rotation, median=False)
@@ -113,7 +108,7 @@ class FlowRegistration():
                         track.detections[-1].num_interior = num_interior
                         for i in range(len(track)-1, 0, -1):
                             translation = old_SE3_news[i-1].transform_point_cloud(translation)
-                            _translation = track._convert_time(times[-1], times[i-1], self.av2_loader, translation).squeeze()
+                            _translation = ego_SE3_objs[i].transform_point_cloud(translation).squeeze()
                             # setting last detection
                             track.detections[i-1].lwh = lwh
                             track.detections[i-1].translation = _translation #dets[i-1].translation #translation
@@ -122,7 +117,7 @@ class FlowRegistration():
                 # track.fill_detections(self.av2_loader, self.ordered_timestamps, max_time=5)
                 if visualize:
                     self.visualize(dets, track.detections, track.track_id, registered_pc, self.log_id)
-                # quit()
+                quit()
             track_dets = track.detections
 
             detections[j] = track_dets
@@ -336,4 +331,3 @@ class FlowRegistration_From_Max(FlowRegistration):
             facecolor='none',
             transform=t)
         ax.add_patch(rect)
-
