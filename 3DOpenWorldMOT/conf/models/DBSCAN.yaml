@@ -2,7 +2,7 @@
 model_name: DBSCAN
 hyperparams:
     thresh: 6
-    min_samples: 0
+    min_samples: 10
     input: traj_pos # pos # traj
     dataset: ${data.dataset_name}
     flow_thresh: 0.0 #1.0

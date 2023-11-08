@@ -1,3 +1,4 @@
+import numpy as np
 import warnings
 warnings.filterwarnings("ignore")
 import hydra
@@ -100,6 +101,7 @@ class InitialDetProcessor():
     def register(self, log_id, split, tracks=None):
         if tracks is None:
             tracks = self.dataset(self.tracked_dets_path, self.gt_path, log_id, self.split, self.detection_set, tracks=True).dets
+        print(sum([len(t) for t in tracks.values()]))
         tracks = self._registration(
             tracks,
             self.av2_loader,
@@ -109,10 +111,11 @@ class InitialDetProcessor():
             self.exp_weight_rot,
             self.registration_len_thresh,
             self.min_pts_thresh).register()
-        p = f'{self.registered_dets_path}/{self.split}/{log_id}'
-        if os.path.isdir(p):
-            shutil.rmtree(p)
-        store_initial_detections(tracks, log_id, self.registered_dets_path, split, tracks=False)
+        # p = f'{self.registered_dets_path}/{self.split}/{log_id}'
+        # if os.path.isdir(p):
+        #     shutil.rmtree(p)
+        print(sum([len(t) for t in tracks.values()]))
+        # store_initial_detections(tracks, log_id, self.registered_dets_path, split, tracks=False)
         return tracks
 
     def collaps(self, log_id, split, detections=None):
@@ -125,13 +128,19 @@ class InitialDetProcessor():
     
     def get_initial_dets(self, log_id, split):
         detections = self.dataset(self.initial_dets_path, self.gt_path, log_id, self.split, self.detection_set).dets
-        if self.filter_by_width:
+        if False: #self.filter_by_width:
             detections_new = dict()
             for i, timestamp in enumerate(sorted(detections.keys())):
                 dets = detections[timestamp]
                 # filter by width
                 detections_new_time = list()
                 for d in dets:
+                    if d.lwh[0] < 0.1 or d.lwh[1] < 0.1 or d.lwh[2] < 0.1:
+                        continue
+                    # d.lwh = d.lwh * 1.25
+                    d.lwh[0] = np.clip(d.lwh[0], a_min=1, a_max=None)
+                    d.lwh[1] = np.clip(d.lwh[1], a_min=1, a_max=None)
+                    d.lwh[2] = np.clip(d.lwh[2], a_min=2, a_max=None)
                     if d.lwh[1] < self.filter_by_width:
                         detections_new_time.append(d)
                 if len(detections_new_time):
@@ -149,6 +158,8 @@ class InitialDetProcessor():
 
     @staticmethod
     def eval(cfg, detector_dir, seq_list, name):
+        if cfg.data.debug:
+            seq_list = ['10023947602400723454']
         _, detection_metric, all_results_df = eval_detection.eval_detection(
                     gt_folder=os.path.join(os.getcwd(), cfg.data.data_dir + '_train/Waymo_Converted'),
                     trackers_folder=detector_dir,
@@ -159,10 +170,18 @@ class InitialDetProcessor():
                     remove_non_move=cfg.data.remove_static_gt,
                     remove_non_move_strategy=cfg.data.remove_static_strategy,
                     remove_non_move_thresh=cfg.data.remove_static_thresh,
-                    filter_class='CONVERT_ALL_TO_CARS',
-                    use_matched_category=False,
+                    visualize=False,
+                    filter_class=cfg.filter_class, #'NO_FILTER', #'CONVERT_ALL_TO_CARS',
+                    filter_moving=cfg.filter_moving,
+                    use_matched_category=cfg.use_matched_category,
                     debug=cfg.data.debug,
-                    name=name)
+                    name=name,
+                    store_matched=cfg.store_matched,
+                    velocity_evaluation=cfg.vel_evaluation,
+                    heuristics=cfg.heuristics,
+                    waymo_style=cfg.waymo_style,
+                    use_aff_as_score=False,
+                    inflate_bb=cfg.inflate_bb)
 
         # print(f'Detection metric of detections from detector_dir {detection_metric}')
         return all_results_df
@@ -200,7 +219,8 @@ def main(cfg):
         # print(f"\n \n {t} \n")
 
     _params = f'{cfg.tracker_options.filter_by_width}_{cfg.tracker_options.a_threshold}_{cfg.tracker_options.len_thresh}_{cfg.tracker_options.max_time_track}_{cfg.tracker_options.fixed_time}_{cfg.tracker_options.l_change_thresh}_{cfg.tracker_options.w_change_thresh}_{cfg.tracker_options.inact_patience}_{cfg.tracker_options.use_temporal_weight_track}_{cfg.tracker_options.outlier_threshold}_{cfg.tracker_options.outlier_kNN}'
-
+    print(_params)
+    
     cfg.tracker_options.initial_dets = f'{cfg.tracker_options.initial_dets}/{cfg.tracker_options.model}'
     cfg.tracker_options.collapsed_dets = f'{cfg.tracker_options.collapsed_dets}/{cfg.tracker_options.model}/{_params}' 
     cfg.tracker_options.tracked_dets = f'{cfg.tracker_options.tracked_dets}/{cfg.tracker_options.model}/{_params}'
@@ -208,14 +228,6 @@ def main(cfg):
     print(cfg.tracker_options.registered_dets)
     
     results_df = _main(cfg, results_df=results_df)
-    # cfg.tracker_options.convert_initial = False
-    if os.path.isdir(os.path.join(
-        cfg.tracker_options.track_data_path,
-        cfg.tracker_options.tracked_dets)):
-        shutil.rmtree(os.path.join(
-            cfg.tracker_options.track_data_path,
-            cfg.tracker_options.tracked_dets))
-
     print('\n\n\n')
     print(results_df)
     # results_df.to_csv('/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/track_reg_results.csv')
@@ -312,8 +324,9 @@ def track(rank, cfg, world_size):
         seq_name, dataset_path, gt_path, split, detection_set, percentage = seq_name[0], dataset_path[0], gt_path[0], split[0], detection_set[0], percentage[0]
         # if os.path.isdir(os.path.join(cfg.tracker_options.out_path_for_eval, cfg.tracker_options.registered_dets, split, seq_name)):
         #     continue
-        print(i, len(dataloader))
-        loader = AV2SensorDataLoader(data_dir=Path(f'{cfg.data.data_dir}_{split}/Waymo_Converted/{split}'), labels_dir=Path(f'{cfg.data.data_dir}_{split}/Waymo_Converted/{split}'))    
+        if '10212406498497081993' not in seq_name:
+            continue
+        loader = AV2SensorDataLoader(data_dir=Path(f'{cfg.data.data_dir}_{split}/{split}'), labels_dir=Path(f'{cfg.data.data_dir}_{split}/{split}'))    
         detsprocessor = InitialDetProcessor(
             tracker_type=cfg.tracker_options.tracker_type,
             tracker_params=cfg.tracker_options,
@@ -328,7 +341,7 @@ def track(rank, cfg, world_size):
             collapsed_dets_path=cfg.tracker_options.collapsed_dets,
             tracked_dets_path=cfg.tracker_options.tracked_dets,
             registered_dets_path=cfg.tracker_options.registered_dets,
-            gt_path=f'{gt_path}_{split}/Waymo_Converted/{split}',
+            gt_path=f'{gt_path}_{split}/{split}',
             split=split,
             detection_set=detection_set,
             percentage=percentage,

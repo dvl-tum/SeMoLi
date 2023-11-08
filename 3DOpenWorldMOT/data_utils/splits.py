@@ -24,7 +24,10 @@ def get_seq_list(path, detection_set='train_gnn',percentage=1.0):
     return seqs
 
 def get_seq_list_fixed_val(path, detection_set='train_gnn',percentage=1.0):
-    save_path = f'/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/data_utils/new_seq_splits_Waymo_Converted_fixed_val/{percentage}_{detection_set}.txt'
+    if not 'Argo' in path:
+        save_path = f'/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/data_utils/new_seq_splits_Waymo_Converted_fixed_val/{percentage}_{detection_set}.txt'
+    else:
+        save_path = f'/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/data_utils/new_seq_splits_AV2_fixed_val/{percentage}_{detection_set}.txt'
     if os.path.isfile(save_path):
         with open(save_path, 'r') as f:
             seqs = f.read()
@@ -53,19 +56,21 @@ def get_seq_list_fixed_val(path, detection_set='train_gnn',percentage=1.0):
         seqs = seqs[:int(len(seqs)*percentage)]
     elif 'detector' in detection_set:
         seqs = seqs[int(len(seqs)*percentage):]
-    print(sorted(seqs), len(seqs))
-    quit()
+    
     return seqs
  
 
 
 if __name__ == "__main__":
     data_path = '/dvlresearch/jenny/Waymo_Converted_GT'
+    data_path = '/workspace/Argoverse2/'
     fixed_val = True
     if fixed_val:
         save_dir = f'new_seq_splits_Waymo_Converted_fixed_val'
     else:
         save_dir = f'new_seq_splits_Waymo_Converted'
+     
+    save_dir = f'new_seq_splits_AV2_fixed_val'
     os.makedirs(save_dir, exist_ok=True)
     for per in np.arange(0.0, 1.1, 0.1):
         per = np.round(per,decimals=1)

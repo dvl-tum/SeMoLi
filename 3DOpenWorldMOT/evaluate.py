@@ -59,7 +59,8 @@ def main(cfg):
         cfg.data.data_dir,
         detection_set=cfg.data.detection_set,
         percentage=cfg.data.percentage_data_val)
-    
+    if cfg.data.debug:
+        seq_list = ['13310437789759009684']
     name = get_name(cfg) 
     if cfg.eval_dir == '':
         out_path = os.path.join(cfg.out_path, 'out/')
@@ -67,30 +68,37 @@ def main(cfg):
         detector_dir = os.path.join(experiment_dir + name, cfg.data.detection_set)
     else:
         detector_dir = cfg.eval_dir
-
-    print(detector_dir, cfg.filter_moving, '\n\n')
+    # seq_list = ['1022527355599519580', '10023947602400723454', '10212406498497081993', '10153695247769592104', '1005081002024129653', '10082223140073588526', '10094743350625019937', '10072140764565668044']
+    #_seq_list = seq_list
+    # for seq in _seq_list:
+    #    seq_list = [seq]
+    #    print(seq_list)
+    #    print(detector_dir, cfg.filter_moving, '\n')
     # evaluate detection
     _, detection_metric, _ = eval_detection.eval_detection(
-        gt_folder=os.path.join(os.getcwd(), cfg.data.data_dir),
-        trackers_folder=detector_dir,
-        split='val' if 'evaluation' in cfg.data.detection_set else 'train',
-        seq_to_eval=seq_list,
-        remove_far=True,#'80' in cfg.data.trajectory_dir,
-        remove_non_drive='non_drive' in cfg.data.trajectory_dir,
-        remove_non_move=cfg.data.remove_static_gt,
-        remove_non_move_strategy=cfg.data.remove_static_strategy,
-        remove_non_move_thresh=cfg.data.remove_static_thresh,
-        visualize=False,
-        filter_class=cfg.filter_class, #'NO_FILTER', #'CONVERT_ALL_TO_CARS',
-        filter_moving=cfg.filter_moving,
-        use_matched_category=cfg.use_matched_category,
-        debug=cfg.data.debug,
-        name=name,
-        store_matched=cfg.store_matched,
-        velocity_evaluation=cfg.vel_evaluation,
-        heuristics=cfg.heuristics,
-        waymo_style=cfg.waymo_style)
-    print('\n\n\n\n')
+            gt_folder=os.path.join(os.getcwd(), cfg.data.data_dir),
+            trackers_folder=detector_dir,
+            split='val' if 'evaluation' in cfg.data.detection_set else 'train',
+            seq_to_eval=seq_list,
+            remove_far=True,#'80' in cfg.data.trajectory_dir,
+            remove_non_drive='non_drive' in cfg.data.trajectory_dir,
+            remove_non_move=cfg.data.remove_static_gt,
+            remove_non_move_strategy=cfg.data.remove_static_strategy,
+            remove_non_move_thresh=cfg.data.remove_static_thresh,
+            visualize=False,
+            filter_class=cfg.filter_class, #'NO_FILTER', #'CONVERT_ALL_TO_CARS',
+            filter_moving=cfg.filter_moving,
+            use_matched_category=cfg.use_matched_category,
+            debug=cfg.data.debug,
+            name=name,
+            store_matched=cfg.store_matched,
+            velocity_evaluation=cfg.vel_evaluation,
+            heuristics=cfg.heuristics,
+            waymo_style=cfg.waymo_style,
+            use_aff_as_score=False,
+            inflate_bb=cfg.inflate_bb,
+            store_input_to_eval=cfg.store_input_to_eval)
+    print('\n\n')
 
 if __name__ == "__main__":
         main()

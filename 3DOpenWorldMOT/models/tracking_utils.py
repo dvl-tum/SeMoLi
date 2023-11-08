@@ -280,7 +280,7 @@ class Track():
 
 
 class Detection():
-    def __init__(self, trajectory, canonical_points, timestamps, log_id, num_interior, overlap=None, gt_id=None, gt_id_box=None, rot=None, alpha=None, gt_cat=-10, lwh=None, translation=None, pts_density=None, median=False) -> None:
+    def __init__(self, trajectory, canonical_points, timestamps, log_id, num_interior, overlap=None, gt_id=None, gt_id_box=None, rot=None, alpha=None, gt_cat=-10, lwh=None, translation=None, pts_density=None, median_flow=False, min_area=False, median_center=False, resampled=None) -> None:
         self.trajectory = trajectory
         self.canonical_points = canonical_points
         self.timestamps = torch.atleast_2d(timestamps)
@@ -293,20 +293,33 @@ class Detection():
         self.length = trajectory.shape[0] if len(trajectory.shape) < 3 else trajectory.shape[1]
         self.track_id = 0
         self.pts_density = pts_density
-        self.median = median
+        self.median_flow = median_flow
+        self.min_area = min_area  
+        self.median_center = median_center
+        self.resampled = resampled
         
-        if rot is not None:
-            self.rot = rot
-            self.alpha = alpha
+        if resampled is not None:
+            trajectory = trajectory[~(resampled.bool())]
         else:
-            self.rot, self.alpha = self.get_alpha_rot_t0_to_t1(0, 1, self.trajectory)
+            trajectory = trajectory
         
-        if lwh is None or translation is None:
-            _lwh, _translation = self.get_rotated_center_and_lwh(canonical_points, self.rot)
+        if trajectory.shape[0] == 0 and rot is None:
+            self.rot, self.alpha, _lwh, _translation = get_min_area(canonical_points)
+        else:
+            if rot is not None:
+                self.rot = rot
+                self.alpha = alpha
+            else:
+                self.rot, self.alpha = self.get_alpha_rot_t0_to_t1(0, 1, trajectory)
+        
+            if lwh is None or translation is None:
+                if not self.min_area:
+                    _lwh, _translation = self.get_rotated_center_and_lwh(canonical_points, self.rot)
+                else:
+                    self.rot, self.alpha, _lwh, _translation = get_min_area(canonical_points, self.alpha)
         
         self.lwh = lwh if lwh is not None else _lwh
         self.translation = translation if translation is not None else _translation
-        
         if pts_density is None:
             self.pts_density = ((self.lwh[0] * self.lwh[1] * self.lwh[2]) / self.num_interior).item()
         else:
@@ -329,23 +342,25 @@ class Detection():
     def rotation(self):
         return self.rot
 
-    def update_after_registration(self, canonical_points_registered, translation, rotation):
+    def update_after_registration(self, canonical_points_registered, translation, rotation, max_lwh):
         # new_SE3_old = SE3(rotation=rotation, translation=translation)
         # ego_SE3_old = SE3(rotation=self.rot.cpu().numpy(), translation=self.translation.cpu().numpy())
         # chained = ego_SE3_old.compose(new_SE3_old.inverse())
         # self.rot = torch.from_numpy(chained.rotation).to(self.rot.device)
-        self.lwh, self.translation = self.get_rotated_center_and_lwh(canonical_points_registered, self.rot) #, translation=torch.from_numpy(chained.translation).to(self.rot.device))
+        # self.lwh, self.translation = self.get_rotated_center_and_lwh(canonical_points_registered, self.rot, self.median_center) #, translation=torch.from_numpy(chained.translation).to(self.rot.device))
+        self.lwh = max_lwh
+        self.translation = self.translation + translation
         self.num_interior = canonical_points_registered.shape[0]
         self.pts_density = ((self.lwh[0] * self.lwh[1] * self.lwh[2]) / self.num_interior).item()
 
     def get_alpha_rot_t0_to_t1(self, t0=None, t1=None, trajectory=None, traj_t0=None, traj_t1=None):
-        rot, alpha = get_alpha_rot_t0_to_t1(t0, t1, trajectory, traj_t0, traj_t1, median=self.median)
+        rot, alpha = get_alpha_rot_t0_to_t1(t0, t1, trajectory, traj_t0, traj_t1, median=self.median_flow)
         return rot, alpha
     
     def get_rotated_center_and_lwh(self, canonical_points, rot=None, trajectory=None, traj_t0=None, traj_t1=None, translation=None):
         if rot is None:
-            rot, _ = self.get_alpha_rot_t0_to_t1(0, 1, trajectory, traj_t0, traj_t1, median=self.median)
-        lwh, translation = get_rotated_center_and_lwh(canonical_points, rot, translation)
+            rot, _ = self.get_alpha_rot_t0_to_t1(0, 1, trajectory, traj_t0, traj_t1, median=self.median_flow)
+        lwh, translation = get_rotated_center_and_lwh(canonical_points, rot, translation, self.median_center)
         return lwh, translation
     
     def _get_propagated_bbs(self, propagated_pos=None):
@@ -372,10 +387,10 @@ class Detection():
         return city_SE3_t0.transform_point_cloud(canonical_points)
 
 
-def get_rotated_center_and_lwh(pc, rot, translation=None):
+def get_rotated_center_and_lwh(pc, rot, translation=None, median=False):
     # translation = get_center(pc)
     # translation = translation.cpu()
-    translation = get_center(pc)
+    translation = get_center(pc, median)
     if type(translation) == np.ndarray:
         translation = torch.from_numpy(translation).to(pc.device)
     ego_SE3_object = SE3(rotation=rot.cpu().numpy(), translation=translation.cpu().numpy())
@@ -401,12 +416,12 @@ def get_rotated_center_and_lwh(pc, rot, translation=None):
 def get_alpha_rot_t0_to_t1(t0=None, t1=None, trajectory=None, traj_t0=None, traj_t1=None, median=False):
     if trajectory is not None:
         if median:
-            mean_flow = (trajectory[:, t1, :] - trajectory[:, t0, :]).median(dim=0)
+            mean_flow = (trajectory[:, t1, :] - trajectory[:, t0, :]).median(dim=0).values
         else:
             mean_flow = (trajectory[:, t1, :] - trajectory[:, t0, :]).mean(dim=0) # (trajectory[:, t1, :] - trajectory[:, t0, :]).median(dim=0)
     else:
         if median:
-            mean_flow = (traj_t1 - traj_t0).median(dim=0)
+            mean_flow = (traj_t1 - traj_t0).median(dim=0).values
         else:
             mean_flow = (traj_t1 - traj_t0).mean(dim=0) # (traj_t1 - traj_t0).median(dim=0)
     alpha = torch.atan2(mean_flow[1], mean_flow[0])
@@ -460,12 +475,14 @@ def get_propagated_bbs(propagated_pos_tracks, get_trans=True, get_lwh=True, _2d=
     return return_dict
 
 
-def get_center(canonical_points):
-    points_c_time = canonical_points
-    mins, maxs = points_c_time.min(dim=0), points_c_time.max(dim=0)
-    translation = (maxs.values + mins.values)/2
-    translation = torch.mean(canonical_points, dim=0) # np.median(canonical_points.cpu().numpy(), axis=0)
-    translation = np.median(canonical_points.cpu().numpy(), axis=0)
+def get_center(canonical_points, median):
+    if not median:
+        points_c_time = canonical_points
+        mins, maxs = points_c_time.min(dim=0), points_c_time.max(dim=0)
+        translation = (maxs.values + mins.values)/2
+    else:
+        # translation = torch.mean(canonical_points, dim=0) # np.median(canonical_points.cpu().numpy(), axis=0)
+        translation = np.median(canonical_points.cpu().numpy(), axis=0)
     return translation
 
 
@@ -510,7 +527,9 @@ def store_initial_detections(detections, seq, out_path, split, tracks=False, gt_
                 track_id=d.track_id,
                 rot=d.rot.numpy(),
                 alpha=d.alpha.numpy(),
-                gt_cat=d.gt_cat
+                gt_cat=d.gt_cat,
+                lwh=d.lwh.numpy(),
+                translation=d.translation.numpy()
             )
 
 
@@ -521,7 +540,10 @@ def load_initial_detections(out_path, split, seq=None, tracks=False, every_x_fra
         detections = defaultdict(dict)
     if not os.path.isdir(p):
         return detections
-    for d in os.listdir(p):
+    print('loading...', len(os.listdir(p)))
+    for i, d in enumerate(os.listdir(p)):
+        if i% 50 == 0:
+            print(i, len(os.listdir(p)))
         dict_key = int(d.split('_')[0])
 
         if tracks:
@@ -543,6 +565,8 @@ def load_initial_detections(out_path, split, seq=None, tracks=False, every_x_fra
             rot=torch.from_numpy(d['rot']) if 'rot' in d.keys() else None,
             alpha=torch.from_numpy(d['alpha']) if 'alpha' in d.keys() else None,
             gt_cat=d['gt_cat'].item() if 'gt_cat' in d.keys() else -10,
+            lwh=torch.from_numpy(d['lwh']) if 'lwh' in d.keys() else None,
+            translation=torch.from_numpy(d['translation']) if 'translation' in d.keys() else None,
         )
         # if d.lwh[0] < 0.1 or d.lwh[1] < 0.1 or d.lwh[2] < 0.1:
         #     continue
@@ -552,20 +576,19 @@ def load_initial_detections(out_path, split, seq=None, tracks=False, every_x_fra
             else:
                 detections[d.timestamps[0, 0].item()].append(d)
         else:
-            detections[dict_key][sorter] = d
+            detections[dict_key][d.timestamps[0, 0].item()] = d
 
     if tracks:
-       tracks = list()
-       for track_id, dets in detections.items():
-           for i, k in enumerate(sorted(list(dets.keys()))):
-               d = dets[k]
-               if i == 0:
-                   t = Track(d, track_id, every_x_frame, overlap)
-               else:
-                   t.add_detection(d)
-           tracks.append(t)
-       detections = tracks
-
+        tracks = dict()
+        for track_id, dets in detections.items():
+            for i, k in enumerate(sorted(list(dets.keys()))):
+                d = dets[k]
+                if i == 0:
+                    t = Track(d, track_id, every_x_frame, overlap)
+                else:
+                    t.add_detection(d)
+            tracks[track_id] = t
+        detections = tracks
     return detections
 
 
@@ -678,6 +701,49 @@ def _create_box(xyz, lwh, rot):
     vertices_dst_xyz_m = vertices_dst_xyz_m.type(torch.float32)
     return vertices_dst_xyz_m
 
+def _from_box(vertices):
+    '''
+    x, y, z = xyz
+    l, w, h = lwh
+
+    
+    verts = torch.tensor(
+        [
+            [x - l / 2.0, y - w / 2.0, z - h / 2.0],
+            [x + l / 2.0, y - w / 2.0, z - h / 2.0],
+            [x + l / 2.0, y + w / 2.0, z - h / 2.0],
+            [x - l / 2.0, y + w / 2.0, z - h / 2.0],
+            [x - l / 2.0, y - w / 2.0, z + h / 2.0],
+            [x + l / 2.0, y - w / 2.0, z + h / 2.0],
+            [x + l / 2.0, y + w / 2.0, z + h / 2.0],
+            [x - l / 2.0, y + w / 2.0, z + h / 2.0],
+        ],
+        device=xyz.device,
+        dtype=torch.float32,
+    )
+    '''
+
+    unit_vertices_obj_xyz_m = torch.tensor(
+        [
+            [- 1, - 1, - 1],
+            [+ 1, - 1, - 1],
+            [+ 1, + 1, - 1],
+            [- 1, + 1, - 1],
+            [- 1, - 1, + 1],
+            [+ 1, - 1, + 1],
+            [+ 1, + 1, + 1],
+            [- 1, + 1, + 1],
+        ],
+        device=xyz.device,
+        dtype=torch.float32,
+    )
+    
+    # Transform unit polygons.
+    vertices_obj_xyz_m = (lwh/2.0) * unit_vertices_obj_xyz_m
+    vertices_dst_xyz_m = vertices_obj_xyz_m @ rot.T + xyz
+    vertices_dst_xyz_m = vertices_dst_xyz_m.type(torch.float32)
+    return vertices_dst_xyz_m
+
 
 def to_feather(detections, log_id, out_path, split, rank, precomp_dets=False, name=''):
     track_vals = list()
@@ -748,3 +814,44 @@ def outlier_removal(pc, threshold=0.1, kNN=10):
         pc.unsqueeze(0).float(),
         K=kNN)
     return pc[nn_dists[0,:,1:].mean(1) < threshold], nn_dists[0,:,1:].mean(1) < threshold
+
+def get_min_area(pc, init_alpha=None, median=False):
+    rot = None
+    lwh = None
+    translation = None
+    min_area = 10000
+    _alpha = init_alpha
+
+    if _alpha is None:
+        alpha_list =  [torch.pi*0, torch.pi/4, torch.pi/2, torch.pi*3/4]
+        for _alpha in alpha_list:
+            _alpha = torch.tensor([_alpha])
+            _rot = torch.tensor([
+                [torch.cos(_alpha), -torch.sin(_alpha), 0],
+                [torch.sin(_alpha), torch.cos(_alpha), 0],
+                [0, 0, 1]]).double()
+            _lwh, _translation = get_rotated_center_and_lwh(pc, _rot, median)
+            if _lwh[0] * _lwh[1] < min_area:
+                alpha = _alpha
+                rot = _rot
+                lwh = _lwh
+                translation = _translation
+                min_area = _lwh[0] * _lwh[1]
+        _alpha = alpha
+    
+    for i in [4, 8, 16, 32, 64]:
+        alpha_list = [_alpha-torch.pi/i, _alpha, _alpha+torch.pi/i]
+        for _alpha in alpha_list:
+            _rot = torch.tensor([
+                [torch.cos(_alpha), -torch.sin(_alpha), 0],
+                [torch.sin(_alpha), torch.cos(_alpha), 0],
+                [0, 0, 1]]).double()
+            _lwh, _translation = get_rotated_center_and_lwh(pc, _rot, median)
+            if _lwh[0] * _lwh[1] < min_area:
+                alpha = _alpha
+                rot = _rot
+                lwh = _lwh
+                translation = _translation
+                min_area = _lwh[0] * _lwh[1]
+        _alpha = alpha
+    return rot, alpha.squeeze(), lwh, translation

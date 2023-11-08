@@ -31,3 +31,5 @@ detection_set: 'val_gnn' # 'val_gnn' 'train_gnn' 'val_detector', 'train_detector
 get_vels: False
 vels_augment: False
 waymo_style: True
+cd_filter: 0.05
+resmaple_radius: 1

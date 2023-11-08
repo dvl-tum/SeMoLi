@@ -96,7 +96,8 @@ def evaluate(
     filter_class: str = "NO_FILTER",
     use_matched_category: bool = False,
     filter_moving: bool = True,
-    _class_dict: dict = {}
+    _class_dict: dict = {},
+    use_aff_as_score = False
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Evaluate a set of detections against the ground truth annotations.
 
@@ -121,20 +122,41 @@ def evaluate(
         dts = match_moving_and_category(dts, gts, cfg)
         if filter_moving:
             gts = gts[gts['filter_moving']]
+            num_matched_to_static = dts[(dts['matched_to_static'].values.astype(bool))].shape[0]
+            print(f'{num_matched_to_static} objects matched to static objects...')
             dts = dts[~(dts['matched_to_static'].values.astype(bool))]
+            print(f'{dts.shape[0]} remaining objects...')
         if use_matched_category:
             dts['category'] = dts['matched_category'].apply(lambda x: _class_dict[x])
     gts['filter_moving'] = True
-    dts, gts, np_tps, np_fns = _evaluate(
-        dts,
-        gts,
-        cfg,
-        n_jobs,
-        min_points,
-        max_points,
-        filter_class,
-        use_matched_category=False)#use_matched_category)
     
+    if gts.shape[0] != 0:
+        dts, gts, np_tps, np_fns = _evaluate(
+            dts,
+            gts,
+            cfg,
+            n_jobs,
+            min_points,
+            max_points,
+            filter_class,
+            use_matched_category=False,
+            use_aff_as_score=use_aff_as_score)#use_matched_category)
+    else:
+        METRIC_COLUMN_NAMES_DTS = cfg.affinity_thresholds_m + TP_ERROR_COLUMNS + ("is_evaluated",)
+        METRIC_COLUMN_NAMES_DTS = [m for m in METRIC_COLUMN_NAMES_DTS]
+        T, E = len(cfg.affinity_thresholds_m), 3
+        dts_metrics: NDArrayFloat = np.zeros((len(dts), T + E + 1)) 
+        dts_metrics[:, 4:-1] = cfg.metrics_defaults[1:4]
+        dts_metrics[:, -1] = 1
+        dts[METRIC_COLUMN_NAMES_DTS] = dts_metrics
+        METRIC_COLUMN_NAMES_GTS = cfg.affinity_thresholds_m + TP_ERROR_COLUMNS + ("is_evaluated",)
+        METRIC_COLUMN_NAMES_GTS = [m for m in METRIC_COLUMN_NAMES_GTS]
+        gts_metrics: NDArrayFloat = np.zeros((len(gts), T + E + 1))
+        gts_metrics[:, 4:-1] = cfg.metrics_defaults[1:4]
+        gts_metrics[:, -1] = 1
+        gts[METRIC_COLUMN_NAMES_GTS] = gts_metrics
+        np_tps = 0
+        np_fns = 0
     # Compute summary metrics.
     metrics, fps, all_results_df = summarize_metrics(dts, gts, cfg, use_matched_category)
     metrics.loc["AVERAGE_METRICS"] = metrics.mean()
@@ -161,7 +183,8 @@ def _evaluate(dts: pd.DataFrame,
     max_points: int = 10000,
     filter_class: str = 'NO_FILTER',
     use_matched_category: bool = False,
-    pre_filtering=False):
+    pre_filtering=False,
+    use_aff_as_score=False):
     if cfg.eval_only_roi_instances and cfg.dataset_dir is None:
         raise ValueError(
             "ROI pruning has been enabled, but the dataset directory has not be specified. "
@@ -175,7 +198,7 @@ def _evaluate(dts: pd.DataFrame,
             )
     else:
         _UUID_COLUMN_NAMES = UUID_COLUMN_NAMES
-    dts = dts[dts['category'] != 'TYPE_UNKNOWN']
+    # dts = dts[dts['category'] != 'TYPE_UNKNOWN']
     gts = gts.astype({'timestamp_ns': int, 'log_id': str, 'category': str})
     dts = dts.astype({'timestamp_ns': int, 'log_id': str, 'category': str})
     # Sort both the detections and annotations by lexicographic order for grouping.
@@ -244,11 +267,15 @@ def _evaluate(dts: pd.DataFrame,
         METRIC_COLUMN_NAMES_GTS = cfg.affinity_thresholds_m + TP_ERROR_COLUMNS + ("is_evaluated",)
 
         dts_metrics: NDArrayFloat = np.concatenate(dts_list)  # type: ignore
-        dts_metrics = np.delete(dts_metrics, [-3, -2], axis=1)
+        score = dts_metrics[:, -4]
+        dts_metrics = np.delete(dts_metrics, [-4, -3, -2], axis=1)
         gts_metrics: NDArrayFloat = np.concatenate(gts_list)  # type: ignore
         # add column for matched categories
         dts.loc[:, METRIC_COLUMN_NAMES_DTS] = dts_metrics
         gts.loc[:, METRIC_COLUMN_NAMES_GTS] = gts_metrics
+        # use affinity score as matching score
+        if use_aff_as_score:
+            dts['score'] = score
 
         if len([t for t in np_tps if t is not None]):
             np_tps = np.concatenate([t for t in np_tps if t is not None])

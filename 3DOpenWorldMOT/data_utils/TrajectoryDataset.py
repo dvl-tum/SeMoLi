@@ -101,14 +101,14 @@ class TrajectoryDataset(PyGDataset):
             elif split == 'val':
                 self.seqs = ['10023947602400723454'] #['16473613811052081539']
             else:
-                self.seqs = ['2400780041057579262']
+                self.seqs = ['10023947602400723454'] # ['2400780041057579262']
+            self.seqs = ['13310437789759009684']
         else:
             # self.seqs = get_seq_list(
             self.seqs = get_seq_list_fixed_val(
                 path=os.path.join(data_dir, split),
                 detection_set=detection_set,
                 percentage=self.percentage_data)
-        
         if 'detector' in detection_set:
             split = 'train' if 'train' in detection_set else 'val'
             self.already_evaluated = list()
@@ -143,6 +143,7 @@ class TrajectoryDataset(PyGDataset):
             
     @property
     def processed_paths(self):
+        print('getting processed paths')
         if not self.do_process:
             seqs = [seq for seq in self.seqs if seq in os.listdir(self.processed_dir) and seq not in self.already_evaluated]
             print(f'{len(seqs)} to be evaluated, {len(self.already_evaluated)} were already there...')
@@ -564,13 +565,7 @@ class TrajectoryDataset(PyGDataset):
         
         return data
 
-    def get(self, idx):
-        path = self._processed_paths[idx]
-        data = torch.load(path)
-        data['traj'] = data['traj'][:, :self.traj_channels, :self.pos_channels]
-        data['pc_list'] = data['pc_list'][:, :self.pos_channels]
-        data['timestamps'] = data['timestamps'][:self.traj_channels]
-        
+    def filter_waymo(self, data):
         if self.waymo_style:
             mask = torch.logical_and(
                 torch.logical_and(data['pc_list'][:, 0] < 50, data['pc_list'][:, 0] > -50),
@@ -582,6 +577,30 @@ class TrajectoryDataset(PyGDataset):
             if 'point_categories_mov' in data.keys:
                 data['point_instances_mov'] = data['point_instances_mov'][:, mask]
                 data['point_categories_mov'] = data['point_categories_mov'][:, mask]
+        return data
+
+    def get(self, idx):
+        path = self._processed_paths[idx]
+        data = torch.load(path)
+        if data['traj'].shape[0] == 0:
+            path = self._processed_paths[0]
+            data = torch.load(path)
+
+        data['traj'] = data['traj'][:, :self.traj_channels, :self.pos_channels]
+        data['pc_list'] = data['pc_list'][:, :self.pos_channels]
+        data['timestamps'] = data['timestamps'][:self.traj_channels]
+        
+        data['point_instances'] = torch.atleast_2d(data['point_instances'])
+        data['point_categories'] = torch.atleast_2d(data['point_categories'])
+        
+        data = self.filter_waymo(data)
+        
+        if data['traj'].shape[0] == 0:
+            path = self._processed_paths[0]
+            data = torch.load(path)
+            data['point_instances'] = torch.atleast_2d(data['point_instances'])
+            data['point_categories'] = torch.atleast_2d(data['point_categories'])
+            data = self.filter_waymo(data)
 
         if 'velocities' not in data.keys and self.get_vels:
             data = self.get_object_velocities(data, path)

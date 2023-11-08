@@ -38,11 +38,13 @@ vel_evaluation: False
 heuristics: False
 waymo_style: True
 filter_class: 'CONVERT_ALL_TO_CARS'
+inflate_bb: True
+store_input_to_eval: False
 
 tracker_options: # Extra options for the tracker
   a_threshold: 0.9
   i_threshold: 0.9
-  len_thresh: 1
+  len_thresh: 0
   outlier_threshold: 0.5
   outlier_kNN: 10
   use_temporal_weight_track: False
@@ -63,17 +65,17 @@ tracker_options: # Extra options for the tracker
   tracked_dets: 'tracked_dets'
   registered_dets: 'registered_dets'
   tracker_type: 'SimpleTracker' # 'OnlineOracleTracker'
-  registration_type: 'Flow'
+  registration_type: 'ConstICP'
   collaps_type: 'SimpleCollaps'
   out_path_for_eval: '/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/tracks/tracks_for_eval'
   max_time_track: 5 # set max_time to -1 --> take all
-  filter_by_width: 5
+  filter_by_width: 1000
   inact_patience: 5
   fixed_time: False
   l_change_thresh: 10
   w_change_thresh: 10
-  registration_len_thresh: 5
-  min_pts_thresh: 25
+  registration_len_thresh: 4
+  min_pts_thresh: 0
 
 
 detection_options:                                                                       
@@ -82,4 +84,8 @@ detection_options:
   precomp_dets: False
   kNN: 0
   threshold: 0.5
-  median: False
+  median_flow: False
+  median_center: False
+  min_area: False
+  use_only_orig_for_bb: False
+  ignore_dets_wo_orig_flow: False

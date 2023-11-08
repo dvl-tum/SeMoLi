@@ -161,7 +161,9 @@ def accumulate(
     # Initialize results array.
     gts_augmented: NDArrayFloat = np.zeros((M, T + E + 1))
     # matched to static + matched class + is evaluated
-    dts_augmented: NDArrayFloat = np.zeros((N, T + E + 1 + 1 + 1))
+    dts_augmented: NDArrayFloat = np.zeros((N, T + E + 1 + 1 + 1 + 1))
+    # set score to 0
+    dts_augmented[:, -4] = -1
     # set matched class to -1
     dts_augmented[:, -2] = -1
     # set matched to moving to 0
@@ -319,14 +321,17 @@ def assign(
     idx_gts = idx_gts[matched_mask]
 
     T, E = len(cfg.affinity_thresholds_m), 3
-    dts_metrics: NDArrayFloat = np.zeros((len(dts), T + E + 1 + 1))
+    dts_metrics: NDArrayFloat = np.zeros((len(dts), T + E + 1 + 1 + 1))
+    dts_metrics[:, -3] = -1
     dts_metrics[:, -2] = dts_matched_to_static
     dts_metrics[:, -1] = -1
-    dts_metrics[:, 4:-2] = cfg.metrics_defaults[1:4]
+    dts_metrics[:, 4:-3] = cfg.metrics_defaults[1:4]
     gts_metrics: NDArrayFloat = np.zeros((len(gts), T + E))
     gts_metrics[:, 4:] = cfg.metrics_defaults[1:4]
     np_tps = None
     np_fns = gts[keep_gts][:, -2]
+    # set score 
+    dts_metrics[idx_dts, -3] = affinities[idx_dts]
     for i, threshold_m in enumerate(cfg.affinity_thresholds_m):
         is_tp: NDArrayBool = affinities[idx_dts] > -threshold_m
 
@@ -354,7 +359,7 @@ def assign(
         translation_errors = distance(tps_dts[:, :3], tps_gts[:, :3], DistanceType.TRANSLATION)
         scale_errors = distance(tps_dts[:, 3:6], tps_gts[:, 3:6], DistanceType.SCALE)
         orientation_errors = distance(tps_dts[:, 6:10], tps_gts[:, 6:10], DistanceType.ORIENTATION)
-        dts_metrics[idx_tps_dts, 4:-2] = np.stack((translation_errors, scale_errors, orientation_errors), axis=-1)
+        dts_metrics[idx_tps_dts, 4:-3] = np.stack((translation_errors, scale_errors, orientation_errors), axis=-1)
         gts_metrics[idx_tps_gts, 4:] = np.stack((translation_errors, scale_errors, orientation_errors), axis=-1)
 
     return dts_metrics, gts_metrics, np_tps, np_fns, keep_gts, rem_dts, dts_category, dts_matched_to_static
@@ -506,15 +511,15 @@ def get_masks(dts, data):
 def compute_sem_seg(dts, gts, timestamp_ns, log_id):
     pc_path=f'/workspace/all_egocomp_margin0.6_width25/all_egocomp_margin0.6_width25_train'
     time_p = os.path.join(pc_path, log_id, f'{timestamp_ns}.pt')
+    data = torch.load(time_p)['pc_list'].numpy()
     # pc_path = '/workspace/Waymo_Converted_train/Waymo_Converted/train/' 
     # time_p = os.path.join(pc_path, log_id, f'{timestamp_ns}.feather')
-    masks_dets = get_masks(dts, pc_path)
-    masks_gt = get_masks(gts, pc_path)
-    data = torch.load(time_p)['pc_list'].numpy()
-    PC_IoU = np.zeros(masks_dets.shape[0], masks_gt.shape[0])
+    masks_dets = get_masks(dts, data)
+    masks_gt = get_masks(gts, data)
+    PC_IoU = np.zeros([masks_dets.shape[0], masks_gt.shape[0]])
     for i, mask_dets in enumerate(masks_dets):
         for j, mask_gt in enumerate(masks_gt):
-            PC_IoU[i, j] = calculate_iou_pointcloud_binary(mask_dets, mask_gt, data)
+            PC_IoU[i, j] = calculate_iou_pointcloud_binary(mask_dets, mask_gt)
 
     return PC_IoU
 

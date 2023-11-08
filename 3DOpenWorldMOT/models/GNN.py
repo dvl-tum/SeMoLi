@@ -636,7 +636,7 @@ class ClusterGNN(MessagePassing):
             P = node_attr[start:end]
             # get distances between nodes
             x_shape = X.shape
-            num_neighbors = min(65, x_shape[0])
+            num_neighbors = min(max_num_neighbors, x_shape[0])
             knn_0 = torch_cluster.knn(X, X, k=num_neighbors)
             knn_0 = knn_0.view(2, x_shape[0], -1)[:, :, 1:]
             idx = knn_0.reshape(2, -1)

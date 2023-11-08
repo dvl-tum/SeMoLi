@@ -45,7 +45,7 @@ class MOT3DSeqDataset:
                 frames = [timestamps2frame[t] for t in self.gts['timestamp_ns']]
                 self.gts['frames'] = frames
         else:
-            for track in self.dets:
+            for track in self.dets.values():
                 for det in track:
                     det.frame = timestamps2frame[det.timestamps[0, 0].item()]
 

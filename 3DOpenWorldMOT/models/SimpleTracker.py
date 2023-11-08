@@ -244,7 +244,7 @@ class SimpleTracker():
             timestamp, self.av2_loader, max_time=self.max_time) for t in self.active_tracks]
         cano_points = [t._get_canonical_points_and_convert_time(
             timestamp, self.av2_loader).float().to(self.rank) for t in self.active_tracks]
-
+        headings_tracks = [t.detections[-1].alpha for t in self.active_tracks]
         # get detections and canonical points of inactive track if 
         # overlap still predicted in previous added detection
         inactive_tracks_to_use = list()
@@ -273,6 +273,7 @@ class SimpleTracker():
                             t._get_whole_traj_and_convert_time(timestamp, self.av2_loader, max_time=self.max_time)])
                         cano_points.extend([
                             t._get_canonical_points_and_convert_time(timestamp, self.av2_loader).float().to(self.rank)])
+                        headings_tracks.append(t.detections[-1].alpha)
                         inactive_tracks_to_use.append(i)
                     else:
                         t.dead = True
@@ -287,6 +288,7 @@ class SimpleTracker():
         # trajectories and canonical points of new detections
         det_trajs = [t.trajectory.float().to(self.rank) for t in detections]
         det_cano_points = [t._get_canonical_points().float().to(self.rank) for t in detections]
+        headings_dets = [d.alpha for d in detections]
         propagated_pos_dets = [
             torch.tile(det_cano_points[i].unsqueeze(1), (1, det_trajs[i].shape[1], 1)) + det_trajs[i] \
                 for i in range(len(det_trajs))]
@@ -301,6 +303,7 @@ class SimpleTracker():
         l2_center_2d = torch.zeros(len(propagated_pos_dets), num_tracks)
         l_change_2d = torch.zeros(len(propagated_pos_dets), num_tracks)
         h_change_2d = torch.zeros(len(propagated_pos_dets), num_tracks)
+        heading_diff = torch.zeros(len(propagated_pos_dets), num_tracks)
         if visualize:
             os.makedirs('/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/Visualization_tracks', exist_ok=True)
             fig, ax = plt.subplots()
@@ -331,6 +334,7 @@ class SimpleTracker():
                 mean_dist[k, i] = (weight * self.pdist(propagated_pos_tracks[i].permute(1, 0, 2).mean(dim=1),
                         propagated_pos_dets[k][:, :traj_lens[i]].permute(1, 0, 2).mean(dim=1))).mean()
                 cd_dists[k, i] = cd_dist_track
+                heading_diff[k, i] = abs(headings_dets[k] - headings_tracks[i])
         if visualize:
             ax.axis('equal')
             plt.savefig(
@@ -343,6 +347,8 @@ class SimpleTracker():
         bb_iou_2d[h_mask[0], h_mask[1]] = torch.nan
         iou2d_mask = torch.where(bb_iou_2d > self.a_threshold)
         bb_iou_2d[iou2d_mask[0], iou2d_mask[1]] = torch.nan
+        heading_mask = torch.where(heading_diff>0.2)
+        bb_iou_2d[heading_mask[0], heading_mask[1]] = torch.nan
 
         return [cd_dists, mean_dist, bb_iou_2d, l2_center_2d, l_change_2d, h_change_2d], \
             len(self.active_tracks), \

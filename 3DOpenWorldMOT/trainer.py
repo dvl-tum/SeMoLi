@@ -15,6 +15,8 @@ import torch.distributed as dist
 
 from models import _model_factory, _loss_factory, Detector3D
 from data_utils.TrajectoryDataset import get_TrajectoryDataLoader
+from data_utils.TrajectoryDatasetOrig import get_TrajectoryDataLoaderOrig
+from data_utils.TrajectoryDatasetResample import get_TrajectoryDataLoaderResample
 from data_utils.DistributedTestSampler import DistributedTestSampler
 from TrackEvalOpenWorld.scripts.run_av2_ow import evaluate_av2_ow_MOT
 import wandb
@@ -526,7 +528,11 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
             rank=rank,
             precomp_dets=cfg.detection_options.precomp_dets,
             kNN=cfg.detection_options.kNN,
-            threshold=cfg.detection_options.threshold)
+            threshold=cfg.detection_options.threshold,
+            median_flow=cfg.detection_options.median_flow,
+            median_center=cfg.detection_options.median_center,
+            use_only_orig_for_bb=cfg.detection_options.use_only_orig_for_bb,
+            ignore_dets_wo_orig_flow=cfg.detection_options.ignore_dets_wo_orig_flow)
 
     with torch.no_grad():
         if is_neural_net:
@@ -535,8 +541,8 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
             logger.info('---- EPOCH %03d EVALUATION ----' % (epoch + 1))
             logger.info(f'Doing correlation clustering {do_corr_clustering}')
         # Iterate over validation set
-        # for batch, (data) in tqdm(enumerate(val_loader), total=len(val_loader), smoothing=0.9):
-        for batch, (data) in enumerate(val_loader):
+        for batch, (data) in tqdm(enumerate(val_loader), total=len(val_loader), smoothing=0.9):
+            #for batch, (data) in enumerate(val_loader):
             if batch % 50 == 0:
                 logger.info(f'Epoch {epoch}: batch {batch}/{len(val_loader)}')
             # compute clusters
@@ -573,7 +579,8 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
                         data.log_id[g],
                         data['point_instances'][batch_idx[g]:batch_idx[g+1]],
                         data['point_categories'][batch_idx[g]:batch_idx[g+1]],
-                        last= batch+1 == len(val_loader) and g+1 == len(all_clusters))
+                        last= batch+1 == len(val_loader) and g+1 == len(all_clusters),
+                        resampled=data['resampled'][batch_idx[g]:batch_idx[g+1]].to(rank) if 'resampled' in data.keys else None)
 
             if is_neural_net and logits[0] is not None:
                 loss, log_dict, hist_node, hist_edge = criterion(logits, data, edge_index, rank, mode='eval')
@@ -755,11 +762,14 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
                 except:
                     seq_list = list()
 
+                if cfg.data.debug:
+                    seq_list = ['13310437789759009684']
+
                 # average NMI
                 cluster_metric = [nmis]
                 logger.info(f'NMI: {cluster_metric[0]}')
                 logger.info(f'Evaluating detection performance...')
-                
+                print(seq_list) 
                 # evaluate detection
                 _, detection_metric, _ = eval_detection.eval_detection(
                     gt_folder=os.path.join(os.getcwd(), cfg.data.data_dir),
@@ -776,7 +786,8 @@ def eval_one_epoch(model, do_corr_clustering, rank, cfg, val_loader, experiment_
                     use_matched_category=cfg.use_matched_category,
                     heuristics=cfg.heuristics,
                     debug=cfg.data.debug,
-                    name=name)
+                    name=name,
+                    inflate_bb=cfg.inflate_bb)
 
                 # log metrics
                 for_logs = {met: m for met, m in zip(['AP', 'ATE', 'ASE', 'AOE' ,'CDS'], detection_metric)}
@@ -868,8 +879,12 @@ def train(rank, cfg, world_size):
         logger.info(f'Checkpoints are stored under {str(checkpoints_dir) + name}...')
 
     cfg.data.do_process = False
-    train_data, val_data, test_data = get_TrajectoryDataLoader(cfg, name=experiment_dir + name)
-    
+    if cfg.data.class_class == 'TrajectoryDataLoader':
+        train_data, val_data, test_data = get_TrajectoryDataLoader(cfg, name=experiment_dir + name)
+    elif cfg.data.class_class == 'TrajectoryDataLoaderResample':
+        train_data, val_data, test_data = get_TrajectoryDataLoaderResample(cfg, name=experiment_dir + name)
+    else:
+        train_data, val_data, test_data = get_TrajectoryDataLoaderOrig(cfg, name=experiment_dir + name)
     # get dataloaders 
     if train_data is not None:
         if not cfg.multi_gpu:
@@ -1122,4 +1137,13 @@ def final_evaluation(model,
 
 
 if __name__ == '__main__':
+    '''
+    import argparse
+    parser = argparse.ArgumentParser(description='Train a 3D detector')
+    parser.add_argument('--local_rank', '--local-rank', type=int, default=0)
+    args = parser.parse_args()
+    if 'LOCAL_RANK' not in os.environ:
+        os.environ['LOCAL_RANK'] = str(args.local_rank)
+    quit()
+    '''
     main()

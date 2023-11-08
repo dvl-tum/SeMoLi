@@ -30,7 +30,11 @@ class Detector3D():
             precomp_dets=False,
             kNN=0,
             threshold=0.5,
-            median=False) -> None:
+            median_flow=False,
+            median_center=False,
+            min_area=False,
+            use_only_orig_for_bb=False,
+            ignore_dets_wo_orig_flow=False) -> None:
         
         self.detections = dict()
         self.log_id = -1
@@ -45,8 +49,12 @@ class Detector3D():
         self.out_path = os.path.join(out_path,  f'rank_{self.rank}')
         self.threshold = threshold
         self.kNN = kNN
-        self.median = median
-    
+        self.median_flow = median_flow
+        self.median_center = median_center
+        self.min_area = min_area
+        self.use_only_orig_for_bb = use_only_orig_for_bb
+        self.ignore_dets_wo_orig_flow = ignore_dets_wo_orig_flow
+
     def new_log_id(self, log_id):
         # save tracks to feather and reset variables
         if self.log_id != -1:
@@ -60,7 +68,7 @@ class Detector3D():
         # logger.info(f"New log id {log_id}...")
     
     def get_detections(self, points, traj, clusters, timestamps, log_id,
-                       gt_instance_ids, gt_instance_cats, last=False):
+                       gt_instance_ids, gt_instance_cats, last=False, resampled=None):
         # account for padding in from DistributedTestSampler
         if timestamps.cpu()[0, 0].item() in self.detections.keys():
             if last:
@@ -101,11 +109,19 @@ class Detector3D():
             point_cluster = points[clusters==c]
             # generate new detected trajectory
             traj_cluster = traj[clusters==c]
+            if resampled is None or not self.use_only_orig_for_bb:
+                resampled_cluster = None
+            else:
+                resampled_cluster = resampled[clusters==c]
+                if self.ignore_dets_wo_orig_flow and (~(resampled.bool())).sum() == 0:
+                    continue
 
             if self.kNN > 0:
                 point_cluster, mask = outlier_removal(point_cluster, threshold=self.threshold, kNN=self.kNN)
                 traj_cluster = traj_cluster[mask]
+                resampled_cluster = resampled[mask]
                 num_interior = torch.sum(clusters==c).item()
+                
             # filter if cluster too small
             if num_interior < max(2, self.num_interior):
                 continue
@@ -119,7 +135,10 @@ class Detector3D():
                 overlap=self.overlap,
                 gt_id=gt_id,
                 gt_cat=gt_cat, 
-                median=self.median))
+                median_flow=self.median_flow,
+                median_center=self.median_center,
+                min_area=self.min_area,
+                resampled=resampled_cluster.cpu() if resampled_cluster is not None else resampled_cluster))
         
         self.detections[timestamps.cpu()[0, 0].item()] = detections
 

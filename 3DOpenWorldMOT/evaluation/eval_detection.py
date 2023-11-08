@@ -109,7 +109,16 @@ def get_feather_files(
     if is_gt:
         # get file name
         split = os.path.basename(paths)
-        file = 'filtered_version_city_w0_withwaymovel.feather'
+        if split == 'val':
+            file = 'filtered_version_city.feather'
+            # file = 'filtered_version_city_w0_withwaymovel.feather'
+        else:
+            if not 'Argo' in paths:
+                file = 'filtered_version_city_w0_withwaymovel_w_num_interior_filtered.feather'
+                # file = 'filtered_version_city_w0.feather' 
+            else:
+                file = 'filtered_version.feather'
+        # file = 'filtered_version_city.feather'
         file = 'remove_non_drive_' + file if remove_non_drive else file
         file = 'remove_far_' + file if remove_far else file
         file = 'remove_non_move_' + file if remove_non_move else file
@@ -120,14 +129,16 @@ def get_feather_files(
         
         if is_waymo:
             path_filtered = os.path.join('/workspace/ExchangeWorkspace/Waymo_Converted_filtered', file)
-            # path_filtered = os.path.join('/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/Waymo_Converted_filtered', file)
+            #path_filtered = os.path.join('/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/Waymo_Converted_filtered', file)
             # path_filtered = os.path.join('/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/Waymo_Converted_filtered', file)
         else:
             path_filtered = os.path.join('/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/Argoverse2_filtered', file)
             # path_filtered = os.path.join('/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/Argoverse2_filtered', file)
+        print(path_filtered)
     
     if not is_gt or not os.path.isfile(path_filtered):
         df = None
+        print(paths)
         if os.path.isdir(paths):
             for i, path in enumerate(os.listdir(paths)):
                 if seq_list is not None:
@@ -143,6 +154,7 @@ def get_feather_files(
         else:
             df = feather.read_feather(paths)
             df = df[df['log_id'].isin(seq_list)]
+        
         if df['category'].dtypes != int:
 
             if not is_waymo:
@@ -378,7 +390,7 @@ def filter_seq(data, width=0):
 
 def visualize_whole(df, gf, name, base_dir='../../../'):
     split_dir = Path('/dvlresearch/jenny/Waymo_Converted_GT/val')
-    split_dir = Path('/workspace/Waymo_Converted_train//Waymo_Converted/train')
+    split_dir = Path('/workspace/Waymo_Converted_train/train')
     # split_dir = Path('/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/download_for_vis/Waymo_Converted_train/Waymo_Converted/train')
     loader = AV2SensorDataLoader(data_dir=split_dir, labels_dir=split_dir)
     for seq in df['log_id'].unique():
@@ -507,7 +519,11 @@ def eval_detection(
         velocity_evaluation=False,
         min_num_interior_pts=20,
         waymo_style=True,
-        heuristics=False):
+        heuristics=False,
+        remove_gt_with_pts_leq=-1,
+        inflate_bb=False,
+        use_aff_as_score=False,
+        store_input_to_eval=False):
     
     if os.path.isdir(trackers_folder) and not len(os.listdir(trackers_folder)):
         return None, np.array([0, 2, 1, 3.142, 0]), None
@@ -549,6 +565,9 @@ def eval_detection(
         gts = gts[np.logical_and(gts['tx_m'] > -50, gts['ty_m'] > -20)]
     print(f'Numer of gt after filter points waymo style {gts.shape}')
     
+    if remove_gt_with_pts_leq != -1:
+        gts = gts[gts['num_interior_filtered'] > remove_gt_with_pts_leq]
+
     if velocity_evaluation:
         use_matched_category = True
         gts_categories = np.ones(gts.shape[0])
@@ -568,17 +587,18 @@ def eval_detection(
         loader=loader,
         gt_folder=gt_folder,
         is_waymo=is_waymo)
+    dts = dts.astype({'timestamp_ns': np.int64})
     if 'filter_moving' in dts.keys():
         dts = dts[dts['filter_moving']]
+     
     dts['category'] = 1
     print(dts['category'].unique())
     dts = dts.drop_duplicates()
     print(f'Numer of detections {dts.shape[0]}')
     
-    #'''
     if heuristics:
-        dts = dts[np.logical_and(dts['height_m'] > 0.5, 
-                             np.logical_and(dts['length_m'] > 0.5, dts['width_m'] > 0.5))]  
+        dts = dts[np.logical_and(dts['height_m'] > 0.1,
+                             np.logical_and(dts['length_m'] > 0.1, dts['width_m'] > 0.1))]
         print(f'Numer of detections after size threshold {dts.shape[0]}')
         dts = dts[np.logical_or(dts['num_interior_pts'] > min_num_interior_pts, dts['num_interior_pts']==-1)]
         print(f'Numer of detections after num interior threshold {dts.shape[0]}')
@@ -588,7 +608,20 @@ def eval_detection(
         print(f'Numer of detections after removing objexts with l > 20 {dts.shape[0]}')
         dts = dts[dts['height_m']<4]
         print(f'Numer of detections after removing objexts with h > 4 {dts.shape[0]}')
-    # '''
+
+    if inflate_bb and not is_pp:
+        print('INFLATING BBs')
+        #dts['length_m'] = dts['length_m']  * 1.25 #(1 + 0.25 * np.exp(np.clip(-dts['length_m']+1.5, a_min=None, a_max=0)))
+        #dts['width_m'] = dts['width_m'] * 1.25 #(1 + 0.25  * np.exp(np.clip(-dts['width_m']+1.5, a_min=None, a_max=0)))
+        #dts['height_m'] = dts['height_m']  * 1.25 #(1 + 0.25 * np.exp(np.clip(-dts['height_m']+1.5, a_min=None, a_max=0)))
+        if is_waymo:
+            dts['length_m'] = dts['length_m'].clip(lower=1, upper=None)
+            dts['width_m'] = dts['width_m'].clip(lower=1, upper=None)
+            dts['height_m'] = dts['height_m'].clip(lower=2, upper=None) 
+        else:
+            dts['length_m'] = (1.25*dts['length_m']).clip(lower=0.75, upper=None)
+            dts['width_m'] = (1.25*dts['width_m']).clip(lower=0.75, upper=None)
+            dts['height_m'] = (1.25*dts['height_m']).clip(lower=1.75, upper=None)
     
     if waymo_style:
         dts = dts[np.logical_and(dts['tx_m'] < 50, dts['ty_m'] < 20)]
@@ -604,7 +637,7 @@ def eval_detection(
 
     if dts is None:
             return None, np.array([0, 2, 1, 3.142, 0]), None
-
+    
     if use_matched_category:
         filter_class = "NO_FILTER"
     
@@ -642,14 +675,28 @@ def eval_detection(
 
     if just_eval:
         print("Evaluate now...")
+
+    # dts['qw'] = 1
+    # dts['qz'] = 0
+    # gts['qw'] = 1
+    # gts['qz'] = 0
+    print(dts[['tx_m', 'ty_m', 'tz_m']])
+    print(gts[['tx_m', 'ty_m', 'tz_m']])
+
     dts = dts[dts['score'] > 0.1]
     gts_orig = gts #copy.deepcopy(gts)
     dts_orig = dts #copy.deepcopy(dts)
     smallest = 0.3 if is_pp else 0.2
+        
+    if store_input_to_eval:
+        print(f"\t Writing macthed detections to /workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/input_eval_{trackers_folder}/annotations.feather...")
+        os.makedirs(f'/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/input_eval_{trackers_folder}', exist_ok=True)
+        feather.write_feather(dts, f'/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/input_eval_{trackers_folder}/annotations.feather')
+
     for affinity, tp_thresh, threshs, n_jobs in zip(
         ['CENTER', 'IoU3D', 'IoU2D', 'SegIoU'], [2.0, 0.6, 0.6, 0.6], [(0.5, 1.0, 2.0, 4.0), (smallest, 0.4, 0.6, 0.8), (0.2, 0.4, 0.6, 0.99), (0.2, 0.4, 0.6, 0.8)], [8, 1, 1, 8]):
         
-        if affinity != 'IoU3D': # 'SegIoU':
+        if affinity != 'IoU3D': #and affinity != 'SegIoU':
             continue
 
         # Evaluate instances.
@@ -664,12 +711,12 @@ def eval_detection(
             categories : Tuple[str, ...] = tuple(x.value for x in CompetitionCategories)
         competition_cfg = DetectionCfg(
             dataset_dir=dataset_dir, 
-            eval_only_roi_instances=eval_only_roi_instances, 
             tp_threshold_m=tp_thresh,
             affinity_type=affinity,
             affinity_thresholds_m=threshs,
             categories=categories,
-            max_num_dts_per_category=100000)
+            max_num_dts_per_category=100000,
+            eval_only_roi_instances=False)
         
         print(f"\t {affinity}, # gt {gts_orig.shape[0]}, # dt {dts_orig.shape[0]}\n")
         dts, gts, metrics, np_tps, np_fns, _, all_results_df = evaluate(
@@ -682,7 +729,8 @@ def eval_detection(
             use_matched_category=use_matched_category,
             _class_dict=_class_dict,
             n_jobs=n_jobs,
-            filter_moving=filter_moving)
+            filter_moving=filter_moving,
+            use_aff_as_score=use_aff_as_score)
         
         if store_matched:
             print(f"\t Writing macthed detections to /workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/matched_{trackers_folder}/annotations_{affinity}.feather...")

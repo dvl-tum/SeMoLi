@@ -7,6 +7,7 @@ from scipy.stats import mode
 import matplotlib.pyplot as plt
 import os
 from collections import defaultdict
+from torch import multiprocessing as mp
 
 
 class DBSCAN_Intersection():
@@ -27,21 +28,44 @@ class DBSCAN_Intersection():
             min_samples=min_samples_pos, eps=thresh_pos, n_jobs=-1)
         self.model_traj = sklearn.cluster.DBSCAN(
             min_samples=min_samples_traj, eps=thresh_traj, n_jobs=-1)
-
+        mp.set_start_method('forkserver')
         self.input_traj = input_traj
         self.flow_thresh = flow_thresh
         self.dataset = dataset
         self.min_samples_after = min_samples_after
         self.visualization = visualization
     
-    def forward(self, clustering):
-        traj = clustering.traj.numpy()
-        pc = clustering['pc_list'].numpy()
-        timestamps = clustering['timestamps'].squeeze().numpy()
+    def forward(self, clustering, multiprocessing=False):
+        batch_idx = clustering._slice_dict['pc_list']
+        self.clustering = clustering
+        data_loader = enumerate(zip(batch_idx[:-1], batch_idx[1:]))
+        if multiprocessing:
+            batch_idx = clustering._slice_dict['pc_list']
+            data_loader = enumerate(zip(batch_idx[:-1], batch_idx[1:]))
+            self.clustering = clustering
+            labels = list()
+            with mp.Pool() as pool:
+                _labels = pool.map(self.cluster, data_loader, chunksize=None)
+                labels.append(_labels)
+        else:
+            data = 0, (batch_idx[:-1], batch_idx[1:])
+            labels = self.cluster(data)
+            labels = [labels]
+
+        return None, labels, None, None
+    
+    def cluster(self, data):
+        i, (start, end) = data
+        clustering = self.clustering
+        traj = clustering.traj[start:end].numpy()
+        pc = clustering['pc_list'][start:end].numpy()
+        if len(pc.shape) != 2:
+            pc = pc[0]
+        timestamps = clustering['timestamps'][i].squeeze().numpy()
 
         # if no moving point
         if traj.shape[0] == 0:
-            return None, [[]], None, None
+            return []
 
         if self.input_traj == 'traj':
             diff_traj = traj[:, :-1] - traj[:, 1:]
@@ -66,18 +90,17 @@ class DBSCAN_Intersection():
         elif self.input_traj == 'scene_flow':
             traj = traj[:, 1, :]
             # get mask to remove static points
-            mask = np.linalg.norm(traj, ord=2)
+            mask = np.linalg.norm(traj, ord=2, axis=1)
             time = timestamps[1]-timestamps[0]
             if 'waymo' in self.dataset:
                 time = time / np.power(10, 6.0) 
             else:
                 time = time / np.power(10, 9.0) 
             mask = mask / time
-
-            traj = traj # / time
+            traj = traj / time
             inp_traj = traj.reshape(traj.shape[0], -1)
 
-        labels = np.ones(mask.shape[0]) * -1
+        labels = np.ones(mask.shape) * -1
         
         # filter pos und traj
         idxs = np.where(mask > self.flow_thresh)[0]
@@ -85,10 +108,9 @@ class DBSCAN_Intersection():
         inp_pos = pc.reshape(pc.shape[0], -1)
         inp_pos = inp_pos[mask]
         inp_traj = inp_traj[mask]
-
         # if no points left
         if inp_traj.shape[0] == 0:
-            return None, [labels], None, None
+            return labels
         
         # get clustering
         clustering_pos = self.model_pos.fit(inp_pos) # only flow 0.0015
@@ -100,7 +122,29 @@ class DBSCAN_Intersection():
         labels_traj = clustering_traj.labels_
         if self.visualization:
             self.visualize(inp_pos, labels_traj, 'traj', timestamps[0])
+        '''
+        # take intersection
+        label_count = defaultdict(int)
+        i = 0
+        for c_pos in labels_pos.unique():
+            if c_pos == -1:
+                continue
+            pos_mask = labels_pos == c_pos
+            for c_traj in labels_traj.unique():
+                if c_traj == -1:
+                    continue
+                traj_mask = labels_traj == c_traj
+                intersection = np.logical_and(pos_mask, traj_mask)
+                labels[intersection] = i
+                label_count[i] = intersection.sum()
+                i += 1
 
+        if self.min_samples_after > 1:
+            for lab, count in label_count.items():
+                if count < self.min_samples_after:
+                    labels[labels==lab] = -1
+
+        '''
         # take intersection
         cluster_to_id = dict()
         label_count = defaultdict(int)
@@ -120,10 +164,11 @@ class DBSCAN_Intersection():
             if count < self.min_samples_after:
                 labels[labels==lab] = -1
         
+
         if self.visualization:
             self.visualize(pc.reshape(pc.shape[0], -1), labels, 'combined', timestamps[0])
         labels = labels.astype(int)
-        return None, [labels], None, None
+        return labels
     
     def visualize(self, position, clustering, name, time):
         os.makedirs('../../../vis_intersection', exist_ok=True)

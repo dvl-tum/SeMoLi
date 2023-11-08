@@ -456,18 +456,16 @@ class CuboidList:
         Returns:
             Constructed cuboids.
         """
-        
         if type(annotations_feather_path) == str:
             data = read_feather(annotations_feather_path)
         else: 
             data = annotations_feather_path
+        
         data = data[data['log_id'] == log_id]
         data = data[data['timestamp_ns'] == str(timestamp_ns)]
         data['num_interior_filtered'] = 0
         if get_moving_only:
             data = data[data['filter_moving']]
-        else:
-            data = data[~data['filter_moving']]
         if data.shape[0] == 0:
             return data
         data['num_interior_filtered'] = 0
@@ -499,7 +497,7 @@ class CuboidList:
                 masks.append(mask)
             else:
                 num_interior = pts.shape[0]
-                data.iloc[data.index[i], 'num_interior_filtered'] = num_interior
+                data.loc[data.index[i], 'num_interior_filtered'] = num_interior
         if return_mask:
             return np.stack(masks)
         else:
