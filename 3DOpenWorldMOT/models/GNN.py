@@ -310,6 +310,8 @@ class ClusterGNN(MessagePassing):
             node_dim += traj_channels
         if '_MMMV_' in self.node_attr:
             node_dim += 3
+        if '_V0_' in self.node_attr:
+            node_dim += 1
         if '_V_' in self.node_attr:
             node_dim += int(traj_channels/pos_channels) - 1
         
