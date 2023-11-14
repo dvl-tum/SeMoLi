@@ -67,25 +67,29 @@ class DBSCAN_Intersection():
         if traj.shape[0] == 0:
             return []
 
-        if self.input_traj == 'traj':
+        if self.input_traj == 'traj' or self.input_traj == 'MMMV':
             diff_traj = traj[:, :-1] - traj[:, 1:]
 
             # get mask to remove static points
-            mask = np.linalg.norm(diff_traj[:, :, :-1], ord=2, axis=2)
             time = timestamps[1:traj.shape[1]]-timestamps[:traj.shape[1]-1]
             if 'waymo' in self.dataset:
                 time = time / np.power(10, 6.0) 
             else:
                 time = time / np.power(10, 9.0)
 
-            mask = mask / time
-            mask = mask.mean(axis=1)
+            diff_traj = diff_traj / np.expand_dims(time, axis=1)
+            mask = np.linalg.norm(diff_traj[:, :, :-1], ord=2, axis=2)
+            mask = diff_traj.mean(axis=1)
 
             time = np.expand_dims(time, axis=1)
             time = np.tile(time, (1, 3))
-
-            traj = diff_traj # / time
-            inp_traj = traj.reshape(traj.shape[0], -1)
+            if self.input_traj == 'MMMV':
+                inp_traj = np.vstack([
+                    mask.min(axis=-1),
+                    mask.max(axis=-1),
+                    mask.mean(axis=-1)]).T
+            else:
+                inp_traj = diff_traj.reshape(diff_traj.shape[0], -1)
         
         elif self.input_traj == 'scene_flow':
             traj = traj[:, 1, :]

@@ -514,6 +514,7 @@ class ClusterGNN(MessagePassing):
         PT = postraj
         MDOT = mean_dist_over_time
         MMMV = min_mean_max_vel
+        V0 = initial_vel
         """
         # Given edge-level attention coefficients for source and target nodes,
         # we simply need to sum them up to "emulate" concatenation:
@@ -538,7 +539,7 @@ class ClusterGNN(MessagePassing):
         if '_PT_' in _type:
             node_attr.append((x1.view(num_objects, -1, pos_dim)+x2.unsqueeze(1)).view(num_objects, -1))
             node_dim += traj_dim
-        if '_MMMV_' in _type or '_V_' in _type:
+        if '_MMMV_' in _type or '_V_' in _type or '_V0_' in _type:
             _node_attr = x1.view(num_objects, -1, pos_dim)
             diff_time = timestamps[batch, 1:] - timestamps[batch, :-1]
             if 'argo' in self.dataset:
@@ -551,6 +552,9 @@ class ClusterGNN(MessagePassing):
             if '_V_' in _type:
                 node_attr.append(_node_attr)
                 node_dim += int(traj_dim/pos_dim) - 1
+            elif '_V0_' in _type:
+                node_attr.append(_node_attr[:, 0].unsqueeze(1))
+                node_dim += 1
             else:
                 _node_attr = torch.vstack([
                     _node_attr.min(dim=-1).values,
@@ -558,8 +562,8 @@ class ClusterGNN(MessagePassing):
                     _node_attr.mean(dim=-1)]).T
                 node_attr.append(_node_attr)
                 node_dim += 3
-
         node_attr = torch.hstack(node_attr).squeeze().float()
+
         return node_attr, node_dim
     
     def get_graph(self, node_attr, r=5, max_num_neighbors=16, batch_idx=None, type='radius', metric='euclidean', fast=False):
