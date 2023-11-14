@@ -75,6 +75,9 @@ def main(cfg):
     #    print(seq_list)
     #    print(detector_dir, cfg.filter_moving, '\n')
     # evaluate detection
+    inflate = 'detections_from_pp_sv2_format' not in detector_dir and cfg.inflate_bb 
+    print(f'Evaluating detections from {detector_dir} \n 1. on only moving objexts {cfg.filter_moving}, \n 2. using matched categories {cfg.use_matched_category} \n 3. using heuristics {cfg.heuristics} \n 4. filtering waymo style {cfg.waymo_style} \n 5. inflating bounding boxes {inflate}')
+
     _, detection_metric, _ = eval_detection.eval_detection(
             gt_folder=os.path.join(os.getcwd(), cfg.data.data_dir),
             trackers_folder=detector_dir,
@@ -97,7 +100,11 @@ def main(cfg):
             waymo_style=cfg.waymo_style,
             use_aff_as_score=False,
             inflate_bb=cfg.inflate_bb,
-            store_input_to_eval=cfg.store_input_to_eval)
+            min_num_interior_pts=cfg.detection_options.num_interior,
+            store_input_to_eval=cfg.store_input_to_eval,
+            discard_last_25=cfg.discard_last_25,
+            inflation_factor=cfg.inflation_factor)
+    
     print('\n\n')
 
 if __name__ == "__main__":

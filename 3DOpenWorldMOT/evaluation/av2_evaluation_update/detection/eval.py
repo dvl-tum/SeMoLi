@@ -379,6 +379,7 @@ def summarize_metrics(
         print("\t AVERAGE PRECISIONS ", average_precisions.loc[category].values)
         print("\t PRECISIONS ", precisions.loc[category].values)
         print("\t RECALLS ", recalls.loc[category].values)
+        print("\t F1 ", (2 * precisions.loc[category].values * recalls.loc[category].values)/(recalls.loc[category].values+precisions.loc[category].values))
         mean_average_precisions: NDArrayFloat = average_precisions.loc[category].to_numpy().mean()
 
         # Select only the true positives for each instance.

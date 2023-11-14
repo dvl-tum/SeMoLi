@@ -28,6 +28,7 @@ def get_seq_list_fixed_val(path, detection_set='train_gnn',percentage=1.0):
         save_path = f'/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/data_utils/new_seq_splits_Waymo_Converted_fixed_val/{percentage}_{detection_set}.txt'
     else:
         save_path = f'/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/data_utils/new_seq_splits_AV2_fixed_val/{percentage}_{detection_set}.txt'
+    print(save_path)
     if os.path.isfile(save_path):
         with open(save_path, 'r') as f:
             seqs = f.read()

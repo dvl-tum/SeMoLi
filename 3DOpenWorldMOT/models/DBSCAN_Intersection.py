@@ -28,7 +28,7 @@ class DBSCAN_Intersection():
             min_samples=min_samples_pos, eps=thresh_pos, n_jobs=-1)
         self.model_traj = sklearn.cluster.DBSCAN(
             min_samples=min_samples_traj, eps=thresh_traj, n_jobs=-1)
-        mp.set_start_method('forkserver')
+        # mp.set_start_method('forkserver')
         self.input_traj = input_traj
         self.flow_thresh = flow_thresh
         self.dataset = dataset

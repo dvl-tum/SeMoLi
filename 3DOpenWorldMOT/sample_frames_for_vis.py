@@ -83,7 +83,7 @@ def get_detections_from_feather_files(detection_set, sampled, split, argo=False)
             continue
         if not is_file:
             data = None
-
+    print(f'Store to sampled_for_visualization{_argo}/{split}/detections/{save_name}/detections.feather...')
     feather.write_feather(sampled_data, f'sampled_for_visualization{_argo}/{split}/detections/{save_name}/detections.feather')
 
 
@@ -118,10 +118,11 @@ if __name__ == "__main__":
 '/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/out/detections_val_gnn/DEBUG_GNN_ALL_PTS_RESAMPLE_FLOWMASK_0.5_0.1_all_egocomp_margin0.6_width25_nooracle_64_3_True_64_3_True_0.5_3.5_0.5_4_0.0001_0.01_16000__NS_MG_32_LN___P___MMMDPTT___PT_/val_gnn/'
             ]
     detection_sets = ['/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/out/detections_val_gnn/ABLATION_AV2_0.1_0.1_all_egocomp_margin0.6_width25_nooracle_64_3_True_64_3_True_0.5_3.5_0.5_4_3.162277660168379e-06_0.0031622776601683794_16000_16000__NS_MG_32_LN___P___MMMDPTT___PT_/val_gnn/']
-
-    argo = True
+    detection_sets = [#'/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/tracks/tracks_for_eval/registered_dets/DEBUG_GNN_PRECOMP_DETS_0.5_0.1_all_egocomp_margin0.6_width25_nooracle_64_3_True_64_3_True_0.5_3.5_0.5_4_0.0001_0.01_16000_16000__NS_MG_32_LN___P___MMMDPTT___PT_/1000_0.5_0_5_False_10_10_5_False_0.5_10/train/',
+            '/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/tracks/tracks_for_eval/tracked_dets/DEBUG_GNN_PRECOMP_DETS_0.5_0.1_all_egocomp_margin0.6_width25_nooracle_64_3_True_64_3_True_0.5_3.5_0.5_4_0.0001_0.01_16000_16000__NS_MG_32_LN___P___MMMDPTT___PT_/1000_0.5_0_5_False_10_10_5_False_0.5_10/train/']
+    argo = False
     for detection_set in detection_sets:
-        main(split='0.1_val_gnn', detection_set=detection_set, argo=True)
+        main(split='0.1_val_gnn', detection_set=detection_set, argo=argo)
     
 
 

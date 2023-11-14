@@ -109,11 +109,13 @@ class TrajectoryDataset(PyGDataset):
                 path=os.path.join(data_dir, split),
                 detection_set=detection_set,
                 percentage=self.percentage_data)
-        if 'detector' in detection_set:
+        
+        if 'detector' in detection_set or (detection_set == 'train_gnn' and percentage_data == 1.0):
             split = 'train' if 'train' in detection_set else 'val'
             self.already_evaluated = list()
             print(f'{detection_out_path}/{detection_set}')
-            self.already_evaluated = [os.path.basename(os.path.dirname(p)) for p in glob.glob(f'{detection_out_path}/*/{detection_set}/*/*')]
+            self.already_evaluated = [os.path.basename(os.path.dirname(p)) for p in glob.glob(f'{detection_out_path}/{detection_set}/*/*')]
+            print(len(self.already_evaluated), f'{detection_out_path}/{detection_set}/*/*')
         else:
             self.already_evaluated = list()
         self.class_dict = ARGOVERSE_CLASSES if 'Argo' in self.data_dir else WAYMO_CLASSES
@@ -143,7 +145,7 @@ class TrajectoryDataset(PyGDataset):
             
     @property
     def processed_paths(self):
-        print('getting processed paths')
+        print('getting processed paths', self.processed_dir, self.already_evaluated, self.seqs)
         if not self.do_process:
             seqs = [seq for seq in self.seqs if seq in os.listdir(self.processed_dir) and seq not in self.already_evaluated]
             print(f'{len(seqs)} to be evaluated, {len(self.already_evaluated)} were already there...')

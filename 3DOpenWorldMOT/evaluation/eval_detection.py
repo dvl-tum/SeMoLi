@@ -104,20 +104,28 @@ def get_feather_files(
         seq_list=None,
         loader=None,
         gt_folder=None, 
-        is_waymo=True):
+        is_waymo=True,
+        discard_last_25=False):
     
     if is_gt:
         # get file name
         split = os.path.basename(paths)
         if split == 'val':
-            file = 'filtered_version_city.feather'
-            # file = 'filtered_version_city_w0_withwaymovel.feather'
+            # file = 'filtered_version_city.feather'
+            file = 'filtered_version_city_w0_withwaymovel.feather'
         else:
             if not 'Argo' in paths:
-                file = 'filtered_version_city_w0_withwaymovel_w_num_interior_filtered.feather'
-                # file = 'filtered_version_city_w0.feather' 
+                if discard_last_25:
+                    file = 'filtered_version.feather'
+                else:
+                    # file = 'filtered_version_city_w0_withwaymovel_w_num_interior_filtered.feather'
+                    file = 'filtered_version_city_w0.feather' 
             else:
-                file = 'filtered_version.feather'
+                if discard_last_25:
+                    file = 'filtered_version.feather'
+                else:
+                    file = 'filtered_version_city_w0.feather'
+                # file = 'filtered_version.feather'
         # file = 'filtered_version_city.feather'
         file = 'remove_non_drive_' + file if remove_non_drive else file
         file = 'remove_far_' + file if remove_far else file
@@ -129,16 +137,16 @@ def get_feather_files(
         
         if is_waymo:
             path_filtered = os.path.join('/workspace/ExchangeWorkspace/Waymo_Converted_filtered', file)
-            #path_filtered = os.path.join('/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/Waymo_Converted_filtered', file)
+            # path_filtered = os.path.join('/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/Waymo_Converted_filtered', file)
             # path_filtered = os.path.join('/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/Waymo_Converted_filtered', file)
         else:
             path_filtered = os.path.join('/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/Argoverse2_filtered', file)
             # path_filtered = os.path.join('/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/Argoverse2_filtered', file)
-        print(path_filtered)
+        print(f'Looking for filtered gt file {path_filtered}')
     
     if not is_gt or not os.path.isfile(path_filtered):
         df = None
-        print(paths)
+        print(f'Loading from {paths}...')
         if os.path.isdir(paths):
             for i, path in enumerate(os.listdir(paths)):
                 if seq_list is not None:
@@ -523,7 +531,9 @@ def eval_detection(
         remove_gt_with_pts_leq=-1,
         inflate_bb=False,
         use_aff_as_score=False,
-        store_input_to_eval=False):
+        store_input_to_eval=False,
+        discard_last_25=False,
+        inflation_factor=1.0):
     
     if os.path.isdir(trackers_folder) and not len(os.listdir(trackers_folder)):
         return None, np.array([0, 2, 1, 3.142, 0]), None
@@ -537,7 +547,7 @@ def eval_detection(
 
     if just_eval:
         print("Loading data...")
-
+    print("Discard last 25 ", discard_last_25)
     gts = get_feather_files(
         gt_folder,
         is_gt=True,
@@ -549,7 +559,8 @@ def eval_detection(
         seq_list=seq_to_eval,
         loader=loader,
         gt_folder=gt_folder, 
-        is_waymo=is_waymo)
+        is_waymo=is_waymo,
+        discard_last_25=discard_last_25)
     # print((gts['filter_moving'] == (gts['velocities'] > remove_non_move_thresh)).all())
     # quit()
     # print(gts)
@@ -567,7 +578,7 @@ def eval_detection(
     
     if remove_gt_with_pts_leq != -1:
         gts = gts[gts['num_interior_filtered'] > remove_gt_with_pts_leq]
-
+    
     if velocity_evaluation:
         use_matched_category = True
         gts_categories = np.ones(gts.shape[0])
@@ -587,41 +598,44 @@ def eval_detection(
         loader=loader,
         gt_folder=gt_folder,
         is_waymo=is_waymo)
+    
+    if 'num_interior_filtered' in dts.columns:
+        dts = dts[dts['num_interior_filtered']>=1]
+
     dts = dts.astype({'timestamp_ns': np.int64})
     if 'filter_moving' in dts.keys():
         dts = dts[dts['filter_moving']]
      
-    dts['category'] = 1
+    # dts['category'] = 1
     print(dts['category'].unique())
     dts = dts.drop_duplicates()
     print(f'Numer of detections {dts.shape[0]}')
-    
     if heuristics:
-        dts = dts[np.logical_and(dts['height_m'] > 0.1,
-                             np.logical_and(dts['length_m'] > 0.1, dts['width_m'] > 0.1))]
+        # dts = dts[np.logical_and(dts['height_m'] > 0.1,
+        #                     np.logical_and(dts['length_m'] > 0.1, dts['width_m'] > 0.1))]
         print(f'Numer of detections after size threshold {dts.shape[0]}')
         dts = dts[np.logical_or(dts['num_interior_pts'] > min_num_interior_pts, dts['num_interior_pts']==-1)]
-        print(f'Numer of detections after num interior threshold {dts.shape[0]}')
+        '''print(f'Numer of detections after num interior threshold {dts.shape[0]}')
         dts = dts[dts['width_m']<5]
         print(f'Numer of detections after removing objexts with w > 5 {dts.shape[0]}')
         dts = dts[dts['length_m']<20]
         print(f'Numer of detections after removing objexts with l > 20 {dts.shape[0]}')
         dts = dts[dts['height_m']<4]
         print(f'Numer of detections after removing objexts with h > 4 {dts.shape[0]}')
-
+        '''
     if inflate_bb and not is_pp:
-        print('INFLATING BBs')
+        print('INFLATING BBs', is_waymo)
         #dts['length_m'] = dts['length_m']  * 1.25 #(1 + 0.25 * np.exp(np.clip(-dts['length_m']+1.5, a_min=None, a_max=0)))
         #dts['width_m'] = dts['width_m'] * 1.25 #(1 + 0.25  * np.exp(np.clip(-dts['width_m']+1.5, a_min=None, a_max=0)))
         #dts['height_m'] = dts['height_m']  * 1.25 #(1 + 0.25 * np.exp(np.clip(-dts['height_m']+1.5, a_min=None, a_max=0)))
         if is_waymo:
-            dts['length_m'] = dts['length_m'].clip(lower=1, upper=None)
-            dts['width_m'] = dts['width_m'].clip(lower=1, upper=None)
-            dts['height_m'] = dts['height_m'].clip(lower=2, upper=None) 
+            dts['length_m'] = (inflation_factor*dts['length_m']).clip(lower=1, upper=None)
+            dts['width_m'] = (inflation_factor*dts['width_m']).clip(lower=1, upper=None)
+            dts['height_m'] = (inflation_factor*dts['height_m']).clip(lower=2, upper=None) 
         else:
-            dts['length_m'] = (1.25*dts['length_m']).clip(lower=0.75, upper=None)
-            dts['width_m'] = (1.25*dts['width_m']).clip(lower=0.75, upper=None)
-            dts['height_m'] = (1.25*dts['height_m']).clip(lower=1.75, upper=None)
+            dts['length_m'] = (inflation_factor*dts['length_m']).clip(lower=0.75, upper=None)
+            dts['width_m'] = (inflation_factor*dts['width_m']).clip(lower=0.75, upper=None)
+            dts['height_m'] = (inflation_factor*dts['height_m']).clip(lower=1.75, upper=None)
     
     if waymo_style:
         dts = dts[np.logical_and(dts['tx_m'] < 50, dts['ty_m'] < 20)]
@@ -680,23 +694,23 @@ def eval_detection(
     # dts['qz'] = 0
     # gts['qw'] = 1
     # gts['qz'] = 0
-    print(dts[['tx_m', 'ty_m', 'tz_m']])
-    print(gts[['tx_m', 'ty_m', 'tz_m']])
 
     dts = dts[dts['score'] > 0.1]
     gts_orig = gts #copy.deepcopy(gts)
     dts_orig = dts #copy.deepcopy(dts)
-    smallest = 0.3 if is_pp else 0.2
+    smallest = 0.3 # if is_pp else 0.2
         
     if store_input_to_eval:
         print(f"\t Writing macthed detections to /workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/input_eval_{trackers_folder}/annotations.feather...")
         os.makedirs(f'/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/input_eval_{trackers_folder}', exist_ok=True)
         feather.write_feather(dts, f'/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/input_eval_{trackers_folder}/annotations.feather')
-
+        quit()
     for affinity, tp_thresh, threshs, n_jobs in zip(
         ['CENTER', 'IoU3D', 'IoU2D', 'SegIoU'], [2.0, 0.6, 0.6, 0.6], [(0.5, 1.0, 2.0, 4.0), (smallest, 0.4, 0.6, 0.8), (0.2, 0.4, 0.6, 0.99), (0.2, 0.4, 0.6, 0.8)], [8, 1, 1, 8]):
         
-        if affinity != 'IoU3D': #and affinity != 'SegIoU':
+        if affinity != 'IoU3D' and affinity != 'SegIoU':
+            continue
+        if affinity == 'SegIoU' and is_pp:
             continue
 
         # Evaluate instances.

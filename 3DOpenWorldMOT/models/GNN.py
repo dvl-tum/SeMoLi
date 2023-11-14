@@ -241,6 +241,7 @@ class ClusterGNN(MessagePassing):
             my_graph=True,
             oracle_node=False,
             oracle_edge=False,
+            oracle_cluster=False,
             dataset='waymo',
             layers_node=None,
             layers_edge=None,
@@ -401,6 +402,7 @@ class ClusterGNN(MessagePassing):
         self.min_samples = min_samples
         self.do_visualize = do_visualize
         self.my_graph = my_graph
+        self.oracle_cluster = oracle_cluster
         self.oracle_node = oracle_node
         self.oracle_edge = oracle_edge
         self.set_all_pos = set_all_pos
@@ -802,6 +804,11 @@ class ClusterGNN(MessagePassing):
     def corr_clustering(self, iter_data, method='connected_components'):
         i, (start, end) = iter_data
         edge_index, _node_score, _score, data, score, node_score, pc, rama_cuda, name = self.args
+        
+        if self.oracle_cluster:
+            clusters = data['point_instances'][start:end]
+            clusters[clusters == 0] = -1
+            return clusters.cpu().numpy()
 
         # get edge index and scores for current graph
         edge_mask = torch.logical_or(

@@ -40,6 +40,8 @@ waymo_style: True
 filter_class: 'CONVERT_ALL_TO_CARS'
 inflate_bb: True
 store_input_to_eval: False
+discard_last_25: False
+inflation_factor: 1.0
 
 tracker_options: # Extra options for the tracker
   a_threshold: 0.9
@@ -72,10 +74,15 @@ tracker_options: # Extra options for the tracker
   filter_by_width: 1000
   inact_patience: 5
   fixed_time: False
-  l_change_thresh: 10
-  w_change_thresh: 10
-  registration_len_thresh: 4
+  l_change_thresh: 0.5
+  w_change_thresh: 0.5
+  registration_len_thresh: 2
   min_pts_thresh: 0
+  mode: 'density'
+  density_thresh: 0
+  concat: True
+  means_before: True
+  avg_w_prev: False
 
 
 detection_options:                                                                       

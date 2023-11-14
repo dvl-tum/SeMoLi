@@ -13,13 +13,18 @@ from numpy.linalg import inv
 
 
 class ConstrainedICPRegistration():
-    def __init__(self, active_tracks, av2_loader, log_id, threshold=0.1, kNN=10, exp_weight_rot=0, registration_len_thresh=4, min_pts_thresh=25):
+    def __init__(self, active_tracks, av2_loader, log_id, threshold=0.1, kNN=10, exp_weight_rot=0, registration_len_thresh=4, min_pts_thresh=25, mode='density', density_thresh=0.005, concat=True, means_before=True, avg_w_prev=False):
         self.active_tracks = active_tracks
         self.av2_loader = av2_loader
         self.min_pts_thresh = min_pts_thresh
         self.log_id = log_id
         self.registration_len_thresh = registration_len_thresh
         self.ordered_timestamps = av2_loader.get_ordered_log_lidar_timestamps(log_id)
+        self.mode = mode
+        self.density_thresh = density_thresh
+        self.concat = concat
+        self.means_before = means_before
+        self.avg_w_prev = avg_w_prev
 
     def load_pointclouds(self, pt1, pt2, return_numpy=False):
         pc1_centroid = pt1.mean(axis=0)
@@ -84,8 +89,7 @@ class ConstrainedICPRegistration():
                 inits[12],
                 o3.TransformationEstimationPointToPoint(with_constraint=with_constraint, with_scaling=False),
                 o3.registration.ICPConvergenceCriteria(max_iteration=its))
-        else:
-            print('Success')
+        
         pc1.transform(reg_p2p.transformation)
         rotation = reg_p2p.transformation[:-1, :-1]
         translation = reg_p2p.transformation[:-1, -1]
@@ -100,16 +104,29 @@ class ConstrainedICPRegistration():
             dets = copy.deepcopy(track.detections)
             # we start from timestep with most points and then go
             # from max -> end -> start -> max
-            max_interior_idx = torch.argmax(torch.tensor([d.num_interior for d in track.detections])).item()
-            max_interior = torch.max(torch.tensor([d.num_interior for d in track.detections])).item()
+            densities = [d.pts_density for d in track.detections]
+            lwh_diff = [track.detections[i+1].lwh-track.detections[i].lwh for i in range(len(track.detections)-1)]
+            trans_diff = [track.detections[i+1].translation-track.detections[i].translation for i in range(len(track.detections)-1)]
+            
+            if self.mode == 'num_interior':
+                max_interior_idx = torch.argmax(torch.tensor([d.num_interior for d in track.detections])).item()
+                max_interior = torch.max(torch.tensor([d.num_interior for d in track.detections])).item()
+            else:
+                max_interior_idx = torch.argmax(torch.tensor(densities)).item()
+                max_interior = torch.max(torch.tensor(densities)).item()
+
             max_interior_pc = torch.atleast_2d(track._get_canonical_points(i=max_interior_idx))
             max_lwh = track.detections[max_interior_idx].lwh
-            print(len(track), track.min_num_interior)
-            if len(track) > self.registration_len_thresh and track.min_num_interior >= self.min_pts_thresh:
+            #print(len(track), track.min_num_interior)
+
+            if len(track) > self.registration_len_thresh and track.min_num_interior >= self.min_pts_thresh and sum(densities)/len(densities) > self.density_thresh:
+                print(self.log_id, track.track_id, track.min_num_interior, len(track), sum(densities)/len(densities), min(densities), sum(lwh_diff)/len(lwh_diff), max([torch.linalg.norm(d) for d in lwh_diff]), sum(trans_diff)/len(trans_diff), min([torch.linalg.norm(d) for d in trans_diff]))
+
                 # take all pcs and normalize them
                 times = [d.timestamps[0, 0].item() for d in track.detections]
-                
-                pcs = [track._get_canonical_points(i=i) for i in range(len(track))] 
+                track.resample()
+                pcs = [track.detections[i].resampled_pc for i in range(len(track))] 
+                # pcs = [track._get_canonical_points(i=i) for i in range(len(track))] 
                 pcs = [track._convert_time(times[i], times[max_interior_idx], self.av2_loader, pcs[i]) for i in range(len(track))]
                 means = [pcs[i].mean(0) for i in range(len(track))]
                 pcs = [pcs[i]-means[i] for i in range(len(track))]
@@ -129,10 +146,11 @@ class ConstrainedICPRegistration():
                 lwh_tgt = track.detections[max_interior_idx].lwh
                 _alpha_tgt = track.detections[max_interior_idx].alpha
                 _, alpha_tgt = get_alpha_rot_t0_to_t1(0, 1, trajs[max_interior_idx])
-                _pc_tgt = pc_tgt
                 for iterator, increment in zip(iterators, increments):
+                    if not self.concat:
+                        pc_tgt = pcs[max_interior_idx]
                     for i in iterator:
-                        pc_increment, _ = outlier_removal(pcs[i+increment], threshold=0.5, kNN=10)
+                        pc_increment = pcs[i+increment]
                         # ICP
                         _alpha_src = track.detections[i+increment].alpha
                         _, alpha_src = get_alpha_rot_t0_to_t1(0, 1, trajs[i+increment])
@@ -142,12 +160,16 @@ class ConstrainedICPRegistration():
                             lwh_tgt,
                             alpha_tgt,
                             alpha_src)
-                    
-                        pc_tgt = np.concatenate([pc_tgt, pc_increment_registered])
                         tgt_SE3_src[i+increment] = SE3(rotation=rotation, translation=translation)
+
                         #  concatenate cano points at t+increment and registered points as
-                        # point cloud for next timestamp / final point cloud
-                pc_tgt, _ = outlier_removal(torch.from_numpy(pc_tgt), threshold=0.5, kNN=10)
+                        if self.concat:
+                            pc_tgt = np.concatenate([pc_tgt, pc_increment_registered])
+                        
+                # remove outliers
+                if type(pc_tgt) == np.ndarray:
+                    pc_tgt = torch.from_numpy(pc_tgt)
+                pc_tgt, _ = outlier_removal(pc_tgt, threshold=0.5, kNN=10)
                 pc_tgt = pc_tgt.numpy()
 
                 rot = track.detections[max_interior_idx].rot
@@ -155,10 +177,17 @@ class ConstrainedICPRegistration():
                     [torch.cos(alpha_tgt), -torch.sin(alpha_tgt), 0],
                     [torch.sin(alpha_tgt), torch.cos(alpha_tgt), 0],
                     [0, 0, 1]]).double()
-                lwh, translation_tgt = get_rotated_center_and_lwh(torch.from_numpy(pc_tgt), rot)
-                track.detections[max_interior_idx].translation = translation_tgt + means[max_interior_idx]
+
+                # get bounding box with or withou means
+                if not self.means_before:
+                    lwh, translation_tgt = get_rotated_center_and_lwh(torch.from_numpy(pc_tgt), rot)
+                    track.detections[max_interior_idx].translation = translation_tgt + means[max_interior_idx]
+                else:
+                    lwh, translation_tgt = get_rotated_center_and_lwh(torch.from_numpy(pc_tgt) + means[max_interior_idx], rot)
+                    track.detections[max_interior_idx].translation = translation_tgt
                 track.detections[max_interior_idx].lwh = lwh
 
+                # propagate bounding box
                 max_to_end = range(max_interior_idx, len(track)-1)
                 max_to_start = range(max_interior_idx, 0, -1)
                 iterators = [max_to_end, max_to_start]
@@ -166,13 +195,26 @@ class ConstrainedICPRegistration():
                 for iterator, increment in zip(iterators, increments):
                     translation = torch.atleast_2d(translation_tgt)
                     for i in iterator:
+                        # transform translation
                         translation = torch.atleast_2d(translation_tgt)
                         translation =  tgt_SE3_src[i+increment].inverse().transform_point_cloud(translation)
                         _translation = track._convert_time(times[max_interior_idx], times[i+increment], self.av2_loader, translation).squeeze()
-                        track.detections[i+increment].translation = _translation + means[i+increment]
+                        
+                        # add means of not before and take avergae if wanted
+                        if self.avg_w_prev:
+                            keep = track.detections[i+increment].translation
+                        
+                        if not self.means_before:
+                            track.detections[i+increment].translation = _translation + means[i+increment]
+                        else:
+                            track.detections[i+increment].translation = _translation
+                        
+                        if self.avg_w_prev:
+                            track.detections[i+increment].translation = (keep + track.detections[i+increment].translation) / 2
+                        
                         track.detections[i+increment].lwh = lwh
 
-                self.visualize(dets, track.detections, track.track_id, pc_tgt, self.log_id, [], [torch.from_numpy(pc_tgt)+means[max_interior_idx]])            
+                # self.visualize(dets, track.detections, track.track_id, pc_tgt, self.log_id, [], [torch.from_numpy(pc_tgt)+means[max_interior_idx]])            
 
                 # self.visualize(list(), list(), track.track_id, registered_pc, self.log_id, [track._get_canonical_points(i=i) for i in range(len(track))], [registered_pc])            
                 assert len(dets) == len(track.detections)

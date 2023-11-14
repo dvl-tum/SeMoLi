@@ -35,7 +35,7 @@ class InitialDetProcessor():
                  detection_set, percentage, a_threshold, i_threshold, len_thresh, outlier_threshold,
                  outlier_kNN, max_time_track, filter_by_width, fixed_time, l_change_thresh,
                  w_change_thresh, inact_patience, use_temporal_weight_track, exp_weight_rot, 
-                 registration_len_thresh, min_pts_thresh):
+                 registration_len_thresh, min_pts_thresh, mode, density_thresh, concat, means_before, avg_w_prev):
         self.every_x_frame = every_x_frame
         self.overlap = overlap
         self.av2_loader = av2_loader
@@ -68,6 +68,11 @@ class InitialDetProcessor():
         self.exp_weight_rot = exp_weight_rot
         self.min_pts_thresh = min_pts_thresh
         self.registration_len_thresh = registration_len_thresh
+        self.mode = mode
+        self.density_thresh = density_thresh
+        self.concat = concat
+        self.means_before = means_before
+        self.avg_w_prev = avg_w_prev 
 
     def track(self, log_id, split, detections=None):
         tracker = self._tracker(
@@ -110,7 +115,8 @@ class InitialDetProcessor():
             self.outlier_kNN,
             self.exp_weight_rot,
             self.registration_len_thresh,
-            self.min_pts_thresh).register()
+            self.min_pts_thresh,
+            self.mode, self.density_thresh, self.concat, self.means_before, self.avg_w_prev).register()
         # p = f'{self.registered_dets_path}/{self.split}/{log_id}'
         # if os.path.isdir(p):
         #     shutil.rmtree(p)
@@ -218,13 +224,14 @@ def main(cfg):
         # cfg.tracker_options.inact_patience = t
         # print(f"\n \n {t} \n")
 
-    _params = f'{cfg.tracker_options.filter_by_width}_{cfg.tracker_options.a_threshold}_{cfg.tracker_options.len_thresh}_{cfg.tracker_options.max_time_track}_{cfg.tracker_options.fixed_time}_{cfg.tracker_options.l_change_thresh}_{cfg.tracker_options.w_change_thresh}_{cfg.tracker_options.inact_patience}_{cfg.tracker_options.use_temporal_weight_track}_{cfg.tracker_options.outlier_threshold}_{cfg.tracker_options.outlier_kNN}'
-    print(_params)
+    _params_track = f'{cfg.tracker_options.filter_by_width}_{cfg.tracker_options.a_threshold}_{cfg.tracker_options.len_thresh}_{cfg.tracker_options.max_time_track}_{cfg.tracker_options.fixed_time}_{cfg.tracker_options.l_change_thresh}_{cfg.tracker_options.w_change_thresh}_{cfg.tracker_options.inact_patience}_{cfg.tracker_options.use_temporal_weight_track}'
+    print(_params_track)
+    _params_reg = f'{cfg.tracker_options.outlier_threshold}_{cfg.tracker_options.outlier_kNN}_{cfg.tracker_options.mode}_{cfg.tracker_options.density_thresh}_{cfg.tracker_options.concat}_{cfg.tracker_options.means_before}_{cfg.tracker_options.avg_w_prev}_{cfg.tracker_options.min_pts_thresh}_{cfg.tracker_options.registration_len_thresh}'
+    print(_params_reg)
     
     cfg.tracker_options.initial_dets = f'{cfg.tracker_options.initial_dets}/{cfg.tracker_options.model}'
-    cfg.tracker_options.collapsed_dets = f'{cfg.tracker_options.collapsed_dets}/{cfg.tracker_options.model}/{_params}' 
-    cfg.tracker_options.tracked_dets = f'{cfg.tracker_options.tracked_dets}/{cfg.tracker_options.model}/{_params}'
-    cfg.tracker_options.registered_dets = f'{cfg.tracker_options.registered_dets}/{cfg.tracker_options.model}/{_params}'
+    cfg.tracker_options.tracked_dets = f'{cfg.tracker_options.tracked_dets}/{cfg.tracker_options.model}/{_params_track}'
+    cfg.tracker_options.registered_dets = f'{cfg.tracker_options.registered_dets}/{cfg.tracker_options.model}/{_params_reg}'
     print(cfg.tracker_options.registered_dets)
     
     results_df = _main(cfg, results_df=results_df)
@@ -324,8 +331,8 @@ def track(rank, cfg, world_size):
         seq_name, dataset_path, gt_path, split, detection_set, percentage = seq_name[0], dataset_path[0], gt_path[0], split[0], detection_set[0], percentage[0]
         # if os.path.isdir(os.path.join(cfg.tracker_options.out_path_for_eval, cfg.tracker_options.registered_dets, split, seq_name)):
         #     continue
-        if '10212406498497081993' not in seq_name:
-            continue
+        # if '10212406498497081993' not in seq_name:
+        #     continue
         loader = AV2SensorDataLoader(data_dir=Path(f'{cfg.data.data_dir}_{split}/{split}'), labels_dir=Path(f'{cfg.data.data_dir}_{split}/{split}'))    
         detsprocessor = InitialDetProcessor(
             tracker_type=cfg.tracker_options.tracker_type,
@@ -359,7 +366,12 @@ def track(rank, cfg, world_size):
             use_temporal_weight_track=cfg.tracker_options.use_temporal_weight_track,
             exp_weight_rot=cfg.tracker_options.exp_weight_rot,
             registration_len_thresh=cfg.tracker_options.registration_len_thresh,
-            min_pts_thresh=cfg.tracker_options.min_pts_thresh)
+            min_pts_thresh=cfg.tracker_options.min_pts_thresh,
+            mode=cfg.tracker_options.mode,
+            density_thresh=cfg.tracker_options.density_thresh,
+            concat=cfg.tracker_options.concat,
+            means_before=cfg.tracker_options.means_before,
+            avg_w_prev=cfg.tracker_options.avg_w_prev)
         detections = None
         tracks = None
         if cfg.tracker_options.convert_initial:
@@ -387,4 +399,3 @@ def track(rank, cfg, world_size):
 if __name__ == "__main__":
         main()
 
-        

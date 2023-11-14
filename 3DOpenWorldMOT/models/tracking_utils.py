@@ -12,7 +12,7 @@ from pyarrow import feather
 import pandas as pd
 import copy
 from av2.geometry.se3 import SE3
-
+from av2.structures.cuboid import Cuboid
 
 _class_dict = {
     1: 'REGULAR_VEHICLE',
@@ -277,6 +277,26 @@ class Track():
             return result
         else:
             raise StopIteration
+        
+    def resample(self, gt_path='/workspace/Waymo_Converted_train/train'):
+        for d in self.detections:
+            p = os.path.join(gt_path, self.log_id, 'sensors/lidar', f'{d.timestamp.item()}.feather')
+            pc = feather.read_feather(p)
+            pc = pc[pc['non_ground_pts_rc']]
+            pc = pc[['x', 'y', 'z']].values
+            ego_SE3_object = SE3(rotation=d.rot.numpy(), translation=d.translation.numpy())
+            cuboid = Cuboid(
+                dst_SE3_object=ego_SE3_object,
+                length_m=d.lwh[0],
+                width_m=d.lwh[1],
+                height_m=d.lwh[2],
+                category='REGULAR_VEHICLE',
+                timestamp_ns=d.timestamp.item(),
+                        track_id='-1'
+                )
+            pts, mask = cuboid.compute_interior_points(pc)
+            d.resampled_pc = torch.from_numpy(pts)
+            # print(d.canonical_points.shape, d.resampled_pc.shape)
 
 
 class Detection():
@@ -542,8 +562,6 @@ def load_initial_detections(out_path, split, seq=None, tracks=False, every_x_fra
         return detections
     print('loading...', len(os.listdir(p)))
     for i, d in enumerate(os.listdir(p)):
-        if i% 50 == 0:
-            print(i, len(os.listdir(p)))
         dict_key = int(d.split('_')[0])
 
         if tracks:

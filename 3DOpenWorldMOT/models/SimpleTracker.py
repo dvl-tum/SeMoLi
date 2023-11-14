@@ -321,10 +321,10 @@ class SimpleTracker():
                     weight = torch.ones(traj_lens[i])
                     weight = weight/weight.sum()
                 weight = weight.to(device)
-                l_change_2d[k, i] = (torch.abs(propagared_bbs_tracks[i]['lwh'][:, 0]-\
-                                      propagared_bbs_dets[k]['lwh'][:traj_lens[i], 0]).float()).mean()
-                h_change_2d[k, i] = (torch.abs(propagared_bbs_tracks[i]['lwh'][:, 1]-\
-                                      propagared_bbs_dets[k]['lwh'][:traj_lens[i], 1]).float()).mean()
+                l_change_2d[k, i] = ((torch.abs(propagared_bbs_tracks[i]['lwh'][:, 0]-\
+                                      propagared_bbs_dets[k]['lwh'][:traj_lens[i], 0]).float())/(0.5*propagared_bbs_tracks[i]['lwh'][:, 0]+0.5*propagared_bbs_tracks[i]['lwh'][:, 1])).mean()
+                h_change_2d[k, i] = ((torch.abs(propagared_bbs_tracks[i]['lwh'][:, 1]-\
+                                      propagared_bbs_dets[k]['lwh'][:traj_lens[i], 1]).float())/(0.5*propagared_bbs_tracks[i]['lwh'][:, 1]+0.5*propagared_bbs_dets[k]['lwh'][:traj_lens[i], 1])).mean()
                 l2_center_2d[k, i] = (weight * self.pdist(propagared_bbs_tracks[i]['translation'], 
                                        propagared_bbs_dets[k]['translation'][:traj_lens[i]])).mean()                
                 bb_iou_2d[k, i] = 1 - (weight * IoUs2D(propagared_bbs_tracks[i]['xylwa'].unsqueeze(0), 

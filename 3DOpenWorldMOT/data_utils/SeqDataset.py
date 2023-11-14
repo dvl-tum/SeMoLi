@@ -59,7 +59,7 @@ class MOT3DSeqDataset:
             self.gts = load_gt(self.seq_name, self.gt_path)
 
         # Add extra measurements
-        self._add_extra_det_features()
+        # self._add_extra_det_features()
 
     def _assign_gt(self):
         """

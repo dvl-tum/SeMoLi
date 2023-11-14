@@ -98,13 +98,13 @@ class Detector3D():
             traj = traj.to(self.rank)
 
         for c in torch.unique(clusters):
+            # filter if 'junk' cluster
+            if c == -1:
+                continue
             num_interior = torch.sum(clusters==c).item()
             gt_id = (torch.bincount(gt_instance_ids[clusters==c]).argmax()).item()
             gt_cat = (torch.bincount(gt_instance_cats[clusters==c]).argmax()).item()
 
-            # filter if 'junk' cluster
-            if c == -1:
-                continue
             # get points, bounding boxes
             point_cluster = points[clusters==c]
             # generate new detected trajectory
