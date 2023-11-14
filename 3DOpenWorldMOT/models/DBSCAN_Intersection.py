@@ -79,7 +79,6 @@ class DBSCAN_Intersection():
 
             diff_traj = diff_traj / np.expand_dims(time, axis=1)
             mask = np.linalg.norm(diff_traj[:, :, :-1], ord=2, axis=2)
-            mask = diff_traj.mean(axis=1)
 
             time = np.expand_dims(time, axis=1)
             time = np.tile(time, (1, 3))
@@ -90,6 +89,7 @@ class DBSCAN_Intersection():
                     mask.mean(axis=-1)]).T
             else:
                 inp_traj = diff_traj.reshape(diff_traj.shape[0], -1)
+            mask = mask.mean(axis=1)
         
         elif self.input_traj == 'scene_flow':
             traj = traj[:, 1, :]
@@ -112,6 +112,7 @@ class DBSCAN_Intersection():
         inp_pos = pc.reshape(pc.shape[0], -1)
         inp_pos = inp_pos[mask]
         inp_traj = inp_traj[mask]
+
         # if no points left
         if inp_traj.shape[0] == 0:
             return labels
