@@ -36,6 +36,8 @@ class TruePositiveErrorNames(str, Enum):
     ATE = "ATE"
     ASE = "ASE"
     AOE = "AOE"
+    IoV = "IoV"
+    RelVol = "RelVol"
 
 
 @unique
