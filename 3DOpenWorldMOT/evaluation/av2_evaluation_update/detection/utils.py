@@ -101,6 +101,8 @@ class DetectionCfg:
             self.tp_threshold_m,
             MAX_SCALE_ERROR,
             MAX_YAW_RAD_ERROR,
+            1,
+            1
         )
 
 
