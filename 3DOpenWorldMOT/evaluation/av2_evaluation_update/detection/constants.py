@@ -47,6 +47,8 @@ class MetricNames(str, Enum):
     ASE = TruePositiveErrorNames.ASE.value
     AOE = TruePositiveErrorNames.AOE.value
     CDS = "CDS"
+    IoV = "IoV"
+    RelVol = "RelVol"
 
 
 @unique
@@ -113,6 +115,8 @@ class DistanceType(str, Enum):
     TRANSLATION = "TRANSLATION"
     SCALE = "SCALE"
     ORIENTATION = "ORIENTATION"
+    IoV = "IoV"
+    RelVol = "RelVol"
 
 
 @unique
