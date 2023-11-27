@@ -102,7 +102,7 @@ class TrajectoryDataset(PyGDataset):
                 self.seqs = ['10023947602400723454'] #['16473613811052081539']
             else:
                 self.seqs = ['10023947602400723454'] # ['2400780041057579262']
-            self.seqs = ['13310437789759009684']
+            self.seqs = ['2400780041057579262']
         else:
             # self.seqs = get_seq_list(
             self.seqs = get_seq_list_fixed_val(

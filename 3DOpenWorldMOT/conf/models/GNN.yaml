@@ -47,7 +47,7 @@ hyperparams:
         size: 64
         num_layers: 3
         reuse: ${models.hyperparams.layers_edge.reuse}
-    gradient_checkpointing: ${gradient_checkpointing}
+    gradient_checkpointing: ${training.gradient_checkpointing}
     deep_supervision: False
 loss_hyperparams:
     bce_loss: True

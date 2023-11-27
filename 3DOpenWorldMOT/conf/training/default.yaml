@@ -7,8 +7,6 @@ eval_corr_every_x: 101
 num_workers: 64
 batch_size: 8
 batch_size_val: 2
-shuffle: True
-gpu: 0 # -1 -> no cuda otherwise takes the specified index
 optim:
   base_lr: 0.01
   weight_decay: 1e-4
@@ -26,17 +24,9 @@ optim:
       bn_decay: 0.9
       decay_step: 20
       bn_clip: 1e-2
-weight_name: "latest" # Used during resume, select with model to load from [miou, macc, acc..., latest]
-checkpoint_dir: ""
-  
-
-# Those arguments within experiment defines which model, dataset and task to be created for benchmarking
-# parameters for Weights and Biases
-wandb:
-  entity: ""
-  project: "3DOWMOT"
-  log: True
-  notes:
-  name:
-  config:
-    model_name: ${model_name}
+just_eval: False     
+multi_gpu: False
+half_precision: True
+gradient_checkpointing: False
+wandb: False
+out_path: '/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT'
