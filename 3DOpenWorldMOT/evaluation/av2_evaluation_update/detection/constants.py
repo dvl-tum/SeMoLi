@@ -36,8 +36,6 @@ class TruePositiveErrorNames(str, Enum):
     ATE = "ATE"
     ASE = "ASE"
     AOE = "AOE"
-    IoV = "IoV"
-    RelVol = "RelVol"
 
 
 @unique
@@ -49,8 +47,6 @@ class MetricNames(str, Enum):
     ASE = TruePositiveErrorNames.ASE.value
     AOE = TruePositiveErrorNames.AOE.value
     CDS = "CDS"
-    IoV = "IoV"
-    RelVol = "RelVol"
 
 
 @unique
@@ -117,8 +113,6 @@ class DistanceType(str, Enum):
     TRANSLATION = "TRANSLATION"
     SCALE = "SCALE"
     ORIENTATION = "ORIENTATION"
-    IoV = "IoV"
-    RelVol = "RelVol"
 
 
 @unique
@@ -133,3 +127,4 @@ class FilterMetricType(str, Enum):
     """Metric used to filter cuboids for evaluation."""
 
     EUCLIDEAN = "EUCLIDEAN"
+
