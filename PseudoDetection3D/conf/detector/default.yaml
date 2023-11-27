@@ -1,0 +1,10 @@
+overlap: 5
+num_interior: 0
+precomp_dets: False
+kNN: 0
+threshold: 0.5
+median_flow: False
+median_center: False
+min_area: False
+use_only_orig_for_bb: False
+ignore_dets_wo_orig_flow: False
