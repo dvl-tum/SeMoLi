@@ -23,13 +23,21 @@ def get_samples(file_path='data_utils/new_seq_splits_Waymo_Converted_fixed_val/'
     if not argo:
         train_data = feather.read_feather('/workspace/ExchangeWorkspace/Waymo_Converted_filtered/train_1.0_per_frame_remove_non_move_remove_far_filtered_version_city.feather')
     else:
-        train_data = feather.read_feather('Argoverse2_filtered/train_1.0_per_frame_remove_non_move_remove_far_filtered_version.feather')
+        train_data = feather.read_feather('Argoverse2_filtered/val_1.0_per_frame_remove_non_move_remove_far_filtered_version.feather')
     train_data = train_data[train_data['log_id'].isin(seqs)]
     sampled = dict()
-    for seq in seqs:
+    count = 10
+    print(train_data['log_id'].unique().shape)
+    for i, seq in enumerate(seqs):
+        if i == count:
+            break
         timestamps = train_data[train_data['log_id']==seq]['timestamp_ns'].unique().tolist()
+        print( train_data[train_data['log_id']==seq].shape[0])
+        if train_data[train_data['log_id']==seq].shape[0] == 0:
+            continue
         times = random.choices(timestamps, k=3)
         sampled[seq] = times
+    quit()
     with open(sampled_path, 'wb') as save_file: 
         pickle.dump(sampled, save_file)
 
@@ -121,8 +129,11 @@ if __name__ == "__main__":
     detection_sets = [#'/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/tracks/tracks_for_eval/registered_dets/DEBUG_GNN_PRECOMP_DETS_0.5_0.1_all_egocomp_margin0.6_width25_nooracle_64_3_True_64_3_True_0.5_3.5_0.5_4_0.0001_0.01_16000_16000__NS_MG_32_LN___P___MMMDPTT___PT_/1000_0.5_0_5_False_10_10_5_False_0.5_10/train/',
             '/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/tracks/tracks_for_eval/tracked_dets/DEBUG_GNN_PRECOMP_DETS_0.5_0.1_all_egocomp_margin0.6_width25_nooracle_64_3_True_64_3_True_0.5_3.5_0.5_4_0.0001_0.01_16000_16000__NS_MG_32_LN___P___MMMDPTT___PT_/1000_0.5_0_5_False_10_10_5_False_0.5_10/train/']
     argo = False
+    detection_sets = [
+            # '/workspace/ExchangeWorkspace/detections_from_pp_sv2_format/pointpillars_hv_secfpn_sbn-all_16xb2-2x_waymo-3d-car_GNN_10_feather_ALL_three_anchors_pos_based_av2_1.0_1.0_False_False_train_gnn_AV2_ABL_0.9_0.5_1.0_all_egoco/1.0_val_evaluation.feather',
+            '/workspace/ExchangeWorkspace/detections_from_pp_sv2_format/pointpillars_hv_secfpn_sbn-all_16xb2-2x_waymo-3d-car_GNN_10_feather_ALL_three_anchors_pos_based_av2_1.0_1.0_True_True_train_gnn_ArgoFiltered_GT/1.0_val_evaluation.feather'] 
     for detection_set in detection_sets:
-        main(split='0.1_val_gnn', detection_set=detection_set, argo=argo)
+        main(split='1.0_val_evaluation', detection_set=detection_set, argo=argo)
     
 
 

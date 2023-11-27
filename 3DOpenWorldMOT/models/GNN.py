@@ -716,15 +716,6 @@ class ClusterGNN(MessagePassing):
                 edge_index = self.get_graph_VEL_POS(graph_attr, pc, r=self.r, max_num_neighbors=k, batch_idx=batch_idx)
         else:
             edge_index = data['edge_index']
-            
-        
-        for k, (i, j) in enumerate(zip(batch_idx[1:], batch_idx[:-1])):
-            k, i, j = 0, batch_idx[1], batch_idx[0]
-            e = edge_index[:, torch.logical_and(edge_index[0]>=j, edge_index[0]<i)]-j
-            pi = data['point_instances'][j:i]
-            colors = [rgb_colors[p.item()] for p in pi]
-            self.visualize(torch.arange(i-j), e, pc[j:i], torch.ones(i-j), data.timestamps[k, 0], data=data, colors=colors)
-            quit()
 
         # if there are no edges in pc --> very sparse?!
         if edge_index.shape[1] == 0:
@@ -933,7 +924,7 @@ class ClusterGNN(MessagePassing):
         
         return clusters
 
-    def visualize(self, nodes, edge_indices, pos, clusters, timestamp, mode='before', name='General', data=None, colors_edges=None, colors=None):
+    def visualize(self, nodes, edge_indices, pos, clusters, timestamp, mode='before', name='General', data=None, colors=None):
         os.makedirs(f'../../../vis_graph/{name}', exist_ok=True)
         print('made dir ', f'../../../vis_graph/{name}')
         import networkx as nx
@@ -961,7 +952,6 @@ class ClusterGNN(MessagePassing):
                                 continue
                             edge_indices.append([node1, node2])
                 edge_indices = torch.tensor(edge_indices).to(self.rank).T
-        print(colors)
 
         # take only x and y position
         pos = pos[:, :-1]
@@ -975,16 +965,15 @@ class ClusterGNN(MessagePassing):
         # save graph
         labels = {n.item(): str(n.item()) for n in nodes}
         plt.figure(figsize=(50, 50))
-        if colors_edges is None:
-            nx.draw_networkx_edges(G, pos, width=3)
-        else:
-            nx.draw_networkx_edges(G, pos, width=3, edge_color=colors_edges)
+        print(type(pos), pos[0])
+        nx.draw_networkx_edges(G, pos, width=3)
+        print(type(pos), pos[0])
         nx.draw_networkx_nodes(G, pos, node_color=colors)
         # nx.draw_networkx_labels(G, pos, labels=labels, font_size=6, font_color='red')
         plt.axis("off")
-        # p = os.path.join('/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/vis_graph', name, data['log_id'][0] + '.png')
-        # plt.savefig(p, bbox_inches='tight', dpi=300)
-        plt.savefig(f'../../../vis_graph/{name}/{timestamp}_{mode}.png', bbox_inches='tight', dpi=300)
+        p = os.path.join('/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/vis_graph', name, data['log_id'][0] + '_{timestamp}' + '.png')
+        plt.savefig(p, bbox_inches='tight', dpi=300)
+        # plt.savefig(f'../../../vis_graph/{name}/{timestamp}_{mode}.png', bbox_inches='tight', dpi=300)
         plt.close()
          
     def __repr__(self):
@@ -1074,7 +1063,6 @@ class GNNLoss(nn.Module):
         self.test = nn.BCEWithLogitsLoss().to(self.rank)
 
     def forward(self, logits, data, edge_index, weight=False, weight_node=True, mode='train'):
-        hist_node, hist_edge = None, None
         edge_logits, node_logits = logits
         loss = 0
         log_dict = dict()
@@ -1189,17 +1177,6 @@ class GNNLoss(nn.Module):
                         correct[point_instances==1])/correct[point_instances==1].shape[0] 
                 log_dict[f'{mode} accuracy edge'][5] = 1
 
-            # per class accuracy:
-            log_dict[f'{mode} accuracy edges connected to class'] = torch.zeros(65).to(self.rank)
-            for c in torch.unique(point_categories):
-                if correct[point_categories==c].shape[0]:
-                    log_dict[f'{mode} accuracy edges connected to class'][2*c] = (torch.sum(
-                            correct[point_categories==c])+torch.sum(
-                            correct[point_categories1==c]))/(correct[point_categories1==c].shape[0]+correct[point_categories==c].shape[0])
-                    log_dict[f'{mode} accuracy edges connected to class'][2*c+1] = 1
-            log_dict[f'{mode} num edge pos'] = num_edge_pos
-            log_dict[f'{mode} num edge neg'] = num_edge_neg
-
         if self.node_loss:
             # get if point is object (sign is considered as no object)
             is_object = data.point_instances != 0
@@ -1270,17 +1247,6 @@ class GNNLoss(nn.Module):
                 log_dict[f'{mode} accuracy node'][4] = torch.sum(
                         correct[is_object==1])/correct[is_object==1].shape[0]
                 log_dict[f'{mode} accuracy node'][5] = 1
-            
-            # per class
-            log_dict[f'{mode} accuracy nodes of class'] = torch.zeros(65).to(self.rank)
-            for c in torch.unique(object_class):
-                if correct[object_class==c].shape[0]:
-                    log_dict[f'{mode} accuracy nodes of class'][2*c] = torch.sum(
-                            correct[object_class==c])/correct[object_class==c].shape[0]
-                    log_dict[f'{mode} accuracy nodes of class'][2*c+1] = 1
 
-            num_node_pos, num_node_neg = is_object.sum(), (is_object==0).sum()
-            log_dict[f'{mode} num node pos'] = num_node_pos
-            log_dict[f'{mode} num node neg'] = num_node_neg
-        return loss, log_dict, hist_node, hist_edge
+        return loss, log_dict
     

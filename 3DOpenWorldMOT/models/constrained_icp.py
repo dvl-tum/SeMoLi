@@ -118,19 +118,19 @@ class ConstrainedICPRegistration():
             max_interior_pc = torch.atleast_2d(track._get_canonical_points(i=max_interior_idx))
             max_lwh = track.detections[max_interior_idx].lwh
             #print(len(track), track.min_num_interior)
-
             if len(track) > self.registration_len_thresh and track.min_num_interior >= self.min_pts_thresh and sum(densities)/len(densities) > self.density_thresh:
                 print(self.log_id, track.track_id, track.min_num_interior, len(track), sum(densities)/len(densities), min(densities), sum(lwh_diff)/len(lwh_diff), max([torch.linalg.norm(d) for d in lwh_diff]), sum(trans_diff)/len(trans_diff), min([torch.linalg.norm(d) for d in trans_diff]))
 
                 # take all pcs and normalize them
                 times = [d.timestamps[0, 0].item() for d in track.detections]
                 track.resample()
-                pcs = [track.detections[i].resampled_pc for i in range(len(track))] 
+                pcs = [track.detections[i].canonical_points for i in range(len(track))] 
+                print([p.shape for p in pcs])
                 # pcs = [track._get_canonical_points(i=i) for i in range(len(track))] 
                 pcs = [track._convert_time(times[i], times[max_interior_idx], self.av2_loader, pcs[i]) for i in range(len(track))]
                 means = [pcs[i].mean(0) for i in range(len(track))]
                 pcs = [pcs[i]-means[i] for i in range(len(track))]
-
+                print([p.shape for p in pcs])
                 trajs = [track._get_traj(i=i) for i in range(len(track))]
                 trajs = [track._convert_time(times[i], times[max_interior_idx], self.av2_loader, trajs[i]) for i in range(len(track))]
                 
@@ -154,6 +154,7 @@ class ConstrainedICPRegistration():
                         # ICP
                         _alpha_src = track.detections[i+increment].alpha
                         _, alpha_src = get_alpha_rot_t0_to_t1(0, 1, trajs[i+increment])
+                        print(pc_increment.shape, pc_tgt.shape)
                         pc_increment_registered, pc_tgt, transformation, translation, rotation = self.icp_p2point(
                             pc_increment,
                             pc_tgt,
@@ -169,7 +170,7 @@ class ConstrainedICPRegistration():
                 # remove outliers
                 if type(pc_tgt) == np.ndarray:
                     pc_tgt = torch.from_numpy(pc_tgt)
-                pc_tgt, _ = outlier_removal(pc_tgt, threshold=0.5, kNN=10)
+                # pc_tgt, _ = outlier_removal(pc_tgt, threshold=0.5, kNN=10)
                 pc_tgt = pc_tgt.numpy()
 
                 rot = track.detections[max_interior_idx].rot
@@ -177,7 +178,7 @@ class ConstrainedICPRegistration():
                     [torch.cos(alpha_tgt), -torch.sin(alpha_tgt), 0],
                     [torch.sin(alpha_tgt), torch.cos(alpha_tgt), 0],
                     [0, 0, 1]]).double()
-
+                print(pc_tgt.shape)
                 # get bounding box with or withou means
                 if not self.means_before:
                     lwh, translation_tgt = get_rotated_center_and_lwh(torch.from_numpy(pc_tgt), rot)
