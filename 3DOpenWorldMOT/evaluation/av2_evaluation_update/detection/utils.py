@@ -90,8 +90,6 @@ class DetectionCfg:
             MAX_NORMALIZED_ASE,
             MAX_YAW_RAD_ERROR,
             MIN_CDS,
-            -1,
-            -1
         )
 
     @property
@@ -101,8 +99,6 @@ class DetectionCfg:
             self.tp_threshold_m,
             MAX_SCALE_ERROR,
             MAX_YAW_RAD_ERROR,
-            -1,
-            -1
         )
 
 
@@ -163,9 +159,9 @@ def accumulate(
     is_evaluated_dts &= compute_evaluated_dts_mask(dts[..., :3], cfg)
     is_evaluated_gts &= compute_evaluated_gts_mask(gts[..., :3], gts[..., -2], cfg)
     # Initialize results array.
-    gts_augmented: NDArrayFloat = np.zeros((M, T + E + 2 + 1))
+    gts_augmented: NDArrayFloat = np.zeros((M, T + E + 1))
     # matched to static + matched class + is evaluated
-    dts_augmented: NDArrayFloat = np.zeros((N, T + E + 2 + 1 + 1 + 1 + 1))
+    dts_augmented: NDArrayFloat = np.zeros((N, T + E + 1 + 1 + 1 + 1))
     # set score to 0
     dts_augmented[:, -4] = -1
     # set matched class to -1
@@ -325,13 +321,13 @@ def assign(
     idx_gts = idx_gts[matched_mask]
 
     T, E = len(cfg.affinity_thresholds_m), 3
-    dts_metrics: NDArrayFloat = np.zeros((len(dts), T + E + 2 + 1 + 1 + 1))
+    dts_metrics: NDArrayFloat = np.zeros((len(dts), T + E + 1 + 1 + 1))
     dts_metrics[:, -3] = -1
     dts_metrics[:, -2] = dts_matched_to_static
     dts_metrics[:, -1] = -1
-    dts_metrics[:, 4:-3] = cfg.metrics_defaults[1:6]
-    gts_metrics: NDArrayFloat = np.zeros((len(gts), T + 2 + E))
-    gts_metrics[:, 4:] = cfg.metrics_defaults[1:6]
+    dts_metrics[:, 4:-3] = cfg.metrics_defaults[1:4]
+    gts_metrics: NDArrayFloat = np.zeros((len(gts), T + E))
+    gts_metrics[:, 4:] = cfg.metrics_defaults[1:4]
     np_tps = None
     np_fns = gts[keep_gts][:, -2]
     # set score 
@@ -360,14 +356,11 @@ def assign(
         tps_dts = dts[idx_tps_dts]
         tps_gts = gts[idx_tps_gts]
         
-
         translation_errors = distance(tps_dts[:, :3], tps_gts[:, :3], DistanceType.TRANSLATION)
         scale_errors = distance(tps_dts[:, 3:6], tps_gts[:, 3:6], DistanceType.SCALE)
-        iov = distance(tps_dts[:, 3:6], tps_gts[:, 3:6], DistanceType.IoV)
-        rel_vol = distance(tps_dts[:, 3:6], tps_gts[:, 3:6], DistanceType.RelVol)
         orientation_errors = distance(tps_dts[:, 6:10], tps_gts[:, 6:10], DistanceType.ORIENTATION)
-        dts_metrics[idx_tps_dts, 4:-3] = np.stack((translation_errors, scale_errors, orientation_errors, iov, rel_vol), axis=-1)
-        gts_metrics[idx_tps_gts, 4:] = np.stack((translation_errors, scale_errors, orientation_errors, iov, rel_vol), axis=-1)
+        dts_metrics[idx_tps_dts, 4:-3] = np.stack((translation_errors, scale_errors, orientation_errors), axis=-1)
+        gts_metrics[idx_tps_gts, 4:] = np.stack((translation_errors, scale_errors, orientation_errors), axis=-1)
 
     return dts_metrics, gts_metrics, np_tps, np_fns, keep_gts, rem_dts, dts_category, dts_matched_to_static
 
@@ -591,12 +584,6 @@ def distance(dts: NDArrayFloat, gts: NDArrayFloat, metric: DistanceType) -> NDAr
     elif metric == DistanceType.SCALE:
         scale_errors: NDArrayFloat = 1 - iou_3d_axis_aligned(dts, gts)
         return scale_errors
-    elif metric == DistanceType.IoV:
-        iov: NDArrayFloat = iov_3d_axis_aligned(dts, gts)
-        return iov
-    elif metric == DistanceType.RelVol:
-        rel_v: NDArrayFloat = rel_vol(dts, gts)
-        return rel_v
     elif metric == DistanceType.ORIENTATION:
         yaws_dts: NDArrayFloat = mat_to_xyz(quat_to_mat(dts))[..., 2]
         yaws_gts: NDArrayFloat = mat_to_xyz(quat_to_mat(gts))[..., 2]
@@ -736,43 +723,3 @@ def groupby(names: List[str], values: NDArrayFloat) -> Dict[str, NDArrayFloat]:
     uuid_to_groups = {unique_items[i]: x for i, x in enumerate(dts_groups)}
     return uuid_to_groups
 
-
-def iov_3d_axis_aligned(
-    src_dims_m: NDArrayFloat, target_dims_m: NDArrayFloat
-) -> NDArrayFloat:
-    """Compute 3d, axis-aligned (vertical axis alignment) intersection-over-union (IoU) between two sets of cuboids.
-
-    Both objects are aligned to their +x axis and their centroids are placed at the origin
-    before computation of the IoU.
-
-    Args:
-        src_dims_m: (N,3) Source dimensions (length,width,height).
-        target_dims_m: (N,3) Target dimensions (length,width,height).
-
-    Returns:
-        (N,) Intersection-over-union between the source and target dimensions.
-    """
-    inter: NDArrayFloat = np.minimum(src_dims_m, target_dims_m).prod(axis=1)
-    union: NDArrayFloat = target_dims_m.prod(axis=1)
-    iou: NDArrayFloat = np.divide(inter, union)
-    return iou
-
-def rel_vol(
-    src_dims_m: NDArrayFloat, target_dims_m: NDArrayFloat
-) -> NDArrayFloat:
-    """Compute 3d, axis-aligned (vertical axis alignment) intersection-over-union (IoU) between two sets of cuboids.
-
-    Both objects are aligned to their +x axis and their centroids are placed at the origin
-    before computation of the IoU.
-
-    Args:
-        src_dims_m: (N,3) Source dimensions (length,width,height).
-        target_dims_m: (N,3) Target dimensions (length,width,height).
-
-    Returns:
-        (N,) Intersection-over-union between the source and target dimensions.
-    """
-    inter: NDArrayFloat = src_dims_m.prod(axis=1)
-    union: NDArrayFloat = target_dims_m.prod(axis=1)
-    iou: NDArrayFloat = np.divide(inter, union)
-    return iou

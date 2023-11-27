@@ -145,14 +145,14 @@ def evaluate(
         METRIC_COLUMN_NAMES_DTS = cfg.affinity_thresholds_m + TP_ERROR_COLUMNS + ("is_evaluated",)
         METRIC_COLUMN_NAMES_DTS = [m for m in METRIC_COLUMN_NAMES_DTS]
         T, E = len(cfg.affinity_thresholds_m), 3
-        dts_metrics: NDArrayFloat = np.zeros((len(dts), T + E + 2 + 1)) 
-        dts_metrics[:, 4:-1] = cfg.metrics_defaults[1:6]
+        dts_metrics: NDArrayFloat = np.zeros((len(dts), T + E + 1)) 
+        dts_metrics[:, 4:-1] = cfg.metrics_defaults[1:4]
         dts_metrics[:, -1] = 1
         dts[METRIC_COLUMN_NAMES_DTS] = dts_metrics
         METRIC_COLUMN_NAMES_GTS = cfg.affinity_thresholds_m + TP_ERROR_COLUMNS + ("is_evaluated",)
         METRIC_COLUMN_NAMES_GTS = [m for m in METRIC_COLUMN_NAMES_GTS]
-        gts_metrics: NDArrayFloat = np.zeros((len(gts), T + E + 2 + 1))
-        gts_metrics[:, 4:-1] = cfg.metrics_defaults[1:6]
+        gts_metrics: NDArrayFloat = np.zeros((len(gts), T + E + 1))
+        gts_metrics[:, 4:-1] = cfg.metrics_defaults[1:4]
         gts_metrics[:, -1] = 1
         gts[METRIC_COLUMN_NAMES_GTS] = gts_metrics
         np_tps = 0
@@ -396,12 +396,10 @@ def summarize_metrics(
         # If true positives exist, compute the metrics.
         if has_true_positives:
             tp_error_cols = [str(x.value) for x in TruePositiveErrorNames]
-            tp_errors[:-2] = category_dts.loc[is_tp_t, tp_error_cols[:-2]].to_numpy().mean(axis=0)
-            tp_errors[-2:] = category_dts[np.logical_and(is_tp_t, category_dts[tp_error_cols[-1]] != -1)][tp_error_cols[-2:]].to_numpy().mean(axis=0)
-        tp_scores = np.zeros(tp_errors.shape)
+            tp_errors = category_dts.loc[is_tp_t, tp_error_cols].to_numpy().mean(axis=0)
+
         # Convert errors to scores.
-        tp_scores[:-2] = 1 - np.divide(tp_errors[:-2], cfg.tp_normalization_terms[:-2])
-        tp_scores[-2:] = tp_errors[-2:]
+        tp_scores = 1 - np.divide(tp_errors, cfg.tp_normalization_terms)
 
         # Compute Composite Detection Score (CDS).
         cds = mean_average_precisions * np.mean(tp_scores)
@@ -411,3 +409,4 @@ def summarize_metrics(
     print('\t WEIGHTED RECALLS ,', weighted_recalls.values/all_gts)
     # Return the summary.
     return summary, fps, all_results_df
+
