@@ -8,91 +8,12 @@ defaults: # for loading the default.yaml config
                                                                                                                   
   # - debugging: default                                                                                      
   - models: GNN                                                                                             
-  - data: waymo_traj                                                                                                     
+  - data: waymo_traj   
+  - registration: default
+  - detector: default                                                                                                  
   # - sota # Contains current SOTA results on different datasets (extracted from papers !).                          
 #  - hydra/job_logging: custom                                                                                   
 #  - hydra/output: custom  # add the support for user-defined experiment folder (where to save the experiment files)
 
 job_name: first_training # prefix name for saving the experiment file.                                              
 category: TRAIN_GNN
-update_lr_scheduler_on: "on_epoch" # ["on_epoch", "on_num_batch", "on_num_sample"]                                           
-selection_stage: ""                                                                                                   
-pretty_print: True                                                                                              
-eval_frequency: 1
-wandb: False
-out_path: '/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT'
-just_eval: False     
-metric: acc
-multi_gpu: False
-half_precision: True
-gradient_checkpointing: False
-keep_checkpoint: False
-keep_detections: False
-continue_from_existing: False
-eval_dir: ''
-filter_moving: True
-use_matched_category: False
-store_matched: False
-do_corr_clustering: True
-vel_evaluation: False
-heuristics: False
-waymo_style: True
-filter_class: 'CONVERT_ALL_TO_CARS'
-inflate_bb: True
-store_input_to_eval: False
-discard_last_25: False
-inflation_factor: 1.0
-
-tracker_options: # Extra options for the tracker
-  a_threshold: 0.9
-  i_threshold: 0.9
-  len_thresh: 0
-  outlier_threshold: 0.5
-  outlier_kNN: 10
-  use_temporal_weight_track: False
-  exp_weight_rot: 0
-  matching: 'greedy'
-  alpha: 0.95
-  overlap: 5
-  every_x_frame: ${data.every_x_frame}
-  track_data_path: '/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/tracks/tracks'
-  model: ''
-  split: train
-  collaps: True
-  track: True
-  convert_initial: True
-  register: True
-  initial_dets: 'initial_dets'
-  collapsed_dets: 'collapsed_dets'
-  tracked_dets: 'tracked_dets'
-  registered_dets: 'registered_dets'
-  tracker_type: 'SimpleTracker' # 'OnlineOracleTracker'
-  registration_type: 'ConstICP'
-  collaps_type: 'SimpleCollaps'
-  out_path_for_eval: '/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/tracks/tracks_for_eval'
-  max_time_track: 5 # set max_time to -1 --> take all
-  filter_by_width: 1000
-  inact_patience: 5
-  fixed_time: False
-  l_change_thresh: 0.5
-  w_change_thresh: 0.5
-  registration_len_thresh: 2
-  min_pts_thresh: 0
-  mode: 'density'
-  density_thresh: 0
-  concat: True
-  means_before: True
-  avg_w_prev: False
-
-
-detection_options:                                                                       
-  overlap: 5
-  num_interior: 0
-  precomp_dets: False
-  kNN: 0
-  threshold: 0.5
-  median_flow: False
-  median_center: False
-  min_area: False
-  use_only_orig_for_bb: False
-  ignore_dets_wo_orig_flow: False
