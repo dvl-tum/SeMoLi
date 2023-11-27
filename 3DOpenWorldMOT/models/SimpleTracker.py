@@ -267,8 +267,8 @@ class SimpleTracker():
                     
                     if self.fixed_time:
                         inact_patience -= self.max_time
-                        
-                    if time_dist < inact_patience:
+                    
+                    if time_dist < inact_patience and time_dist < t.detections[-1].trajectory.shape[1] - 1 - self.max_time:
                         trajs.extend([
                             t._get_whole_traj_and_convert_time(timestamp, self.av2_loader, max_time=self.max_time)])
                         cano_points.extend([
@@ -347,8 +347,8 @@ class SimpleTracker():
         bb_iou_2d[h_mask[0], h_mask[1]] = torch.nan
         iou2d_mask = torch.where(bb_iou_2d > self.a_threshold)
         bb_iou_2d[iou2d_mask[0], iou2d_mask[1]] = torch.nan
-        heading_mask = torch.where(heading_diff>0.2)
-        bb_iou_2d[heading_mask[0], heading_mask[1]] = torch.nan
+        # heading_mask = torch.where(heading_diff>0.2)
+        # bb_iou_2d[heading_mask[0], heading_mask[1]] = torch.nan
 
         return [cd_dists, mean_dist, bb_iou_2d, l2_center_2d, l_change_2d, h_change_2d], \
             len(self.active_tracks), \

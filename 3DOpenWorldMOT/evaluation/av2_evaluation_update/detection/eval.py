@@ -396,10 +396,12 @@ def summarize_metrics(
         # If true positives exist, compute the metrics.
         if has_true_positives:
             tp_error_cols = [str(x.value) for x in TruePositiveErrorNames]
-            tp_errors = category_dts.loc[is_tp_t, tp_error_cols].to_numpy().mean(axis=0)
-
+            tp_errors[:-2] = category_dts.loc[is_tp_t, tp_error_cols[:-2]].to_numpy().mean(axis=0)
+            tp_errors[-2:] = category_dts[np.logical_and(is_tp_t, category_dts[tp_error_cols[-1]] != -1)][tp_error_cols[-2:]].to_numpy().mean(axis=0)
+        tp_scores = np.zeros(tp_errors.shape)
         # Convert errors to scores.
-        tp_scores = 1 - np.divide(tp_errors, cfg.tp_normalization_terms)
+        tp_scores[:-2] = 1 - np.divide(tp_errors[:-2], cfg.tp_normalization_terms[:-2])
+        tp_scores[-2:] = tp_errors[-2:]
 
         # Compute Composite Detection Score (CDS).
         cds = mean_average_precisions * np.mean(tp_scores)

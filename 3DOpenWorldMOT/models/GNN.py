@@ -716,13 +716,14 @@ class ClusterGNN(MessagePassing):
         else:
             edge_index = data['edge_index']
             
-        '''
-        if not os.path.isfile(os.path.join('/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/vis_graph', 'before', data['log_id'][0] + '.png')):
+        
+        if False: #not os.path.isfile(os.path.join('/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/vis_graph', 'before', data['log_id'][0] + '.png')):
             # for k, (i, j) in enumerate(zip(batch_idx[1:], batch_idx[:-1])):
             k, i, j = 0, batch_idx[1], batch_idx[0]
             e = edge_index[:, torch.logical_and(edge_index[0]>=j, edge_index[0]<i)] - j
-            self.visualize(torch.arange(i-j), e, pc[j:i], torch.ones(i-j), data.timestamps[k, 0], data=data)
-        '''
+            pi = data['point_instances'][j:i]
+            colors = [rgb_colors[p.item()] for p in pi]
+            self.visualize(torch.arange(i-j), e, pc[j:i], torch.ones(i-j), data.timestamps[k, 0], data=data, colors=colors)
 
         # if there are no edges in pc --> very sparse?!
         if edge_index.shape[1] == 0:
@@ -931,7 +932,7 @@ class ClusterGNN(MessagePassing):
         
         return clusters
 
-    def visualize(self, nodes, edge_indices, pos, clusters, timestamp, mode='before', name='General', data=None):
+    def visualize(self, nodes, edge_indices, pos, clusters, timestamp, mode='before', name='General', data=None, colors=None):
         os.makedirs(f'../../../vis_graph/{name}', exist_ok=True)
         import networkx as nx
         import matplotlib 
@@ -944,19 +945,20 @@ class ClusterGNN(MessagePassing):
         clusters = clusters_dict
 
         # adapt edges to predicted clusters
-        colors = [rgb_colors[0] for _ in range(nodes.shape[0])]
-        if name == 'after':
-            edge_indices = list()
-            for c, nodelist in clusters.items():
-                if c == -1:
-                    continue
-                for i, node1 in enumerate(nodelist):
-                    colors[node1] = rgb_colors[c]
-                    for j, node2 in enumerate(nodelist):
-                        if j <= i:
-                            continue
-                        edge_indices.append([node1, node2])
-            edge_indices = torch.tensor(edge_indices).to(self.rank).T
+        if colors is None:
+            colors = [rgb_colors[0] for _ in range(nodes.shape[0])]
+            if name == 'after':
+                edge_indices = list()
+                for c, nodelist in clusters.items():
+                    if c == -1:
+                        continue
+                    for i, node1 in enumerate(nodelist):
+                        colors[node1] = rgb_colors[c]
+                        for j, node2 in enumerate(nodelist):
+                            if j <= i:
+                                continue
+                            edge_indices.append([node1, node2])
+                edge_indices = torch.tensor(edge_indices).to(self.rank).T
 
         # take only x and y position
         pos = pos[:, :-1]
@@ -972,11 +974,13 @@ class ClusterGNN(MessagePassing):
         # save graph
         labels = {n.item(): str(n.item()) for n in nodes}
         plt.figure(figsize=(50, 50))
+        print(type(pos), pos[0])
         nx.draw_networkx_edges(G, pos, width=3)
+        print(type(pos), pos[0])
         nx.draw_networkx_nodes(G, pos, node_color=colors)
         # nx.draw_networkx_labels(G, pos, labels=labels, font_size=6, font_color='red')
         plt.axis("off")
-        p = os.path.join('/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/vis_graph', name, data['log_id'][0] + '.png')
+        p = os.path.join('/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/vis_graph', name, data['log_id'][0] + '_{timestamp}' + '.png')
         plt.savefig(p, bbox_inches='tight', dpi=300)
         # plt.savefig(f'../../../vis_graph/{name}/{timestamp}_{mode}.png', bbox_inches='tight', dpi=300)
         plt.close()

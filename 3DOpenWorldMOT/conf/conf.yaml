@@ -42,6 +42,7 @@ inflate_bb: True
 store_input_to_eval: False
 discard_last_25: False
 inflation_factor: 1.0
+remove_gt_with_pts_leq: -1.0
 
 tracker_options: # Extra options for the tracker
   a_threshold: 0.9

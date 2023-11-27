@@ -103,7 +103,8 @@ def main(cfg):
             min_num_interior_pts=cfg.detection_options.num_interior,
             store_input_to_eval=cfg.store_input_to_eval,
             discard_last_25=cfg.discard_last_25,
-            inflation_factor=cfg.inflation_factor)
+            inflation_factor=cfg.inflation_factor,
+            remove_gt_with_pts_leq=cfg.remove_gt_with_pts_leq)
     
     print('\n\n')
 
