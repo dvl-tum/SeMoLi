@@ -26,7 +26,7 @@ traj_channels: 25
 pos_channels: 3
 percentage_data_train: 0.5
 percentage_data_val: 0.1
-filtered_file_path: '/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/' #'/dvlresearch/jenny/'
+filtered_file_path: 'PseudoDetection3D/data_utils' #'/dvlresearch/jenny/'
 detection_set: 'val_gnn' # 'val_gnn' 'train_gnn' 'val_detector', 'train_detector'
 get_vels: False
 vels_augment: False

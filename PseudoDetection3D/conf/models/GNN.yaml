@@ -13,7 +13,7 @@ hyperparams:
     edge_attr: diffpostraj
     graph_construction: pos
     node_attr: traj
-    min_samples: ${detection_options.num_interior}
+    min_samples: ${detector.num_interior}
     use_node_score: 0.5
     node_loss: ${models.loss_hyperparams.node_loss}
     clustering: 'correlation'

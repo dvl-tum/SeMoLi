@@ -105,7 +105,9 @@ def get_feather_files(
         loader=None,
         gt_folder=None, 
         is_waymo=True,
-        discard_last_25=False):
+        discard_last_25=False,
+        root_dir='',
+        filtered_file_path=''):
     
     if is_gt:
         # get file name
@@ -117,7 +119,6 @@ def get_feather_files(
             if not 'Argo' in paths:
                 if discard_last_25:
                     file = 'filtered_version.feather'
-                    file = 'filtered_version_city_w0_withwaymovel_w_num_interior_filtered.feather'
                 else:
                     file = 'filtered_version_city_w0.feather' 
             else:
@@ -135,13 +136,7 @@ def get_feather_files(
             :5] + '_' + file if remove_non_move else file
         file = split + '_' + file
         
-        if is_waymo:
-            path_filtered = os.path.join('/workspace/ExchangeWorkspace/Waymo_Converted_filtered', file)
-            # path_filtered = os.path.join('/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/Waymo_Converted_filtered', file)
-            # path_filtered = os.path.join('/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/Waymo_Converted_filtered', file)
-        else:
-            path_filtered = os.path.join('/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/Argoverse2_filtered', file)
-            # path_filtered = os.path.join('/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/Argoverse2_filtered', file)
+        path_fitlered = os.path.join(f'{root_dir}/{filtered_file_path}', file)
         print(f'Looking for filtered gt file {path_filtered}')
     
     if not is_gt or not os.path.isfile(path_filtered):
@@ -534,7 +529,9 @@ def eval_detection(
         use_aff_as_score=False,
         store_input_to_eval=False,
         discard_last_25=False,
-        inflation_factor=1.0):
+        inflation_factor=1.0,
+        root_dir='',
+        filtered_file_path=''):
     
     if os.path.isdir(trackers_folder) and not len(os.listdir(trackers_folder)):
         return None, np.array([0, 2, 1, 3.142, 0]), None
@@ -561,7 +558,9 @@ def eval_detection(
         loader=loader,
         gt_folder=gt_folder, 
         is_waymo=is_waymo,
-        discard_last_25=discard_last_25)
+        discard_last_25=discard_last_25,
+        root_dir=root_dir,
+        filtered_file_path=filtered_file_path)
     # print((gts['filter_moving'] == (gts['velocities'] > remove_non_move_thresh)).all())
     # quit()
     # print(gts)

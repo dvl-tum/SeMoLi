@@ -12,7 +12,7 @@ from lapsolver import solve_dense
 
 import time
 from pytorch3d.ops import box3d_overlap
-from models.tracking_utils import load_initial_detections, load_gt
+from PseudoDetection3D.models.tracking_utils import load_initial_detections, load_gt
  
 
 class MOT3DSeqDataset:

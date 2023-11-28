@@ -59,7 +59,9 @@ def main(cfg):
             store_input_to_eval=cfg.evaluation.store_input_to_eval,
             discard_last_25=cfg.evaluation.discard_last_25,
             inflation_factor=cfg.evaluation.inflation_factor,
-            remove_gt_with_pts_leq=cfg.evaluation.remove_gt_with_pts_leq)
+            remove_gt_with_pts_leq=cfg.evaluation.remove_gt_with_pts_leq,
+            root_dir=self.cfg.root_dir,
+            filtered_file_path=self.cfg.data.filtered_file_path)
     
     print('\n\n')
 

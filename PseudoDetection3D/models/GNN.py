@@ -13,11 +13,11 @@ import random
 import matplotlib
 import os
 import logging
-import models.losses
+import PseudoDetection3D.models.losses
 import math
 import sklearn.metrics
 # import torchvision 
-from .losses import sigmoid_focal_loss
+from PseudoDetection3D.models.losses import sigmoid_focal_loss
 from torch import multiprocessing as mp
 import pickle
 import wandb

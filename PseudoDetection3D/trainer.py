@@ -1,4 +1,4 @@
-from data_utils.splits import get_seq_list_fixed_val
+from .data_utils.splits import get_seq_list_fixed_val
 import os
 import torch
 import logging
@@ -9,18 +9,18 @@ from torch.utils.data.distributed import DistributedSampler
 from torch_geometric.loader import DataLoader as PyGDataLoader
 import torch.distributed as dist
 
-from models import _model_factory, _loss_factory, Detector3D
-from data_utils.TrajectoryDataset import get_TrajectoryDataLoader
+from PseudoDetection3D.models import _model_factory, _loss_factory, Detector3D
+from PseudoDetection3D.data_utils.TrajectoryDataset import get_TrajectoryDataLoader
 import wandb
 
 # FOR DETECTION EVALUATION
-from evaluation import eval_detection
-from evaluation import calc_nmi
+from PseudoDetection3D.evaluation import eval_detection
+from PseudoDetection3D.evaluation import calc_nmi
 from pyarrow import feather
 import shutil
 import numpy as np
 import random
-from .utils.get_name import get_name
+from PseudoDetection3D.utils.get_name import get_name
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -148,11 +148,11 @@ class Trainer():
     
     def make_dirs(self):
         if self.rank == 0 or not self.cfg.training.multi_gpu:
-            if os.path.isdir(self.experiment_dir + self.checkpoints_dirname) \
-                and not self.cfg.continue_from_existing:
+            if os.path.isdir(self.experiment_dir + self.name) \
+                and not self.cfg.evaluation.continue_from_existing:
                 shutil.rmtree(self.experiment_dir + self.name)
             if not self.cfg.training.just_eval and os.path.isdir(str(self.checkpoints_dir) + self.name) \
-                and not self.cfg.continue_from_existing:
+                and not self.cfg.evaluation.continue_from_existing:
                 shutil.rmtree(str(self.checkpoints_dir) + self.name)
             os.makedirs(self.experiment_dir + self.name, exist_ok=True)
             self.logger.info(f'Detections are stored under {self.experiment_dir + self.name}...')
@@ -225,7 +225,7 @@ class Trainer():
                         self.logger.info('No existing model, starting training from scratch...')
             
             # get optimizer
-            self.optimizer = self.get_optimizer(self.cfg)
+            self.optimizer = self.get_optimizer()
         
         # init wandb
         if self.cfg.training.wandb:
@@ -265,9 +265,9 @@ class Trainer():
         
         # get dataloaders 
         self.av2_data_loader = val_data.loader
-        self.train_loader = self.make_loader(train_data, self.cfg, shuffle=True)
-        self.val_loader = self.make_loader(val_data, self.cfg, shuffle=False)
-        self.test_loader = self.make_loader(test_data, self.cfg, shuffle=False)
+        self.train_loader = self.make_loader(train_data, shuffle=True)
+        self.val_loader = self.make_loader(val_data, shuffle=False)
+        self.test_loader = self.make_loader(test_data, shuffle=False)
     
         if self.train_loader is not None and self.rank == 0:
             self.logger.info("The number of training data is: %d" % len(self.train_loader.dataset))
@@ -555,7 +555,9 @@ class Trainer():
                         heuristics=self.cfg.evaluation.heuristics,
                         debug=self.cfg.data.debug,
                         name=self.name,
-                        inflate_bb=self.cfg.evaluation.inflate_bb)
+                        inflate_bb=self.cfg.evaluation.inflate_bb, 
+                        root_dir=self.cfg.root_dir,
+                        filtered_file_path=self.cfg.data.filtered_file_path)
 
                     # log metrics
                     for_logs = {met: m for met, m in zip(['AP', 'ATE', 'ASE', 'AOE' ,'CDS'], detection_metric)}

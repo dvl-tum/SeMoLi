@@ -1,3 +1,6 @@
+import os
+
+
 def get_name(cfg):
     if 'DBSCAN' not in cfg.models.model_name:
         name = cfg.models.hyperparams.graph_construction 

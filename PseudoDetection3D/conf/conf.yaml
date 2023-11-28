@@ -11,9 +11,11 @@ defaults: # for loading the default.yaml config
   - data: waymo_traj   
   - registration: default
   - detector: default                                                                                                  
-  # - sota # Contains current SOTA results on different datasets (extracted from papers !).                          
+  - evaluation: default  
+# - sota # Contains current SOTA results on different datasets (extracted from papers !).                          
 #  - hydra/job_logging: custom                                                                                   
 #  - hydra/output: custom  # add the support for user-defined experiment folder (where to save the experiment files)
 
 job_name: first_training # prefix name for saving the experiment file.                                              
 category: TRAIN_GNN
+root_dir: /workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/ 

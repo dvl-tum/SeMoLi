@@ -9,8 +9,8 @@ import torch
 from pathlib import Path
 from av2.datasets.sensor.av2_sensor_dataloader import AV2SensorDataLoader
 import numpy as np
-from data_utils import point_cloud_handling
-from data_utils import av2_classes
+from PseudoDetection3D.data_utils import point_cloud_handling
+from PseudoDetection3D.data_utils import av2_classes
 import os.path as osp
 from av2.map.map_api import ArgoverseStaticMap, RasterLayerType
 import logging
@@ -22,7 +22,7 @@ from functools import partial
 import pytorch3d.ops.points_normals as points_normals
 from pyarrow import feather
 import av2.utils.io as io_utils
-from .splits import get_seq_list, get_seq_list_fixed_val
+from .splits import get_seq_list_fixed_val
 from torch import multiprocessing as mp
 
 
@@ -59,7 +59,8 @@ class TrajectoryDataset(PyGDataset):
             remove_non_move_thresh=1,
             traj_channels=25,
             pos_channels=3,
-            waymo_style=False):
+            waymo_style=False,
+            root_dir=''):
         
         if 'gt' in _processed_dir:
             self.trajectory_dir = Path(os.path.join(trajectory_dir, split))
@@ -107,6 +108,7 @@ class TrajectoryDataset(PyGDataset):
             # self.seqs = get_seq_list(
             self.seqs = get_seq_list_fixed_val(
                 path=os.path.join(data_dir, split),
+                root_dir=root_dir,
                 detection_set=detection_set,
                 percentage=self.percentage_data)
         
@@ -661,7 +663,7 @@ def get_TrajectoryDataLoader(cfg, name=None, train=True, val=True, test=False):
     else:
         graph_dir = None
     # get datasets
-    if train and not cfg.just_eval:
+    if train and not cfg.training.just_eval:
         train_data = TrajectoryDataset(cfg.data.data_dir + f'_train/' + os.path.basename(cfg.data.data_dir) if 'Argo' not in cfg.data.data_dir else cfg.data.data_dir,
             'train',
             cfg.data.trajectory_dir + '_train',
@@ -680,7 +682,8 @@ def get_TrajectoryDataLoader(cfg, name=None, train=True, val=True, test=False):
             remove_non_move_thresh=cfg.data.remove_static_thresh,
             traj_channels=cfg.data.traj_channels,
             pos_channels=cfg.data.pos_channels,
-            waymo_style=cfg.data.waymo_style)
+            waymo_style=cfg.data.waymo_style,
+            root_dir=cfg.root_dir)
     else:
         train_data = None
     if val:
@@ -708,7 +711,8 @@ def get_TrajectoryDataLoader(cfg, name=None, train=True, val=True, test=False):
                 get_vels=cfg.data.get_vels,
                 traj_channels=cfg.data.traj_channels,
                 pos_channels=cfg.data.pos_channels,
-                waymo_style=cfg.data.waymo_style)
+                waymo_style=cfg.data.waymo_style,
+                root_dir=cfg.root_dir)
     else:
         val_data = None
     if test:
