@@ -56,7 +56,7 @@ class Trainer():
         random.seed(1)
 
         '''CREATE DIR'''
-        out_path = os.path.join(self.cfg.training.out_path, 'out/')
+        out_path = os.path.join(self.cfg.root_dir, 'PseudoDetection3D/out/')
         os.makedirs(out_path, exist_ok=True)
         # experiments dir
         self.experiment_dir = os.path.join(out_path, f'detections_{self.cfg.data.detection_set}/')
@@ -90,10 +90,10 @@ class Trainer():
         
         best_metric = 0
         if self.cfg.training.just_eval:
-            start_epoch = 0
+            self.start_epoch = 0
 
         # iterate over number of epochs
-        for epoch in range(start_epoch, self.cfg.training.epochs):
+        for epoch in range(self.start_epoch, self.cfg.training.epochs):
             if not self.cfg.training.just_eval:
                 '''Train on chopped scenes'''
                 if self.rank == 0:
@@ -226,7 +226,7 @@ class Trainer():
             
             # get optimizer
             self.optimizer = self.get_optimizer()
-        
+        self.start_epoch = start_epoch 
         # init wandb
         if self.cfg.training.wandb:
             wandb.login(key='3b716e6ab76d92ef92724aa37089b074ef19e29c')
@@ -240,7 +240,8 @@ class Trainer():
                     data,
                     batch_size=self.cfg.training.batch_size,
                     drop_last=False,
-                    shuffle=shuffle)
+                    shuffle=shuffle,
+                    num_workers=self.cfg.training.num_workers)
             else:
                 sampler = DistributedSampler(
                         data,
@@ -252,7 +253,8 @@ class Trainer():
                 data_loader = PyGDataLoader(
                     data,
                     batch_size=self.cfg.training.batch_size,
-                    sampler=sampler)
+                    sampler=sampler,
+                    num_workers=self.cfg.training.num_workers)
         else:
             data_loader = None
         return data_loader
@@ -304,7 +306,7 @@ class Trainer():
             if self.cfg.training.half_precision:
                 with torch.cuda.amp.autocast():
                     logits, edge_index, batch_edge = self.model(data)
-                    loss, log_dict, hist_node, hist_edge = self.criterion(logits, data, edge_index)
+                    loss, log_dict = self.criterion(logits, data, edge_index)
                     
                     # means all points filtered
                     if loss is None:
@@ -397,7 +399,9 @@ class Trainer():
                 threshold=self.cfg.detector.threshold,
                 median_flow=self.cfg.detector.median_flow,
                 median_center=self.cfg.detector.median_center)
-
+        
+        _nmis = list()
+        log_dict = dict()
         with torch.no_grad():
             if self.is_neural_net:
                 self.model = self.model.eval()
@@ -411,8 +415,6 @@ class Trainer():
                 # compute clusters
                 logits, all_clusters, edge_index, _ = self.model(data, eval=True, name=self.name, corr_clustering=do_corr_clustering)
 
-                _nmis = list()
-                log_dict = dict()
                 batch_idx = data._slice_dict['pc_list']
                 if do_corr_clustering:
                     for g, clusters in enumerate(all_clusters):
@@ -528,6 +530,7 @@ class Trainer():
 
                     seq_list = get_seq_list_fixed_val(
                         self.cfg.data.data_dir,
+                        self.cfg.root_dir,
                         detection_set=self.cfg.data.detection_set,
                         percentage=self.cfg.data.percentage_data_val)
                     if self.cfg.data.debug:
@@ -580,7 +583,7 @@ class Trainer():
                                     'epoch': epoch,
                                     'ACC': edge_acc['all'],
                                     'best_metric': best_metric,
-                                    'metric_mode': self.cfg.metric,
+                                    'metric_mode': 'edge_accuracy',
                                     'NMI': cluster_metric[0],
                                     'class_avg_iou': detection_metric[0],
                                     'model_state_dict': self.model.state_dict(),
@@ -591,7 +594,7 @@ class Trainer():
                                     'epoch': epoch,
                                     'ACC': edge_acc,
                                     'best_metric': best_metric,
-                                    'metric_mode': self.cfg.metric,
+                                    'metric_mode': 'edge_accuracy',
                                     'model_state_dict': self.model.state_dict(),
                                     'optimizer_state_dict': self.optimizer.state_dict(),
                                 }
@@ -613,13 +616,8 @@ class Trainer():
             best_model_path = str(self.checkpoints_dir) + self.name + '/best_model.pth'
             checkpoint = torch.load(best_model_path)
             chkpt_new = dict()
-            for k, v in checkpoint['model_state_dict'].items():
-                if 'module' in k:
-                    chkpt_new[k[7:]] = v
-                else:
-                    chkpt_new[k] = v
-            start_epoch = checkpoint['epoch'] if not self.cfg.training.just_eval else start_epoch
-            self.model.load_state_dict(chkpt_new)
+            self.start_epoch = checkpoint['epoch'] if not self.cfg.training.just_eval else self.start_epoch
+            self.model.load_state_dict(checkpoint['model_state_dict'])
 
         self.eval_one_epoch(True, epoch, best_metric)
 
