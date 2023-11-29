@@ -329,16 +329,7 @@ def get_rotated_center_and_lwh(pc, rot, translation=None, median=False):
     else:
         pc_obj = ego_SE3_object.inverse().transform_point_cloud(pc)
     lwh = get_lwh(pc_obj)
-    ''' 
-    pc = pc @ rot.T # + (-translation.double() @ rot.T)
-    translation = get_center(pc)
-    translation = translation.to(pc.device)
-    # rot.T @ translation not needed since taken from already rotated pc
-    pc = pc + (-translation.double())
-    lwh = get_lwh(pc)
-    # but translatoin needs to be rotated to get correct translation
-    translation = rot.T @ translation.double()
-    '''
+
     return lwh, translation
 
 
@@ -373,10 +364,6 @@ def get_propagated_bbs(propagated_pos_tracks, get_trans=True, get_lwh=True, _2d=
         rot, alpha = get_alpha_rot_t0_to_t1(t_0, t_1, propagated_pos_tracks)
         rot = rot.to(propagated_pos_tracks.device)
         lwh, translation = get_rotated_center_and_lwh(propagated_pos_tracks[:, t, :].double(), rot)
-        # if type(translation) == torch.Tensor:
-        #     translation = translation.cpu()
-        # if type(alpha)  == torch.Tensor:
-        #     alpha = alpha.cpu()
         if _2d:
             lwh = lwh[:-1]
             translation = translation[:-1]
@@ -410,7 +397,6 @@ def get_center(canonical_points, median):
         mins, maxs = points_c_time.min(dim=0), points_c_time.max(dim=0)
         translation = (maxs.values + mins.values)/2
     else:
-        # translation = torch.mean(canonical_points, dim=0) # np.median(canonical_points.cpu().numpy(), axis=0)
         translation = np.median(canonical_points.cpu().numpy(), axis=0)
     return translation
 
@@ -425,8 +411,6 @@ def get_lwh(object_points):
 
 def store_initial_detections(detections, seq, out_path, split, tracks=False, gt_path=None):
     p = f'{out_path}/{split}/{seq}'
-    #if os.path.isdir(p):
-    #    shutil.rmtree(p)
     os.makedirs(p, exist_ok=True)
     
     if tracks:
@@ -672,10 +656,10 @@ def _from_box(vertices):
     return vertices_dst_xyz_m
 
 
-def to_feather(detections, log_id, out_path, split, rank, precomp_dets=False, name=''):
+def to_feather(detections, log_id, out_path, split, rank, precomp_dets=False, name='', root_dir='', track_data_path=''):
     track_vals = list()
     if precomp_dets:
-        store_initial_detections(detections, seq=log_id, out_path=f'/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/tracks/tracks/initial_dets/{name}', split=split)
+        store_initial_detections(detections, seq=log_id, out_path=f'{root_dir}/{track_data_path}/initial_dets/{name}', split=split)
     # per timestamp detections
     for i, timestamp in enumerate(sorted(detections.keys())):
         dets = detections[timestamp]

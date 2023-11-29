@@ -398,7 +398,9 @@ class Trainer():
                 kNN=self.cfg.detector.kNN,
                 threshold=self.cfg.detector.threshold,
                 median_flow=self.cfg.detector.median_flow,
-                median_center=self.cfg.detector.median_center)
+                median_center=self.cfg.detector.median_center,
+                root_dir=self.cfg.root_dir,
+                track_data_path=self.cfg.registration.tracked_dets_path)
         
         _nmis = list()
         log_dict = dict()

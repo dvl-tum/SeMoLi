@@ -25,7 +25,9 @@ class Detector3D():
             threshold=0.5,
             median_flow=False,
             median_center=False,
-            min_area=False) -> None:
+            min_area=False,
+            root_dir='',
+            track_data_path='') -> None:
         
         self.detections = dict()
         self.log_id = -1
@@ -43,6 +45,8 @@ class Detector3D():
         self.median_flow = median_flow
         self.median_center = median_center
         self.min_area = min_area
+        self.root_dir = root_dir
+        self.track_data_path = track_data_path
 
     def new_log_id(self, log_id):
         # save tracks to feather and reset variables
@@ -132,7 +136,7 @@ class Detector3D():
         return detections
 
     def to_feather(self):
-        to_feather(self.detections, self.log_id, self.out_path, self.split, self.rank, self.precomp_dets, self.name)
+        to_feather(self.detections, self.log_id, self.out_path, self.split, self.rank, self.precomp_dets, self.name, self.root_dir, self.track_data_path)
         self.detections = dict()
         return True
 
