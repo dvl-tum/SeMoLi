@@ -56,7 +56,7 @@ class Trainer():
         random.seed(1)
 
         '''CREATE DIR'''
-        out_path = os.path.join(self.cfg.root_dir, 'PseudoDetection3D/out/')
+        out_path = os.path.join(self.cfg.root_dir, 'out/')
         os.makedirs(out_path, exist_ok=True)
         # experiments dir
         self.experiment_dir = os.path.join(out_path, f'detections_{self.cfg.data.detection_set}/')
@@ -141,11 +141,11 @@ class Trainer():
         self.on_return()
 
     def on_return(self):
-        if not self.cfg.training.just_eval and not self.cfg.keep_checkpoint and self.rank == 0:
+        if not self.cfg.training.just_eval and not self.cfg.evaluation.keep_checkpoint and self.rank == 0:
             shutil.rmtree(self.checkpoints_dir + self.name)
-        if not self.cfg.keep_detections and self.rank == 0:
+        if not self.cfg.evaluation.keep_detections and self.rank == 0:
             shutil.rmtree(self.experiment_dir + self.name)
-    
+        shutil.rmtree(f'{self.cfg.root_dir}/outputs') 
     def make_dirs(self):
         if self.rank == 0 or not self.cfg.training.multi_gpu:
             if os.path.isdir(self.experiment_dir + self.name) \
@@ -390,7 +390,6 @@ class Trainer():
             detector = Detector3D(
                 self.experiment_dir + self.name,
                 split=self.cfg.data.detection_set,
-                every_x_frame=self.cfg.data.every_x_frame,
                 num_interior=self.cfg.detector.num_interior,
                 av2_loader=self.av2_data_loader,
                 rank=self.rank,
@@ -400,7 +399,7 @@ class Trainer():
                 median_flow=self.cfg.detector.median_flow,
                 median_center=self.cfg.detector.median_center,
                 root_dir=self.cfg.root_dir,
-                track_data_path=self.cfg.registration.tracked_dets_path)
+                track_data_path=self.cfg.registration.track_data_path)
         
         _nmis = list()
         log_dict = dict()
@@ -536,7 +535,7 @@ class Trainer():
                         detection_set=self.cfg.data.detection_set,
                         percentage=self.cfg.data.percentage_data_val)
                     if self.cfg.data.debug:
-                        seq_list = [seq_list[0]]
+                        seq_list = [seq_list[5]]
 
                     # average NMI
                     cluster_metric = [nmis]

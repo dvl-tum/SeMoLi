@@ -524,7 +524,6 @@ def eval_detection(
         min_num_interior_pts=20,
         waymo_style=True,
         heuristics=False,
-        remove_gt_with_pts_leq=-1,
         inflate_bb=False,
         use_aff_as_score=False,
         store_input_to_eval=False,
@@ -561,11 +560,7 @@ def eval_detection(
         discard_last_25=discard_last_25,
         root_dir=root_dir,
         filtered_file_path=filtered_file_path)
-    # print((gts['filter_moving'] == (gts['velocities'] > remove_non_move_thresh)).all())
-    # quit()
-    # print(gts)
-    # gts['filter_moving'] = gts['vel_waymo'] > remove_non_move_thresh
-    # print(gts)
+    
     print(f'Numer of gt {gts.shape}')
     num_mov = gts[gts['filter_moving']].shape[0]
     print(f'Numer of gt of moving objects {num_mov}')
@@ -576,9 +571,6 @@ def eval_detection(
         gts = gts[np.logical_and(gts['tx_m'] < 50, gts['ty_m'] < 20)]
         gts = gts[np.logical_and(gts['tx_m'] > -50, gts['ty_m'] > -20)]
         print(f'Numer of gt after filter points waymo style {gts.shape}')
-    if remove_gt_with_pts_leq != -1:
-        gts = gts[gts['num_interior_filtered'] > remove_gt_with_pts_leq]
-        print(f'Numer of gt after removing gt objects that have <= {remove_gt_with_pts_leq} points in filtered pc {gts.shape}')
 
     if velocity_evaluation:
         use_matched_category = True
@@ -607,8 +599,6 @@ def eval_detection(
     if 'filter_moving' in dts.keys():
         dts = dts[dts['filter_moving']]
      
-    # dts['category'] = 1
-    print(dts['category'].unique())
     dts = dts.drop_duplicates()
     print(f'Numer of detections {dts.shape[0]}')
     if heuristics:
@@ -626,9 +616,6 @@ def eval_detection(
         
     if inflate_bb and not is_pp:
         print('INFLATING BBs', is_waymo)
-        #dts['length_m'] = dts['length_m']  * 1.25 #(1 + 0.25 * np.exp(np.clip(-dts['length_m']+1.5, a_min=None, a_max=0)))
-        #dts['width_m'] = dts['width_m'] * 1.25 #(1 + 0.25  * np.exp(np.clip(-dts['width_m']+1.5, a_min=None, a_max=0)))
-        #dts['height_m'] = dts['height_m']  * 1.25 #(1 + 0.25 * np.exp(np.clip(-dts['height_m']+1.5, a_min=None, a_max=0)))
         if is_waymo:
             dts['length_m'] = (inflation_factor*dts['length_m']).clip(lower=1, upper=None)
             dts['width_m'] = (inflation_factor*dts['width_m']).clip(lower=1, upper=None)
@@ -692,22 +679,20 @@ def eval_detection(
     if just_eval:
         print("Evaluate now...")
 
-    # dts['qw'] = 1
-    # dts['qz'] = 0
-    # gts['qw'] = 1
-    # gts['qz'] = 0
-    
     dts = dts[dts['score'] > 0.1]
-    gts_orig = gts #copy.deepcopy(gts)
-    dts_orig = dts #copy.deepcopy(dts)
-    smallest = 0.3 # if is_pp else 0.2
+    gts_orig = gts 
+    dts_orig = dts
     if store_input_to_eval:
-        print(f"\t Writing macthed detections to /workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/input_eval_{trackers_folder}/annotations.feather...")
-        os.makedirs(f'/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/input_eval_{trackers_folder}', exist_ok=True)
-        feather.write_feather(dts, f'/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/input_eval_{trackers_folder}/annotations.feather')
+        print(f"\t Writing macthed detections to {root_dir}/input_eval/{os.path.basedir(os.path.dirname(trackers_folder))}/annotations.feather...")
+        os.makedirs(f'{root_dir}/input_eval/{os.path.basedir(os.path.dirname(trackers_folder))}', exist_ok=True)
+        feather.write_feather(dts, f'{root_dir}/input_eval/{os.path.basedir(os.path.dirname(trackers_folder))}/annotations.feather')
         quit()
+    
     for affinity, tp_thresh, threshs, n_jobs in zip(
-        ['CENTER', 'IoU3D', 'IoU2D', 'SegIoU'], [2.0, 0.3, 0.6, 0.6], [(0.5, 1.0, 2.0, 4.0), (smallest, 0.4, 0.6, 0.99), (smallest, 0.4, 0.6, 0.99), (smallest, 0.4, 0.6, 0.8)], [8, 1, 1, 8]):
+        ['CENTER', 'IoU3D', 'IoU2D', 'SegIoU'], \
+                [2.0, 0.3, 0.6, 0.6], \
+                [(0.5, 1.0, 2.0, 4.0), (0.3, 0.4, 0.6, 0.99), (0.3, 0.4, 0.6, 0.99), (0.3, 0.4, 0.6, 0.8)], \
+                [8, 1, 1, 8]):
         
         if affinity != 'IoU3D' and affinity != 'SegIoU':
             continue
@@ -747,38 +732,14 @@ def eval_detection(
             filter_moving=filter_moving,
             use_aff_as_score=use_aff_as_score)
         
-        if store_matched:
-            print(f"\t Writing macthed detections to /workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/matched_{trackers_folder}/annotations_{affinity}.feather...")
-            os.makedirs(f'/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/matched_{trackers_folder}', exist_ok=True)
-            feather.write_feather(dts, f'/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/matched_{trackers_folder}/annotations_{affinity}.feather')
-        
         dts = dts[dts['is_evaluated']==1]
         gts = gts[gts['is_evaluated']==1]
         if print_detail:
             print('\t Shapes after', dts.shape, gts.shape)
 
-        if print_detail:
-            # remove gt objects without lidar points inside
-            print('All GT objects: ', gts.shape[0])
-            print('GT objects with 0 points: ', gts[gts['num_interior_pts'] == 0].shape[0])
-            print('GT objects with less than 5 points and more than 0: ', gts[np.logical_and(gts['num_interior_pts'] < 5, gts['num_interior_pts'] >= 0)].shape[0])
-            print('GT objects with less than 10 points and more than 5: ', gts[np.logical_and(gts['num_interior_pts'] < 10, gts['num_interior_pts'] >= 5)].shape[0])
-            print('GT objects with less than 15 points and more than 10: ', gts[np.logical_and(gts['num_interior_pts'] < 15, gts['num_interior_pts'] >= 10)].shape[0])
-            print('GT objects with less than 20 points and more than 15: ', gts[np.logical_and(gts['num_interior_pts'] < 20, gts['num_interior_pts'] >= 15)].shape[0])
-            print('GT objects with less than 25 points and more than 20: ', gts[np.logical_and(gts['num_interior_pts'] < 25, gts['num_interior_pts'] >= 20)].shape[0])
-            print('GT objects with more than 25 points: ', gts[gts['num_interior_pts'] >= 25].shape[0])
-
         if visualize and dts.shape[0] and gts.shape[0] and affinity == 'IoU3D':
             visualize_whole(dts, gts[gts['num_interior_pts']>0], name, base_dir)
 
-        if print_detail:
-            print(f'Less than 5 points and more than 0: TP {np_tps[np.logical_and(np_tps < 5, np_tps >= 0)].shape[0]}, FN {np_fns[np.logical_and(np_fns < 5, np_fns >= 0)].shape[0]}')
-            print(f'Less than 10 points and more than 5: TP {np_tps[np.logical_and(np_tps < 10, np_tps >= 5)].shape[0]}, FN {np_fns[np.logical_and(np_fns < 10, np_fns >= 5)].shape[0]}')
-            print(f'Less than 15 points and more than 10: TP {np_tps[np.logical_and(np_tps < 15, np_tps >= 10)].shape[0]}, FN {np_fns[np.logical_and(np_fns < 15, np_fns >= 10)].shape[0]}')
-            print(f'Less than 20 points and more than 15: TP {np_tps[np.logical_and(np_tps < 20, np_tps >= 15)].shape[0]}, FN {np_fns[np.logical_and(np_fns < 20, np_fns >= 15)].shape[0]}')
-            print(f'Less than 25 points and more than 20: TP {np_tps[np.logical_and(np_tps < 25, np_tps >= 20)].shape[0]}, FN {np_fns[np.logical_and(np_fns < 25, np_fns >= 20)].shape[0]}')
-            print(f'More than 25 points: TP {np_tps[np_tps >= 25].shape[0]}, FN {np_fns[np_fns >= 25].shape[0]}')
-            
         # AP    ATE    ASE    AOE    CDS
         _filter_class = filter_class if filter_class == "NO_FILTER" else _class_dict[filter_class]
         if _filter_class == "NO_FILTER":
@@ -788,57 +749,5 @@ def eval_detection(
             print('\tDetection metrics: \n\t\t', metrics.columns.values, '\n\t\t', metrics.loc[_filter_class].values)
             metric = metrics.loc[_filter_class].values
 
-        # break
-  
     return metrics, metric, all_results_df
 
-
-if __name__ == '__main__':
-    name ='just_eval'
-    gt_folder = '/dvlresearch/jenny/Waymo_Converted_GT'
-    gt_folder = '/workspace/Waymo_Converted_train/Waymo_Converted'
-    gt_folder = '/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/download_for_vis/Waymo_Converted'
-    # gt_folder = '../../../../datasets/Argoverse2'
-
-    min_points = -1
-    max_points = 1000000
-    # for m in [-1]: # [-1, 0, 5, 10, 15, 20, 25]:
-    m = -1
-    c = -2 # -1 = dont filter, -2 = set everything to 'REGULAR_VEHICLE', else set to class
-    split = 'train'
-    detections = 'detector'
-    orig_split = 'train' if detections != 'evaluation' else 'val'
-    for t in os.listdir(f'tracks/tracks_for_eval/initial_dets'): #class_dict.keys():
-        print(t)
-        tracker_dir = f'tracks/tracks_for_eval/tracked_dets/{t}/train'
-        tracker_dir = '/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT/out/detections_val_gnn/INITIAL_DETS_OLD_MODEL_ORACLE_0.1_0.1_all_egocomp_margin0.6_width25_oraclenode_oracleedge_64_64_64_64_0.5_3.5_0.5_4_3.162277660168379e-06_0.0031622776601683794_16000_16000__NS_MG_32_2.0_LN___P___MMMDPTT___MMMV_/val_gnn'
-        print(tracker_dir)
-        # seq = '16473613811052081539'
-        # seq_list = [seq]
-        seq_list = os.listdir(tracker_dir)
-        min_points = m
-        max_points = m+5 if m <= 25 and m != -1 else 1000000
-        _, detection_metric, _ = eval_detection(
-            gt_folder=gt_folder,
-            trackers_folder=tracker_dir,
-            split=orig_split,
-            seq_to_eval=seq_list,
-            remove_far=True,
-            remove_non_drive=False,
-            remove_non_move=True,
-            remove_non_move_strategy='per_frame',
-            remove_non_move_thresh=1.0,
-            debug=False,
-            just_eval=True,
-            visualize=False,
-            name=name,
-            min_points=min_points,
-            max_points=max_points,
-            base_dir='',
-            print_detail=False,
-            filter_class=c,
-            use_matched_category=False,
-            filter_moving=True)
-        
-        print(detection_metric, '\n')
-        print()

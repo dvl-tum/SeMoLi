@@ -20,7 +20,6 @@ remove_static_thresh: 1.0
 debug: False
 short_train: False
 split_val: False
-every_x_frame: 1
 margin: 0.6
 traj_channels: 25
 pos_channels: 3

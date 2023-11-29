@@ -472,7 +472,6 @@ def load_initial_detections(out_path, split, seq=None, tracks=False, every_x_fra
             d['num_interior'].item(),
             # d['overlap'].item(),
             d['gt_id'].item(),
-            d['gt_id_box'].item() if 'gt_id_box' in d.keys() else d['gt_id'].item(),
             rot=torch.from_numpy(d['rot']) if 'rot' in d.keys() else None,
             alpha=torch.from_numpy(d['alpha']) if 'alpha' in d.keys() else None,
             gt_cat=d['gt_cat'].item() if 'gt_cat' in d.keys() else -10,
@@ -658,6 +657,7 @@ def _from_box(vertices):
 
 def to_feather(detections, log_id, out_path, split, rank, precomp_dets=False, name='', root_dir='', track_data_path=''):
     track_vals = list()
+    print(f'{root_dir}/{track_data_path}/initial_dets/{name}', precomp_dets)
     if precomp_dets:
         store_initial_detections(detections, seq=log_id, out_path=f'{root_dir}/{track_data_path}/initial_dets/{name}', split=split)
     # per timestamp detections

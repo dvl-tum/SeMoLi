@@ -1,6 +1,6 @@
 # paths
-track_data_path: 'PseudoDetection3D/tracks/tracks'
-out_path_for_eval: 'PseudoDetection3D/tracks/tracks_for_eval'
+track_data_path: 'tracks/tracks'
+out_path_for_eval: 'tracks/tracks_for_eval'
 initial_dets_path: 'initial_dets'
 tracked_dets_path: 'tracked_dets'
 registered_dets_path: 'registered_dets'

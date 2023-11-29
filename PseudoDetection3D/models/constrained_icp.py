@@ -181,7 +181,8 @@ class ConstrainedICPRegistration():
                     pc_tgt = torch.from_numpy(pc_tgt)
                 if self.outlier_kNN:
                     pc_tgt, _ = outlier_removal(pc_tgt, threshold=0.5, kNN=10)
-                    pc_tgt = pc_tgt.numpy()
+                
+                pc_tgt = pc_tgt.numpy()
 
                 # get rotation natrix of target point cloud
                 rot = torch.tensor([

@@ -46,7 +46,6 @@ class TrajectoryDataset(PyGDataset):
             remove_static,
             static_thresh,
             debug,
-            every_x_frame=1,
             margin=0.6,
             _processed_dir=False,
             do_process=True,
@@ -80,7 +79,6 @@ class TrajectoryDataset(PyGDataset):
                 labels_dir=Path(os.path.join(data_dir, split)))
         else:
             self.loader = None
-        self.every_x_frame = every_x_frame
         self.margin = margin
         self._processed_dir = _processed_dir
         self.do_process =  do_process
@@ -102,7 +100,7 @@ class TrajectoryDataset(PyGDataset):
             percentage=self.percentage_data)
         # debugging
         if debug:
-            self.seqs = [self.seqs[0]]
+            self.seqs = [self.seqs[5]]
 
         if continue_from_existing:
             split = 'train' if 'train' in detection_set else 'val'
@@ -120,7 +118,7 @@ class TrajectoryDataset(PyGDataset):
         seqs = [seq for seq in self.seqs if seq in os.listdir(self.trajectory_dir)]
         return [flow_file for seq in seqs\
             for i, flow_file in enumerate(sorted(os.listdir(osp.join(self.trajectory_dir, seq)))) \
-                if i % self.every_x_frame == 0 and i < len(os.listdir(os.path.join(self.trajectory_dir, seq)))-1]
+                if i < len(os.listdir(os.path.join(self.trajectory_dir, seq)))-1]
             
     @property
     def raw_paths(self):
@@ -128,14 +126,14 @@ class TrajectoryDataset(PyGDataset):
         return [os.path.join(self.trajectory_dir, seq, flow_file)\
             for seq in seqs\
                 for i, flow_file in enumerate(sorted(os.listdir(osp.join(self.trajectory_dir, seq)))) \
-                    if i % self.every_x_frame == 0 and i < len(os.listdir(os.path.join(self.trajectory_dir, seq)))-1]
+                    if i < len(os.listdir(os.path.join(self.trajectory_dir, seq)))-1]
     
     @property
     def processed_file_names(self):
         seqs = [seq for seq in self.seqs if seq in os.listdir(self.trajectory_dir)]
         return [flow_file[:-3] + 'pt' for seq in seqs\
             for i, flow_file in enumerate(sorted(os.listdir(osp.join(self.trajectory_dir, seq)))) \
-                if i % self.every_x_frame == 0 and i < len(os.listdir(os.path.join(self.trajectory_dir, seq)))-1]
+                if i < len(os.listdir(os.path.join(self.trajectory_dir, seq)))-1]
             
     @property
     def processed_paths(self):
@@ -145,14 +143,12 @@ class TrajectoryDataset(PyGDataset):
             print(f'{len(seqs)} to be evaluated, {len(self.already_evaluated)} were already there...')
             return [os.path.join(self.processed_dir, seq, flow_file)\
                     for seq in seqs\
-                        for i, flow_file in enumerate(sorted(os.listdir(osp.join(self.processed_dir, seq))))\
-                        if i % self.every_x_frame == 0]#[:64]
+                        for i, flow_file in enumerate(sorted(os.listdir(osp.join(self.processed_dir, seq))))]#[:64]
         else:
             seqs = [seq for seq in self.seqs if seq in os.listdir(self.trajectory_dir) and seq not in self.already_evaluated]
             return [os.path.join(self.processed_dir, seq, flow_file[:-3] + 'pt')\
                     for seq in seqs\
-                        for i, flow_file in enumerate(sorted(os.listdir(osp.join(self.trajectory_dir, seq))))\
-                             if i % self.every_x_frame == 0]
+                        for i, flow_file in enumerate(sorted(os.listdir(osp.join(self.trajectory_dir, seq))))]
 
     def __len__(self):
         return len(self._processed_paths)
@@ -693,7 +689,6 @@ def get_TrajectoryDataLoader(cfg, name=None, train=True, val=True, test=False):
                 cfg.data.remove_static,
                 cfg.data.static_thresh,
                 cfg.data.debug,
-                every_x_frame=cfg.data.every_x_frame,
                 do_process=cfg.data.do_process,
                 _processed_dir=cfg.data.processed_dir + f'_{split}', 
                 percentage_data=cfg.data.percentage_data_val,
@@ -718,7 +713,6 @@ def get_TrajectoryDataLoader(cfg, name=None, train=True, val=True, test=False):
                 cfg.data.remove_static,
                 cfg.data.static_thresh,
                 cfg.data.debug,
-                every_x_frame=cfg.data.every_x_frame,
                 do_process=cfg.data.do_process,
                 _processed_dir=cfg.data.processed_dir + f'_{split}', 
                 percentage_data=1.0,

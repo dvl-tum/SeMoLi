@@ -3,10 +3,10 @@ import warnings
 warnings.filterwarnings("ignore")
 import hydra
 from omegaconf import OmegaConf
-from models import _tracker_factory, _registration_factory
+from PseudoDetection3D.models import _tracker_factory, _registration_factory
 import logging
-from data_utils import MOT3DTrackDataset, MOT3DSeqDataset, DistributedSeqSampler
-from models.tracking_utils import load_initial_detections, store_initial_detections, to_feather
+from PseudoDetection3D.data_utils import MOT3DTrackDataset, MOT3DSeqDataset, DistributedSeqSampler
+from PseudoDetection3D.models.tracking_utils import load_initial_detections, store_initial_detections, to_feather
 import os
 from av2.datasets.sensor.av2_sensor_dataloader import AV2SensorDataLoader
 from pathlib import Path
@@ -14,9 +14,9 @@ import torch
 import torch.multiprocessing as mp
 import torch.distributed as dist
 from torch.utils.data import DataLoader
-from evaluation import eval_detection
+from PseudoDetection3D.evaluation import eval_detection
 import shutil
-from data_utils.splits import get_seq_list_fixed_val
+from PseudoDetection3D.data_utils.splits import get_seq_list_fixed_val
 
 
 logger = logging.getLogger("Model")
@@ -53,7 +53,7 @@ class InitialDetProcessor():
         self.track_params = track_params
         self.register_params = register_params
 
-    def track(self, log_id, split, detections=None):
+    def track(self, log_id, detections=None):
         # track detections over sequences
         tracker = self._tracker(
             self.av2_loader,
@@ -68,7 +68,7 @@ class InitialDetProcessor():
         p = f'{self.tracked_dets_path}/{self.split}/{log_id}'
         if os.path.isdir(p):
             shutil.rmtree(p)
-        store_initial_detections(tracks, log_id, self.tracked_dets_path, split, tracks=True)
+        store_initial_detections(tracks, log_id, self.tracked_dets_path, self.split, tracks=True)
 
         return tracks
     
@@ -99,8 +99,6 @@ class InitialDetProcessor():
 
     @staticmethod
     def eval(cfg, detector_dir, seq_list, name):
-        if cfg.data.debug:
-            seq_list = ['10023947602400723454']
         _, detection_metric, all_results_df = eval_detection.eval_detection(
                     gt_folder=os.path.join(os.getcwd(), cfg.data.data_dir + '_train/Waymo_Converted'),
                     trackers_folder=detector_dir,
@@ -112,24 +110,25 @@ class InitialDetProcessor():
                     remove_non_move_strategy=cfg.data.remove_static_strategy,
                     remove_non_move_thresh=cfg.data.remove_static_thresh,
                     visualize=False,
-                    filter_class=cfg.filter_class, #'NO_FILTER', #'CONVERT_ALL_TO_CARS',
-                    filter_moving=cfg.filter_moving,
-                    use_matched_category=cfg.use_matched_category,
+                    filter_class=cfg.evaluation.filter_class, #'NO_FILTER', #'CONVERT_ALL_TO_CARS',
+                    filter_moving=cfg.evaluation.filter_moving,
+                    use_matched_category=cfg.evaluation.use_matched_category,
                     debug=cfg.data.debug,
                     name=name,
-                    store_matched=cfg.store_matched,
-                    velocity_evaluation=cfg.vel_evaluation,
-                    heuristics=cfg.heuristics,
-                    waymo_style=cfg.waymo_style,
+                    store_matched=cfg.evaluation.store_matched,
+                    velocity_evaluation=cfg.evaluation.vel_evaluation,
+                    heuristics=cfg.evaluation.heuristics,
+                    waymo_style=cfg.evaluation.waymo_style,
                     use_aff_as_score=False,
-                    inflate_bb=cfg.inflate_bb)
+                    inflate_bb=cfg.evaluation.inflate_bb,
+                    root_dir=cfg.root_dir,
+                    filtered_file_path=cfg.data.filtered_file_path)
 
-        # print(f'Detection metric of detections from detector_dir {detection_metric}')
         return all_results_df
 
 def amodalize(cfg):
     # amodalize
-    if cfg.multi_gpu:
+    if cfg.training.multi_gpu:
         world_size = torch.cuda.device_count()
         in_args = (cfg, world_size)
         mp.spawn(_amodalize, args=in_args, nprocs=world_size, join=True)
@@ -139,17 +138,18 @@ def amodalize(cfg):
     # get sequences to eval
     seq_list = get_seq_list_fixed_val(
         cfg.data.data_dir,
+        root_dir=cfg.root_dir,
         detection_set=cfg.data.detection_set,
         percentage=cfg.data.percentage_data_val)
     if cfg.data.debug:
-        seq_list = [seq_list[0]]
-
+        seq_list = [seq_list[5]]
+    
     # evaluate intial detections
     if cfg.registration.convert_initial:
         logger.info('Evaluating initial bounding boxes...')
         InitialDetProcessor.eval(
             cfg,
-            os.path.join(cfg.registration.out_path_for_eval, cfg.registration.initial_dets, cfg.registration.split),
+            os.path.join(cfg.registration.out_path_for_eval, cfg.registration.initial_dets_path, cfg.registration.split),
             seq_list,
             'Initial')
 
@@ -158,13 +158,13 @@ def amodalize(cfg):
         logger.info('Evaluating registered bounding boxes...')
         InitialDetProcessor.eval(
             cfg,
-            os.path.join(cfg.registration.out_path_for_eval, cfg.registration.registered_dets, cfg.registration.split), 
+            os.path.join(cfg.registration.out_path_for_eval, cfg.registration.registered_dets_path, cfg.registration.split), 
             seq_list,
             'Registered')
         
 
 def _amodalize(rank, cfg, world_size):
-    if cfg.multi_gpu:
+    if cfg.training.multi_gpu:
         os.environ['MASTER_ADDR'] = 'localhost'
         os.environ['MASTER_PORT'] = '12355'
         torch.cuda.set_device(rank)
@@ -172,15 +172,16 @@ def _amodalize(rank, cfg, world_size):
     
     # initialize dataset
     dataset = MOT3DTrackDataset(
-        os.path.join(cfg.registration.track_data_path, cfg.registration.initial_dets),
+        os.path.join(cfg.registration.track_data_path, cfg.registration.initial_dets_path),
         cfg.data.data_dir,
         cfg.data.detection_set,
         cfg.data.percentage_data_val,
-        cfg.data.debug)
+        cfg.data.debug,
+        cfg.root_dir)
     cfg.registration.split = dataset.split
 
     # get distributed dataloader if multi gpu
-    if not cfg.multi_gpu:
+    if not cfg.training.multi_gpu:
         dataloader = DataLoader(
             dataset,
             batch_size=1)
@@ -212,8 +213,8 @@ def _amodalize(rank, cfg, world_size):
             split=split,
             detection_set=detection_set,
             percentage=percentage,
-            track_params=cfg.registation.tracking,
-            register_params=cfg.registation.registration)
+            track_params=cfg.registration.tracking,
+            register_params=cfg.registration.registration)
         
         detections = None
         tracks = None
@@ -221,22 +222,22 @@ def _amodalize(rank, cfg, world_size):
         # convert initial detections as comparison
         if cfg.registration.convert_initial:
             logger.info('Converting initial...')
-            detections = detsprocessor.get_initial_dets(seq_name, detection_set)
+            detections = detsprocessor.get_initial_dets(seq_name)
             if not len(detections):
                 print(f'No initial detections for sequences {seq_name}')
                 continue
-            detsprocessor.to_feather(detections, seq_name, os.path.join(cfg.registration.out_path_for_eval, cfg.registration.initial_dets), detection_set)
+            detsprocessor.to_feather(detections, seq_name, os.path.join(cfg.registration.out_path_for_eval, cfg.registration.initial_dets_path), detection_set)
         
         # track for registration
         if cfg.registration.track:
             logger.info('Tracking...')
-            tracks = detsprocessor.track(seq_name, detection_set, detections=detections)
+            tracks = detsprocessor.track(seq_name, detections=detections)
             detections = {k: v.detections for k, v in tracks.items()}
-            detsprocessor.to_feather(detections, seq_name, os.path.join(cfg.registration.out_path_for_eval, cfg.registration.tracked_dets), detection_set)
+            detsprocessor.to_feather(detections, seq_name, os.path.join(cfg.registration.out_path_for_eval, cfg.registration.tracked_dets_path), detection_set)
         
         # register over tracks
         if cfg.registration.register:
             logger.info('Registration...')
-            detections = detsprocessor.register(seq_name, detection_set, tracks=tracks)
-            detsprocessor.to_feather(detections, seq_name, os.path.join(cfg.registration.out_path_for_eval, cfg.registration.registered_dets), detection_set)
+            detections = detsprocessor.register(seq_name, tracks=tracks)
+            detsprocessor.to_feather(detections, seq_name, os.path.join(cfg.registration.out_path_for_eval, cfg.registration.registered_dets_path), detection_set)
 

@@ -16,7 +16,7 @@ from .splits import get_seq_list, get_seq_list_fixed_val
 
 
 class MOT3DTrackDataset:
-    def __init__(self, dataset_path, gt_path, detection_set, percentage_data, debug):
+    def __init__(self, dataset_path, gt_path, detection_set, percentage_data, debug, root_dir):
         self.dataset_path = dataset_path
         self.gt_path = gt_path
         self.detection_set = detection_set
@@ -29,21 +29,13 @@ class MOT3DTrackDataset:
         self.split = split
         
         # for debugging
-        if debug:
-            if split == 'val' and 'Argo' in self.dataset_path:
-                self.data = ['04994d08-156c-3018-9717-ba0e29be8153']
-            elif split == 'train' and 'Argo' in self.dataset_path:
-                self.data = ['00a6ffc1-6ce9-3bc3-a060-6006e9893a1a']
-            elif split == 'val':
-                self.data = ['10023947602400723454']#['809159138284604331']
-            else:
-                self.data = ['10023947602400723454'] #['809159138284604331']
-        else:
-            # self.seqs = get_seq_list(
-            self.data = get_seq_list_fixed_val(
+        self.data = get_seq_list_fixed_val(
                 path=os.path.join(dataset_path, split),
+                root_dir=root_dir,
                 detection_set=detection_set,
                 percentage=percentage_data)
+        if debug:
+            self.data = [self.data[5]]
 
     def __getitem__(self, idx):
         seq_name = self.data[idx]

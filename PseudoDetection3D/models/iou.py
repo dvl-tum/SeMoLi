@@ -1,9 +1,6 @@
 import numpy as np
 import torch
-try:
-    from cuda_op.cuda_ext import sort_v
-except:
-    print('could not load sort...')
+from cuda_op.cuda_ext import sort_v
 EPSLION = 1e-8
 
 ## https://github.com/Jiahao-Ma/2D-3D-IoUs

@@ -225,7 +225,7 @@ class SimpleTracker():
             act = cid < num_act
             thresh = self.match_threshold if act else self.match_threshold
             # match only of cost smaller than threshold
-            if cost_mat[2][rid, cid] < thresh:
+            if cost_mat[rid, cid] < thresh:
                 matched_dets.append(rid)
                 # if matched to inactive track, reactivate
                 if act:
@@ -321,7 +321,7 @@ class SimpleTracker():
                 else:
                     weight = torch.ones(traj_lens[i])
                     weight = weight/weight.sum()
-                weight = weight.to(device)
+                weight = weight.to(self.rank)
                 l_change_2d[k, i] = ((
                     torch.abs(propagared_bbs_tracks[i]['lwh'][:, 0]-propagared_bbs_dets[k]['lwh'][:traj_lens[i], 0]).float())/(
                     0.5*propagared_bbs_tracks[i]['lwh'][:, 0]+0.5*propagared_bbs_tracks[i]['lwh'][:, 1])).mean()

@@ -15,9 +15,7 @@ class Detector3D():
             self,
             out_path='out',
             split='val', 
-            every_x_frame=1, 
             num_interior=10, 
-            overlap=5, 
             av2_loader=None, 
             rank=0,
             precomp_dets=False,
@@ -32,8 +30,6 @@ class Detector3D():
         self.detections = dict()
         self.log_id = -1
         self.split = split
-        self.every_x_frame = every_x_frame
-        self.overlap = overlap
         self.num_interior = num_interior
         self.av2_loader = av2_loader
         self.precomp_dets = precomp_dets
@@ -119,7 +115,6 @@ class Detector3D():
                 log_id=log_id,
                 timestamps=timestamps.cpu(),
                 num_interior=num_interior,
-                overlap=self.overlap,
                 gt_id=gt_id,
                 gt_cat=gt_cat, 
                 median_flow=self.median_flow,
