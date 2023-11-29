@@ -2,9 +2,7 @@ import pytorch3d
 from lapsolver import solve_dense
 import torch
 from .tracking_utils import *
-from scipy.optimize import linear_sum_assignment
 import matplotlib.pyplot as plt
-import torchvision
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from .iou import IoUs2D
@@ -12,23 +10,37 @@ import matplotlib
 
 
 class SimpleTracker():
-    def __init__(self, every_x_frame, overlap, av2_loader, log_id, rank, logger, a_threshold=0.8, i_threshold=0.8, len_thresh=5, max_time=5, filter_by_width=False, inact_patience=5, fixed_time=False, l_change_thresh=2, w_change_thresh=2, use_temporal_weight=False):
+    def __init__(self,
+                 av2_loader,
+                 log_id,
+                 rank,
+                 logger,
+                 match_threshold=0.8,
+                 len_thresh=5,
+                 max_time=5,
+                 filter_by_width=False,
+                 inact_patience=5,
+                 fixed_time=False,
+                 l_change_thresh=2,
+                 w_change_thresh=2,
+                 use_temporal_weight=False):
+        
         self.active_tracks = list()
         self.inactive_tracks = list()
-        # self.every_x_frame = every_x_frame
-        # self.overlap = overlap
+
         self.av2_loader = av2_loader
-        self.track_id = 0
+        self.logger = logger
+        self.rank = rank
+
         self.ordered_timestamps = torch.tensor(
             self.av2_loader.get_ordered_log_lidar_timestamps(log_id))
         self.pdist = torch.nn.PairwiseDistance(p=2)
+        
+        self.track_id = 0
         self.tps = 0
         self.fns = 0
         self.fps = 0
-        self.a_threshold = a_threshold
-        self.i_threshold = a_threshold
-        self.rank = rank
-        self.logger = logger
+        self.match_threshold = match_threshold
         self.len_thresh = len_thresh
         self.max_time = max_time
         self.inact_patience = inact_patience
@@ -39,19 +51,17 @@ class SimpleTracker():
         self.use_temporal_weight = use_temporal_weight
     
     def associate(self, detections):
-        # per timestampdetections
-        # 1552440195762604, 1552440196162525, 1552440196062571
-        
+        # iterate over timestamps and associate
         for i, timestamp in enumerate(sorted(detections.keys())):
             dets = detections[timestamp]
-            # filter by width
+            # filter by width (remove large bounding boxes)
             if self.filter_by_width:
                 detections_new = list()
                 for d in dets:
                     if d.lwh[1] < self.filter_by_width:
                         detections_new.append(d)
                     else:
-                        pass #print(d.lwh)
+                        pass
                 dets = detections_new
             if len(dets) == 0:
                 continue
@@ -64,25 +74,26 @@ class SimpleTracker():
                 dets,
                 timestamp=time)
         
+        # combine active and inactive tracks
         self.active_tracks += self.inactive_tracks
+        
+        # compute tracking metrics 
         if self.tps+self.fps and self.tps+self.fns:
-            self.logger.info(f'TPA: {self.tps}, FNA: {self.fns}, FPS: {self.fps}, Pr: {self.tps/(self.tps+self.fps)}, Re: {self.tps/(self.tps+self.fns)}')
+            self.logger.info(f'TPA: {self.tps}, FNA: {self.fns}, FPS: {self.fps},\
+                             Pr: {self.tps/(self.tps+self.fps)}, Re: {self.tps/(self.tps+self.fns)}')
         else:
             self.logger.info(f'TPA: {self.tps}, FNA: {self.fns}, FPS: {self.fps}')
         self.tps, self.fns, self.fps = 0, 0, 0
         print(f'Before len thresh {len(self.active_tracks)}')
-        # print([len(t) for t in active_tracks])
+
         self.active_tracks = {t.track_id: t for t in active_tracks if len(t) > self.len_thresh}
         print(f'After len thresh {len(self.active_tracks)}')
-        # for track in self.active_tracks:    
-        #    track.fill_detections(self.av2_loader, self.ordered_timestamps.numpy().tolist(), self.max_time)
         
         return self.active_tracks
 
     def associate_timestamp(
             self,
             detections,
-            matching='hungarian',
             timestamp=None):
 
         # if last detections where too long ago set all inactive
@@ -103,7 +114,7 @@ class SimpleTracker():
         if not len(self.active_tracks) or out_of_bounds:
             self.active_tracks = list()
             for d in detections:
-                self.active_tracks.append(Track(d, self.track_id))#, self.every_x_frame, self.overlap))
+                self.active_tracks.append(Track(d, self.track_id))
                 self.track_id += 1
             return self.active_tracks
         
@@ -134,9 +145,6 @@ class SimpleTracker():
         gt_id_tracks = [t.detections[-1].gt_id for t in self.active_tracks] + \
             [self.inactive_tracks[i].detections[-1].gt_id for i in inactive_tracks_to_use] 
         gt_matches = sum([1 for gt_id_d in gt_id_detections if gt_id_d in gt_id_tracks and gt_id_d != 0])
-        gt_cat_detections = [d.gt_cat for d in detections]
-        gt_cat_tracks = [t.detections[-1].gt_cat for t in self.active_tracks] + \
-            [self.inactive_tracks[i].detections[-1].gt_cat for i in inactive_tracks_to_use]
  
         # match detections and tracks
         re_activate, matched_tracks, matched_dets, tps, fps = self.hungarian(
@@ -193,8 +201,6 @@ class SimpleTracker():
                 self.active_tracks.append(Track(
                     detections[idx],
                     self.track_id,
-                    # overlap=self.overlap,
-                    # every_x_frame=self.every_x_frame
                     ))
                 self.track_id += 1
 
@@ -213,11 +219,11 @@ class SimpleTracker():
         matched_dets = list()
         fps = 0
         tps = 0
-        rids, cids = solve_dense(cost_mat[2])
+        rids, cids = solve_dense(cost_mat)
         for rid, cid in zip(rids, cids):
             # check if active or inactive track and get threshold
             act = cid < num_act
-            thresh = self.a_threshold if act else self.i_threshold
+            thresh = self.match_threshold if act else self.match_threshold
             # match only of cost smaller than threshold
             if cost_mat[2][rid, cid] < thresh:
                 matched_dets.append(rid)
@@ -233,7 +239,6 @@ class SimpleTracker():
                 d_fg = gt_id_detections[rid] != 0
                 tps = tps + 1 if gt_id_tracks[cid] == gt_id_detections[rid] and d_fg else tps
                 fps = fps + 1 if gt_id_tracks[cid] != gt_id_detections[rid] else fps
-                # print(gt_id_tracks[cid] == gt_id_detections[rid], gt_id_tracks[cid], gt_id_detections[rid], gt_cat_tracks[cid], gt_cat_detections[rid], cost_mat[0][rid, cid], cost_mat[1][rid, cid], cost_mat[2][rid, cid], cost_mat[3][rid, cid], cost_mat[4][rid, cid])
         
         return re_activate, matched_tracks, matched_dets, tps, fps
 
@@ -244,7 +249,7 @@ class SimpleTracker():
             timestamp, self.av2_loader, max_time=self.max_time) for t in self.active_tracks]
         cano_points = [t._get_canonical_points_and_convert_time(
             timestamp, self.av2_loader).float().to(self.rank) for t in self.active_tracks]
-        headings_tracks = [t.detections[-1].alpha for t in self.active_tracks]
+        
         # get detections and canonical points of inactive track if 
         # overlap still predicted in previous added detection
         inactive_tracks_to_use = list()
@@ -268,12 +273,14 @@ class SimpleTracker():
                     if self.fixed_time:
                         inact_patience -= self.max_time
                     
-                    if time_dist < inact_patience and time_dist < t.detections[-1].trajectory.shape[1] - 1 - self.max_time:
+                    if time_dist < inact_patience and \
+                            time_dist < t.detections[-1].trajectory.shape[1] - 1 - self.max_time:
                         trajs.extend([
-                            t._get_whole_traj_and_convert_time(timestamp, self.av2_loader, max_time=self.max_time)])
+                            t._get_whole_traj_and_convert_time(
+                            timestamp, self.av2_loader, max_time=self.max_time)])
                         cano_points.extend([
-                            t._get_canonical_points_and_convert_time(timestamp, self.av2_loader).float().to(self.rank)])
-                        headings_tracks.append(t.detections[-1].alpha)
+                            t._get_canonical_points_and_convert_time(
+                            timestamp, self.av2_loader).float().to(self.rank)])
                         inactive_tracks_to_use.append(i)
                     else:
                         t.dead = True
@@ -288,7 +295,6 @@ class SimpleTracker():
         # trajectories and canonical points of new detections
         det_trajs = [t.trajectory.float().to(self.rank) for t in detections]
         det_cano_points = [t._get_canonical_points().float().to(self.rank) for t in detections]
-        headings_dets = [d.alpha for d in detections]
         propagated_pos_dets = [
             torch.tile(det_cano_points[i].unsqueeze(1), (1, det_trajs[i].shape[1], 1)) + det_trajs[i] \
                 for i in range(len(det_trajs))]
@@ -296,18 +302,13 @@ class SimpleTracker():
             get_propagated_bbs(ppd, _2d=True) for ppd in propagated_pos_dets]
 
         # initialize position distances and trajectory distances
-        chamferDist = pytorch3d.loss.chamfer_distance
-        cd_dists = torch.zeros(len(propagated_pos_dets), num_tracks)
-        mean_dist = torch.zeros(len(propagated_pos_dets), num_tracks)
         bb_iou_2d = torch.zeros(len(propagated_pos_dets), num_tracks)
-        l2_center_2d = torch.zeros(len(propagated_pos_dets), num_tracks)
         l_change_2d = torch.zeros(len(propagated_pos_dets), num_tracks)
         h_change_2d = torch.zeros(len(propagated_pos_dets), num_tracks)
-        heading_diff = torch.zeros(len(propagated_pos_dets), num_tracks)
         if visualize:
-            os.makedirs('/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/Visualization_tracks', exist_ok=True)
+            os.makedirs('Visualization_tracks', exist_ok=True)
             fig, ax = plt.subplots()
-        device = det_trajs[0].device
+
         for k in range(len(propagated_pos_dets)):
             if visualize:
                 self.add_patch(ax, propagared_bbs_dets[k])
@@ -321,36 +322,31 @@ class SimpleTracker():
                     weight = torch.ones(traj_lens[i])
                     weight = weight/weight.sum()
                 weight = weight.to(device)
-                l_change_2d[k, i] = ((torch.abs(propagared_bbs_tracks[i]['lwh'][:, 0]-\
-                                      propagared_bbs_dets[k]['lwh'][:traj_lens[i], 0]).float())/(0.5*propagared_bbs_tracks[i]['lwh'][:, 0]+0.5*propagared_bbs_tracks[i]['lwh'][:, 1])).mean()
-                h_change_2d[k, i] = ((torch.abs(propagared_bbs_tracks[i]['lwh'][:, 1]-\
-                                      propagared_bbs_dets[k]['lwh'][:traj_lens[i], 1]).float())/(0.5*propagared_bbs_tracks[i]['lwh'][:, 1]+0.5*propagared_bbs_dets[k]['lwh'][:traj_lens[i], 1])).mean()
-                l2_center_2d[k, i] = (weight * self.pdist(propagared_bbs_tracks[i]['translation'], 
-                                       propagared_bbs_dets[k]['translation'][:traj_lens[i]])).mean()                
+                l_change_2d[k, i] = ((
+                    torch.abs(propagared_bbs_tracks[i]['lwh'][:, 0]-propagared_bbs_dets[k]['lwh'][:traj_lens[i], 0]).float())/(
+                    0.5*propagared_bbs_tracks[i]['lwh'][:, 0]+0.5*propagared_bbs_tracks[i]['lwh'][:, 1])).mean()
+                h_change_2d[k, i] = ((
+                    torch.abs(propagared_bbs_tracks[i]['lwh'][:, 1]-propagared_bbs_dets[k]['lwh'][:traj_lens[i], 1]).float())/(
+                    0.5*propagared_bbs_tracks[i]['lwh'][:, 1]+0.5*propagared_bbs_dets[k]['lwh'][:traj_lens[i], 1])).mean()         
                 bb_iou_2d[k, i] = 1 - (weight * IoUs2D(propagared_bbs_tracks[i]['xylwa'].unsqueeze(0), 
                                        propagared_bbs_dets[k]['xylwa'][:traj_lens[i]].unsqueeze(0))).sum()
-                cd_dist_track = chamferDist(
-                        propagated_pos_tracks[i].permute(1, 0, 2), propagated_pos_dets[k][:, :traj_lens[i]].permute(1, 0, 2))[0]
-                mean_dist[k, i] = (weight * self.pdist(propagated_pos_tracks[i].permute(1, 0, 2).mean(dim=1),
-                        propagated_pos_dets[k][:, :traj_lens[i]].permute(1, 0, 2).mean(dim=1))).mean()
-                cd_dists[k, i] = cd_dist_track
-                heading_diff[k, i] = abs(headings_dets[k] - headings_tracks[i])
         if visualize:
             ax.axis('equal')
             plt.savefig(
-                f'/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/Visualization_tracks/frame_{timestamp}.jpg', dpi=1000)
+                f'Visualization_tracks/frame_{timestamp}.jpg', dpi=1000)
             plt.close()
 
+        # mask with len change, width change, and 2d iou thresh
         l_mask = torch.where(l_change_2d > self.l_change_thresh)
-        h_mask = torch.where(h_change_2d > self.w_change_thresh)
         bb_iou_2d[l_mask[0], l_mask[1]] = torch.nan
-        bb_iou_2d[h_mask[0], h_mask[1]] = torch.nan
-        iou2d_mask = torch.where(bb_iou_2d > self.a_threshold)
-        bb_iou_2d[iou2d_mask[0], iou2d_mask[1]] = torch.nan
-        # heading_mask = torch.where(heading_diff>0.2)
-        # bb_iou_2d[heading_mask[0], heading_mask[1]] = torch.nan
 
-        return [cd_dists, mean_dist, bb_iou_2d, l2_center_2d, l_change_2d, h_change_2d], \
+        h_mask = torch.where(h_change_2d > self.w_change_thresh)
+        bb_iou_2d[h_mask[0], h_mask[1]] = torch.nan
+
+        iou2d_mask = torch.where(bb_iou_2d > self.match_threshold)
+        bb_iou_2d[iou2d_mask[0], iou2d_mask[1]] = torch.nan
+
+        return bb_iou_2d, \
             len(self.active_tracks), \
                 len(trajs) - len(self.active_tracks), \
                     inactive_tracks_to_use

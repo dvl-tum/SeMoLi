@@ -1,36 +1,42 @@
-a_threshold: 0.9
-i_threshold: 0.9
-len_thresh: 0
-outlier_threshold: 0.5
-outlier_kNN: 10
-use_temporal_weight_track: False
-exp_weight_rot: 0
-matching: 'greedy'
-alpha: 0.95
-overlap: 5
-every_x_frame: ${data.every_x_frame}
-track_data_path: '/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/tracks/tracks'
+# paths
+track_data_path: 'PseudoDetection3D/tracks/tracks'
+out_path_for_eval: 'PseudoDetection3D/tracks/tracks_for_eval'
+initial_dets_path: 'initial_dets'
+tracked_dets_path: 'tracked_dets'
+registered_dets_path: 'registered_dets'
+
+# input detection specifications
 model: ''
 split: train
-track: True
+
+# if converting initial, tracking and registering
+# if already tracked initial detections stored, set to false
 convert_initial: True
+track: True
 register: True
-initial_dets: 'initial_dets'
-tracked_dets: 'tracked_dets'
-registered_dets: 'registered_dets'
-tracker_type: 'SimpleTracker' # 'OnlineOracleTracker'
+
+# tracking and registration type
+tracker_type: 'SimpleTracker'
 registration_type: 'ConstICP'
-out_path_for_eval: '/dvlresearch/jenny/Documents/3DOpenWorldMOT/3DOpenWorldMOT/tracks/tracks_for_eval'
-max_time_track: 5 # set max_time to -1 --> take all
-filter_by_width: 1000
-inact_patience: 5
-fixed_time: False
-l_change_thresh: 0.5
-w_change_thresh: 0.5
-registration_len_thresh: 2
-min_pts_thresh: 0
-mode: 'density'
-density_thresh: 0
-concat: True
-means_before: True
-avg_w_prev: False
+
+tracking:
+  match_threshold: 0.9
+  len_thresh: 0
+  use_temporal_weight: False
+  max_time: 5 # set max_time to -1 --> take all
+  filter_by_width: 1000
+  inact_patience: 5
+  fixed_time: False
+  l_change_thresh: 0.5
+  w_change_thresh: 0.5
+
+registration:
+  outlier_threshold: 0.5
+  outlier_kNN: 0
+  registration_len_thresh: 2
+  min_pts_thresh: 0
+  mode: 'density'
+  density_thresh: 0
+  concat: True
+  means_before: True
+  avg_w_prev: False

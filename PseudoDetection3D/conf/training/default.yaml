@@ -17,13 +17,6 @@ optim:
     params:
       lr: ${training.optim.base_lr} # The path is cut from training
   lr_scheduler: ${lr_scheduler} # CHECK THIS
-  bn_scheduler:
-    bn_policy: "step_decay"
-    params:
-      bn_momentum: 0.1
-      bn_decay: 0.9
-      decay_step: 20
-      bn_clip: 1e-2
 just_eval: False     
 multi_gpu: False
 half_precision: True

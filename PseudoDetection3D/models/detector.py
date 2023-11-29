@@ -1,16 +1,9 @@
 import os
 import numpy as np
-from scipy.spatial.transform import Rotation
-from pyarrow import feather
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
-import pandas as pd
 import logging
-import sklearn.metrics
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
 import torch
-import copy
 from .tracking_utils import *
 
 
@@ -32,9 +25,7 @@ class Detector3D():
             threshold=0.5,
             median_flow=False,
             median_center=False,
-            min_area=False,
-            use_only_orig_for_bb=False,
-            ignore_dets_wo_orig_flow=False) -> None:
+            min_area=False) -> None:
         
         self.detections = dict()
         self.log_id = -1
@@ -52,8 +43,6 @@ class Detector3D():
         self.median_flow = median_flow
         self.median_center = median_center
         self.min_area = min_area
-        self.use_only_orig_for_bb = use_only_orig_for_bb
-        self.ignore_dets_wo_orig_flow = ignore_dets_wo_orig_flow
 
     def new_log_id(self, log_id):
         # save tracks to feather and reset variables
@@ -109,12 +98,6 @@ class Detector3D():
             point_cluster = points[clusters==c]
             # generate new detected trajectory
             traj_cluster = traj[clusters==c]
-            if resampled is None or not self.use_only_orig_for_bb:
-                resampled_cluster = None
-            else:
-                resampled_cluster = resampled[clusters==c]
-                if self.ignore_dets_wo_orig_flow and (~(resampled.bool())).sum() == 0:
-                    continue
 
             if self.kNN > 0:
                 point_cluster, mask = outlier_removal(point_cluster, threshold=self.threshold, kNN=self.kNN)
@@ -137,8 +120,7 @@ class Detector3D():
                 gt_cat=gt_cat, 
                 median_flow=self.median_flow,
                 median_center=self.median_center,
-                min_area=self.min_area,
-                resampled=resampled_cluster.cpu() if resampled_cluster is not None else resampled_cluster))
+                min_area=self.min_area))
         
         self.detections[timestamps.cpu()[0, 0].item()] = detections
 
@@ -149,41 +131,8 @@ class Detector3D():
             
         return detections
 
-    def mat_to_quat(self, mat):
-        """Convert a 3D rotation matrix to a scalar _first_ quaternion.
-        NOTE: SciPy uses the scalar last quaternion notation. Throughout this repository,
-            we use the scalar FIRST convention.
-        Args:
-            mat: (...,3,3) 3D rotation matrices.
-        Returns:
-            (...,4) Array of scalar first quaternions.
-        """
-        # Convert quaternion from scalar first to scalar last.
-        quat_xyzw = Rotation.from_matrix(mat).as_quat()
-        quat_wxyz = quat_xyzw[..., [3, 0, 1, 2]]
-        return quat_wxyz
-    
-    def quat_to_mat(self, quat_wxyz):
-        """Convert a quaternion to a 3D rotation matrix.
-
-        NOTE: SciPy uses the scalar last quaternion notation. Throughout this repository,
-            we use the scalar FIRST convention.
-
-        Args:
-            quat_wxyz: (...,4) array of quaternions in scalar first order.
-
-        Returns:
-            (...,3,3) 3D rotation matrix.
-        """
-        # Convert quaternion from scalar first to scalar last.
-        quat_xyzw = quat_wxyz[..., [1, 2, 3, 0]]
-        mat = Rotation.from_quat(quat_xyzw).as_matrix()
-        return mat
-
     def to_feather(self):
         to_feather(self.detections, self.log_id, self.out_path, self.split, self.rank, self.precomp_dets, self.name)
         self.detections = dict()
-        # write_path = os.path.join(self.out_path, self.split, self.log_id, 'annotations.feather') # os.path.join(self.out_path, self.split, 'feathers', f'all_{self.rank}.feather')
-        # logger.info(f'wrote {write_path}')
         return True
 

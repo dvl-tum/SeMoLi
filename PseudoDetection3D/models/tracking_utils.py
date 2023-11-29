@@ -1,6 +1,5 @@
 from scipy.spatial.transform import Rotation
 from pytorch3d.ops import knn_points
-import shutil
 import torch
 import os
 from collections import defaultdict
@@ -13,39 +12,6 @@ import pandas as pd
 import copy
 from av2.geometry.se3 import SE3
 from av2.structures.cuboid import Cuboid
-
-_class_dict = {
-    1: 'REGULAR_VEHICLE',
-    2: 'PEDESTRIAN',
-    3: 'BOLLARD',
-    4: 'CONSTRUCTION_CONE',
-    5: 'CONSTRUCTION_BARREL',
-    6: 'STOP_SIGN',
-    7: 'BICYCLE',
-    8: 'LARGE_VEHICLE',
-    9: 'WHEELED_DEVICE',
-    10: 'BUS',
-    11: 'BOX_TRUCK',
-    12: 'SIGN',
-    13: 'TRUCK',
-    14: 'MOTORCYCLE',
-    15: 'BICYCLIST',
-    16: 'VEHICULAR_TRAILER',
-    17: 'TRUCK_CAB',
-    18: 'MOTORCYCLIST',
-    19: 'DOG',
-    20: 'SCHOOL_BUS',
-    21: 'WHEELED_RIDER',
-    22: 'STROLLER',
-    23: 'ARTICULATED_BUS',
-    24: 'MESSAGE_BOARD_TRAILER',
-    25: 'MOBILE_PEDESTRIAN_SIGN',
-    26: 'WHEELCHAIR',
-    27: 'RAILED_VEHICLE',
-    28: 'OFFICIAL_SIGNALER',
-    29: 'TRAFFIC_LIGHT_TRAILER',
-    30: 'ANIMAL',
-    31: 'MOBILE_PEDESTRIAN_CROSSING_SIGN'}
 
 
 cols = list(mcolors.CSS4_COLORS.keys())[15:]
@@ -171,41 +137,6 @@ class Track():
         if detection.num_interior < self.min_num_interior:
             self.min_num_interior = detection.num_interior
     
-    def fill_detections(self, av2_loader, ordered_timestamps, max_time):
-        filled_detections = list()
-        for i, det in enumerate(self.detections):
-            filled_detections.append(det)
-            if i != len(self.detections)-1:
-                t0 = self.detections[i].timestamps[0, 0].item()
-                t1 = self.detections[i+1].timestamps[0, 0].item()
-                _range = ordered_timestamps.index(t1) - ordered_timestamps.index(t0)
-            else:
-                _range = max_time if max_time != -1 else det.trajectory.shape[1]-1 
-
-            city_SE3_ego0 = av2_loader.get_city_SE3_ego(self.log_id, det.timestamps[0, 0].item())
-            for time in range(1, _range):
-                points_c_time = det.canonical_points + det.trajectory[:, time, :]
-                city_SE3_ego = av2_loader.get_city_SE3_ego(self.log_id, det.timestamps[0, time].item())
-                ego_SE3_ego0 = city_SE3_ego.inverse().compose(city_SE3_ego0)
-                points_c_time = ego_SE3_ego0.transform_point_cloud(points_c_time)
-
-                if time < det.trajectory.shape[1] - 1:
-                    traj = det.trajectory[:, time:, :]
-                else:
-                    traj = det.trajectory[:, time-1:, :]
-                
-                filled_detections.append(Detection(
-                    trajectory=traj,
-                    canonical_points=points_c_time,
-                    timestamps=self.detections[i].timestamps[0, time:],
-                    log_id=det.log_id,
-                    num_interior=det.num_interior,
-                    gt_id=det.gt_id,
-                    gt_cat=det.gt_cat,
-                    lwh=det.lwh))
-
-        self.detections = filled_detections
-    
     def _sort_dets(self):
         by_time = {d.timestamps[0, 0]: d for d in self.detections}
         self.detections = [by_time[k] for k in sorted(list(by_time.keys()))]
@@ -277,39 +208,17 @@ class Track():
             return result
         else:
             raise StopIteration
-        
-    def resample(self, gt_path='/workspace/Waymo_Converted_train/train'):
-        for d in self.detections:
-            p = os.path.join(gt_path, self.log_id, 'sensors/lidar', f'{d.timestamp.item()}.feather')
-            pc = feather.read_feather(p)
-            pc = pc[pc['non_ground_pts_rc']]
-            pc = pc[['x', 'y', 'z']].values
-            ego_SE3_object = SE3(rotation=d.rot.numpy(), translation=d.translation.numpy())
-            cuboid = Cuboid(
-                dst_SE3_object=ego_SE3_object,
-                length_m=d.lwh[0],
-                width_m=d.lwh[1],
-                height_m=d.lwh[2],
-                category='REGULAR_VEHICLE',
-                timestamp_ns=d.timestamp.item(),
-                        track_id='-1'
-                )
-            pts, mask = cuboid.compute_interior_points(pc)
-            d.resampled_pc = torch.from_numpy(pts)
-            # print(d.canonical_points.shape, d.resampled_pc.shape)
 
 
 class Detection():
-    def __init__(self, trajectory, canonical_points, timestamps, log_id, num_interior, overlap=None, gt_id=None, gt_id_box=None, rot=None, alpha=None, gt_cat=-10, lwh=None, translation=None, pts_density=None, median_flow=False, min_area=False, median_center=False, resampled=None) -> None:
+    def __init__(self, trajectory, canonical_points, timestamps, log_id, num_interior, gt_id=None, rot=None, alpha=None, gt_cat=-10, lwh=None, translation=None, pts_density=None, median_flow=False, min_area=False, median_center=False, resampled=None) -> None:
         self.trajectory = trajectory
         self.canonical_points = canonical_points
         self.timestamps = torch.atleast_2d(timestamps)
         self.log_id = log_id
         self.num_interior = num_interior
-        # self.overlap = overlap
         self.gt_id = gt_id
         self.gt_cat = gt_cat
-        self.gt_id_box = gt_id
         self.length = trajectory.shape[0] if len(trajectory.shape) < 3 else trajectory.shape[1]
         self.track_id = 0
         self.pts_density = pts_density

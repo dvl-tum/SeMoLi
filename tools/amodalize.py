@@ -3,7 +3,7 @@ import warnings
 warnings.filterwarnings("ignore")
 import hydra
 import pandas as pd
-from .PseudoDetection3D.amodalizer import main
+from .PseudoDetection3D.amodalizer import amodalize
 
 
 @hydra.main(config_path="conf", config_name="conf")   
@@ -28,11 +28,11 @@ def main(cfg):
                                 {cfg.registration.min_pts_thresh}_\
                                     {cfg.registration.registration_len_thresh}'
     
-    cfg.registration.initial_dets = f'{cfg.registration.initial_dets}/{cfg.registration.model}'
-    cfg.registration.tracked_dets = f'{cfg.registration.tracked_dets}/{cfg.registration.model}/{_params_track}'
-    cfg.registration.registered_dets = f'{cfg.registration.registered_dets}/{cfg.registration.model}/{_params_reg}'
+    cfg.registration.initial_dets_path = f'{cfg.registration.initial_dets_path}/{cfg.registration.model}'
+    cfg.registration.tracked_dets_path = f'{cfg.registration.tracked_dets_path}/{cfg.registration.model}/{_params_track}'
+    cfg.registration.registered_dets_path = f'{cfg.registration.registered_dets_path}/{cfg.registration.model}/{_params_reg}'
     
-    main(cfg)
+    amodalize(cfg)
     
 
 if __name__ == "__main__":

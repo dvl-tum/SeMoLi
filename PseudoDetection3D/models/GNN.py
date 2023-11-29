@@ -1,10 +1,7 @@
-from torch_geometric.data import Data as PyGData
 import os
 import torch
 from torch_geometric.nn.conv.message_passing import MessagePassing
 from torch_geometric.nn import knn_graph, radius_graph
-import torch.nn.functional as F
-from torch_geometric.utils import softmax
 import torch.nn as nn
 import numpy as np
 from collections import defaultdict
@@ -13,15 +10,9 @@ import random
 import matplotlib
 import os
 import logging
-import PseudoDetection3D.models.losses
-import math
-import sklearn.metrics
-# import torchvision 
 from PseudoDetection3D.models.losses import sigmoid_focal_loss
 from torch import multiprocessing as mp
 import pickle
-import wandb
-import copy
 import torch.utils.checkpoint as checkpoint
 import torch_cluster
 from scipy.sparse.csgraph import connected_components

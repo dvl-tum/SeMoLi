@@ -29,68 +29,38 @@ logger.addHandler(ch)
 
 
 class InitialDetProcessor():
-    def __init__(self, tracker_type, tracker_params, registration_type,
-                 every_x_frame, overlap, av2_loader, rank, track_data_path, initial_dets_path, 
+    def __init__(self, tracker_type, registration_type,
+                 av2_loader, rank, track_data_path, initial_dets_path, 
                  tracked_dets_path, registered_dets_path, gt_path, split,
-                 detection_set, percentage, a_threshold, i_threshold, len_thresh, outlier_threshold,
-                 outlier_kNN, max_time_track, filter_by_width, fixed_time, l_change_thresh,
-                 w_change_thresh, inact_patience, use_temporal_weight_track, exp_weight_rot, 
-                 registration_len_thresh, min_pts_thresh, mode, density_thresh, concat, means_before, avg_w_prev):
-        self.every_x_frame = every_x_frame
-        self.overlap = overlap
+                 detection_set, percentage, track_params, register_params):
         self.av2_loader = av2_loader
         self.rank = rank
-        self.tracker_params = tracker_params
+
+        # get models and dataset
         self._tracker = _tracker_factory[tracker_type]
         self._registration = _registration_factory[registration_type]
         self.dataset = MOT3DSeqDataset
-        self.initial_dets_path = os.path.join(track_data_path, initial_dets_path)
-        self.tracked_dets_path = os.path.join(track_data_path, tracked_dets_path)
-        self.registered_dets_path = os.path.join(track_data_path, registered_dets_path)
         self.gt_path = gt_path
         self.split = split
         self.detection_set = detection_set
         self.percentage = percentage
-        self.a_threshold = a_threshold
-        self.i_threshold = i_threshold
-        self.len_thresh = len_thresh
-        self.outlier_threshold = outlier_threshold
-        self.outlier_kNN = outlier_kNN
-        self.max_time_track = max_time_track
-        self.filter_by_width = filter_by_width
-        self.fixed_time = fixed_time
-        self.l_change_thresh = l_change_thresh
-        self.w_change_thresh = w_change_thresh
-        self.inact_patience = inact_patience
-        self.use_temporal_weight_track = use_temporal_weight_track
-        self.exp_weight_rot = exp_weight_rot
-        self.min_pts_thresh = min_pts_thresh
-        self.registration_len_thresh = registration_len_thresh
-        self.mode = mode
-        self.density_thresh = density_thresh
-        self.concat = concat
-        self.means_before = means_before
-        self.avg_w_prev = avg_w_prev 
+
+        # initialize paths
+        self.initial_dets_path = os.path.join(track_data_path, initial_dets_path)
+        self.tracked_dets_path = os.path.join(track_data_path, tracked_dets_path)
+        self.registered_dets_path = os.path.join(track_data_path, registered_dets_path)
+        
+        self.track_params = track_params
+        self.register_params = register_params
 
     def track(self, log_id, split, detections=None):
         # track detections over sequences
         tracker = self._tracker(
-            self.every_x_frame,
-            self.overlap,
             self.av2_loader,
             log_id,
             self.rank,
             logger,
-            self.a_threshold,
-            self.i_threshold,
-            self.len_thresh,
-            self.max_time_track,
-            self.filter_by_width,
-            self.inact_patience,
-            self.fixed_time,
-            self.l_change_thresh,
-            self.w_change_thresh,
-            self.use_temporal_weight_track)
+            **self.track_params)
 
         if detections is None:
             detections = self.dataset(self.initial_dets_path, self.gt_path, log_id, self.split, self.detection_set).dets
@@ -110,12 +80,7 @@ class InitialDetProcessor():
             tracks,
             self.av2_loader,
             log_id,
-            self.outlier_threshold,
-            self.outlier_kNN,
-            self.exp_weight_rot,
-            self.registration_len_thresh,
-            self.min_pts_thresh,
-            self.mode, self.density_thresh, self.concat, self.means_before, self.avg_w_prev).register()
+            **self.register_params).register()
         return tracks
     
     def get_initial_dets(self, log_id):
@@ -162,14 +127,14 @@ class InitialDetProcessor():
         # print(f'Detection metric of detections from detector_dir {detection_metric}')
         return all_results_df
 
-def main(cfg):
+def amodalize(cfg):
     # amodalize
     if cfg.multi_gpu:
         world_size = torch.cuda.device_count()
         in_args = (cfg, world_size)
-        mp.spawn(amodalize, args=in_args, nprocs=world_size, join=True)
+        mp.spawn(_amodalize, args=in_args, nprocs=world_size, join=True)
     else:
-        amodalize(1, cfg, world_size=1)
+        _amodalize(1, cfg, world_size=1)
     
     # get sequences to eval
     seq_list = get_seq_list_fixed_val(
@@ -198,7 +163,7 @@ def main(cfg):
             'Registered')
         
 
-def amodalize(rank, cfg, world_size):
+def _amodalize(rank, cfg, world_size):
     if cfg.multi_gpu:
         os.environ['MASTER_ADDR'] = 'localhost'
         os.environ['MASTER_PORT'] = '12355'
@@ -236,40 +201,19 @@ def amodalize(rank, cfg, world_size):
         loader = AV2SensorDataLoader(data_dir=Path(f'{cfg.data.data_dir}_{split}/{split}'), labels_dir=Path(f'{cfg.data.data_dir}_{split}/{split}'))    
         detsprocessor = InitialDetProcessor(
             tracker_type=cfg.registration.tracker_type,
-            tracker_params=cfg.registration,
             registration_type=cfg.registration.registration_type,
-            every_x_frame=cfg.registration.every_x_frame,
-            overlap=cfg.registration.overlap, 
             av2_loader=loader,
             rank=0,
             track_data_path=cfg.registration.track_data_path,
-            initial_dets_path=cfg.registration.initial_dets,
-            tracked_dets_path=cfg.registration.tracked_dets,
-            registered_dets_path=cfg.registration.registered_dets,
+            initial_dets_path=cfg.registration.initial_dets_path,
+            tracked_dets_path=cfg.registration.tracked_dets_path,
+            registered_dets_path=cfg.registration.registered_dets_path,
             gt_path=f'{gt_path}_{split}/{split}',
             split=split,
             detection_set=detection_set,
             percentage=percentage,
-            a_threshold=cfg.registration.a_threshold,
-            i_threshold=cfg.registration.i_threshold,
-            len_thresh=cfg.registration.len_thresh,
-            outlier_threshold=cfg.registration.outlier_threshold,
-            outlier_kNN=cfg.registration.outlier_kNN,
-            max_time_track=cfg.registration.max_time_track,
-            filter_by_width=cfg.registration.filter_by_width,
-            fixed_time=cfg.registration.fixed_time,
-            l_change_thresh=cfg.registration.l_change_thresh,
-            w_change_thresh=cfg.registration.w_change_thresh, 
-            inact_patience=cfg.registration.inact_patience,
-            use_temporal_weight_track=cfg.registration.use_temporal_weight_track,
-            exp_weight_rot=cfg.registration.exp_weight_rot,
-            registration_len_thresh=cfg.registration.registration_len_thresh,
-            min_pts_thresh=cfg.registration.min_pts_thresh,
-            mode=cfg.registration.mode,
-            density_thresh=cfg.registration.density_thresh,
-            concat=cfg.registration.concat,
-            means_before=cfg.registration.means_before,
-            avg_w_prev=cfg.registration.avg_w_prev)
+            track_params=cfg.registation.tracking,
+            register_params=cfg.registation.registration)
         
         detections = None
         tracks = None
