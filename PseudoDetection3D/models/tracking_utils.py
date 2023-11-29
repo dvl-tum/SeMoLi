@@ -446,49 +446,46 @@ def store_initial_detections(detections, seq, out_path, split, tracks=False, gt_
             )
 
 
-def load_initial_detections(out_path, split, seq=None, tracks=False, every_x_frame=1, overlap=1):
-    p = f'{out_path}/{split}/{seq}'
-    detections = defaultdict(list)
-    if tracks:
-        detections = defaultdict(dict)
-    if not os.path.isdir(p):
-        return detections
-    print('loading...', len(os.listdir(p)))
-    for i, d in enumerate(os.listdir(p)):
-        dict_key = int(d.split('_')[0])
+def load_initial_detections(out_path, split, seq=None, tracks=False):
+    # initialize detections dict
+    detections = defaultdict(dict) if tracks else defaultdict(list)
 
-        if tracks:
-            sorter = int(d.split('_')[1].split('.')[0])
-        try:
-            d = np.load(os.path.join(p, d), allow_pickle=True)
-        except:
-            print(os.path.join(p, d))
-            quit()
+    # if no detections return
+    if not os.path.isdir(f'{out_path}/{split}/{seq}'):
+        return detections
+    
+    # iterate over all detections
+    for i, d_path in enumerate(os.listdir(f'{out_path}/{split}/{seq}')):
+        d = np.load(os.path.join(p, d_path), allow_pickle=True)
+        
+        # generate detection from loaded input
         d = Detection(
             torch.from_numpy(d['trajectory']), 
-            torch.from_numpy(d['canonical_points']) if d['canonical_points'] is not None else d['canonical_points'], 
+            torch.from_numpy(d['canonical_points']) if \
+                d['canonical_points'] is not None else d['canonical_points'], 
             torch.atleast_2d(torch.from_numpy(d['timestamps'])),
             d['log_id'].item(),
             d['num_interior'].item(),
-            # d['overlap'].item(),
             d['gt_id'].item(),
             d['gt_id_box'].item() if 'gt_id_box' in d.keys() else d['gt_id'].item(),
             rot=torch.from_numpy(d['rot']) if 'rot' in d.keys() else None,
             alpha=torch.from_numpy(d['alpha']) if 'alpha' in d.keys() else None,
             gt_cat=d['gt_cat'].item() if 'gt_cat' in d.keys() else -10,
             lwh=torch.from_numpy(d['lwh']) if 'lwh' in d.keys() else None,
-            translation=torch.from_numpy(d['translation']) if 'translation' in d.keys() else None,
+            translation=torch.from_numpy(d['translation']) \
+                if 'translation' in d.keys() else None,
         )
-        # if d.lwh[0] < 0.1 or d.lwh[1] < 0.1 or d.lwh[2] < 0.1:
-        #     continue
+        
+        # append detections dict, if tracks then track id is dict key
+        time = d.timestamps.item() if not len(d.timestamps.shape)\
+              else d.timestamps[0, 0].item()
         if not tracks:
-            if not len(d.timestamps.shape):
-                detections[d.timestamps.item()].append(d)
-            else:
-                detections[d.timestamps[0, 0].item()].append(d)
+            detections[time].append(d)
         else:
-            detections[dict_key][d.timestamps[0, 0].item()] = d
-
+            track_id = int(d_path.split('_')[0])
+            detections[track_id][time] = d
+    
+    # add detections to track if tracks
     if tracks:
         tracks = dict()
         for track_id, dets in detections.items():
@@ -499,8 +496,9 @@ def load_initial_detections(out_path, split, seq=None, tracks=False, every_x_fra
                 else:
                     t.add_detection(d)
             tracks[track_id] = t
-        detections = tracks
-    return detections
+        return tracks
+    else:
+        return detections
 
 
 def load_gt(seq_name, data_root_path):
@@ -544,13 +542,7 @@ def assign_gt(dets, gt, gt_assign_min_iou=0.25):
         
         det_boxes = torch.stack(det_boxes)
         gt_boxes = torch.stack(gt_boxes)
-        ''' 
-        for d in det_boxes:
-            _, iou_matrix = box3d_overlap(
-                d.cuda().unsqueeze(0),
-                d.cuda().unsqueeze(0),
-                eps=1e-6)
-        '''
+
         _, iou_matrix = box3d_overlap(
             det_boxes.cuda(),
             gt_boxes.cuda(),
@@ -612,49 +604,6 @@ def _create_box(xyz, lwh, rot):
     vertices_dst_xyz_m = vertices_dst_xyz_m.type(torch.float32)
     return vertices_dst_xyz_m
 
-def _from_box(vertices):
-    '''
-    x, y, z = xyz
-    l, w, h = lwh
-
-    
-    verts = torch.tensor(
-        [
-            [x - l / 2.0, y - w / 2.0, z - h / 2.0],
-            [x + l / 2.0, y - w / 2.0, z - h / 2.0],
-            [x + l / 2.0, y + w / 2.0, z - h / 2.0],
-            [x - l / 2.0, y + w / 2.0, z - h / 2.0],
-            [x - l / 2.0, y - w / 2.0, z + h / 2.0],
-            [x + l / 2.0, y - w / 2.0, z + h / 2.0],
-            [x + l / 2.0, y + w / 2.0, z + h / 2.0],
-            [x - l / 2.0, y + w / 2.0, z + h / 2.0],
-        ],
-        device=xyz.device,
-        dtype=torch.float32,
-    )
-    '''
-
-    unit_vertices_obj_xyz_m = torch.tensor(
-        [
-            [- 1, - 1, - 1],
-            [+ 1, - 1, - 1],
-            [+ 1, + 1, - 1],
-            [- 1, + 1, - 1],
-            [- 1, - 1, + 1],
-            [+ 1, - 1, + 1],
-            [+ 1, + 1, + 1],
-            [- 1, + 1, + 1],
-        ],
-        device=xyz.device,
-        dtype=torch.float32,
-    )
-    
-    # Transform unit polygons.
-    vertices_obj_xyz_m = (lwh/2.0) * unit_vertices_obj_xyz_m
-    vertices_dst_xyz_m = vertices_obj_xyz_m @ rot.T + xyz
-    vertices_dst_xyz_m = vertices_dst_xyz_m.type(torch.float32)
-    return vertices_dst_xyz_m
-
 
 def to_feather(detections, log_id, out_path, split, rank, precomp_dets=False, name='', root_dir='', track_data_path=''):
     track_vals = list()
@@ -706,14 +655,7 @@ def to_feather(detections, log_id, out_path, split, rank, precomp_dets=False, na
     detections = dict()
 
     os.makedirs(os.path.join(out_path, split, log_id), exist_ok=True)
-    # os.makedirs(os.path.join(out_path, split, 'feathers'), exist_ok=True)
-    write_path = os.path.join(out_path, split, log_id, 'annotations.feather') # os.path.join(out_path, split, 'feathers', f'all_{rank}.feather') 
-
-    # if os.path.isfile(write_path):
-    #     df_all = feather.read_feather(write_path)
-    #     df = df_all.append(df)
-    # else:
-    #     df = df
+    write_path = os.path.join(out_path, split, log_id, 'annotations.feather') 
 
     feather.write_feather(df, write_path)
     return True
@@ -725,6 +667,7 @@ def outlier_removal(pc, threshold=0.1, kNN=10):
         pc.unsqueeze(0).float(),
         K=kNN)
     return pc[nn_dists[0,:,1:].mean(1) < threshold], nn_dists[0,:,1:].mean(1) < threshold
+
 
 def get_min_area(pc, init_alpha=None, median=False):
     rot = None
