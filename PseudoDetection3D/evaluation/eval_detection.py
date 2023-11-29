@@ -136,7 +136,7 @@ def get_feather_files(
             :5] + '_' + file if remove_non_move else file
         file = split + '_' + file
         
-        path_fitlered = os.path.join(f'{root_dir}/{filtered_file_path}', file)
+        path_filtered = os.path.join(f'{root_dir}/{filtered_file_path}', file)
         print(f'Looking for filtered gt file {path_filtered}')
     
     if not is_gt or not os.path.isfile(path_filtered):

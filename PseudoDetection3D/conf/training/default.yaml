@@ -4,7 +4,7 @@ epochs: 30
 hypersearch: False
 eval_every_x: 1
 eval_corr_every_x: 101
-num_workers: 64
+num_workers: 8
 batch_size: 8
 batch_size_val: 2
 optim:
@@ -22,4 +22,3 @@ multi_gpu: False
 half_precision: True
 gradient_checkpointing: False
 wandb: False
-out_path: '/workspace/3DOpenWorldMOT_motion_patterns/3DOpenWorldMOT/3DOpenWorldMOT'

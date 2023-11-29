@@ -60,7 +60,8 @@ class TrajectoryDataset(PyGDataset):
             traj_channels=25,
             pos_channels=3,
             waymo_style=False,
-            root_dir=''):
+            root_dir='', 
+            continue_from_existing=False):
         
         if 'gt' in _processed_dir:
             self.trajectory_dir = Path(os.path.join(trajectory_dir, split))
@@ -93,26 +94,17 @@ class TrajectoryDataset(PyGDataset):
         self.pos_channels = pos_channels
         self.waymo_style = waymo_style
         print(f"USING WAYMO STYLE {self.waymo_style}")
-        # for debugging
-        if debug:
-            if split == 'val' and 'Argo' in self.data_dir:
-                self.seqs = ['04994d08-156c-3018-9717-ba0e29be8153']
-            elif split == 'train' and 'Argo' in self.data_dir:
-                self.seqs = ['00a6ffc1-6ce9-3bc3-a060-6006e9893a1a']
-            elif split == 'val':
-                self.seqs = ['10023947602400723454'] #['16473613811052081539']
-            else:
-                self.seqs = ['10023947602400723454'] # ['2400780041057579262']
-            self.seqs = ['2400780041057579262']
-        else:
-            # self.seqs = get_seq_list(
-            self.seqs = get_seq_list_fixed_val(
-                path=os.path.join(data_dir, split),
-                root_dir=root_dir,
-                detection_set=detection_set,
-                percentage=self.percentage_data)
         
-        if 'detector' in detection_set or (detection_set == 'train_gnn' and percentage_data == 1.0):
+        self.seqs = get_seq_list_fixed_val(
+            path=os.path.join(data_dir, split),
+            root_dir=root_dir,
+            detection_set=detection_set,
+            percentage=self.percentage_data)
+        # debugging
+        if debug:
+            self.seqs = [self.seqs[0]]
+
+        if continue_from_existing:
             split = 'train' if 'train' in detection_set else 'val'
             self.already_evaluated = list()
             print(f'{detection_out_path}/{detection_set}')
@@ -712,7 +704,8 @@ def get_TrajectoryDataLoader(cfg, name=None, train=True, val=True, test=False):
                 traj_channels=cfg.data.traj_channels,
                 pos_channels=cfg.data.pos_channels,
                 waymo_style=cfg.data.waymo_style,
-                root_dir=cfg.root_dir)
+                root_dir=cfg.root_dir,
+                continue_from_existing=cfg.evaluation.continue_from_existing)
     else:
         val_data = None
     if test:
