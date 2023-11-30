@@ -4,10 +4,12 @@ import pickle
 import os
 import shutil
 import pandas as pd
+import hydra
+from omegaconf import OmegaConf
 
 
-def get_samples(file_path='data_utils/new_seq_splits_Waymo_Converted_fixed_val/', split='0.1_val_detector', argo=False):
-    file_path = 'data_utils/new_seq_splits_Waymo_Converted_fixed_val/' if not argo else 'data_utils/new_seq_splits_AV2_fixed_val/'
+def get_samples(file_path='data_utils/new_seq_splits_Waymo_Converted_fixed_val/', split='0.1_val_detector', argo=False, cfg=None):
+    file_path = 'PseudoDetection3D/data_utils/new_seq_splits_Waymo_Converted_fixed_val/' if not argo else 'PseudoDetection3D/data_utils/new_seq_splits_AV2_fixed_val/'
     _argo = '_argo' if argo else ''
     file_path = f'{file_path}{split}.txt'
     sampled_path = os.path.join(f'sampled_for_visualization{_argo}', os.path.basename(file_path)[:-3]+'pkl')
@@ -21,9 +23,9 @@ def get_samples(file_path='data_utils/new_seq_splits_Waymo_Converted_fixed_val/'
         seqs = [s.strip('\n') for s in seqs]
     
     if not argo:
-        train_data = feather.read_feather('/workspace/ExchangeWorkspace/Waymo_Converted_filtered/train_1.0_per_frame_remove_non_move_remove_far_filtered_version_city.feather')
+        train_data = feather.read_feather('{root_dir}/{filtered_file_path}/train_1.0_per_frame_remove_non_move_remove_far_filtered_version_city.feather')
     else:
-        train_data = feather.read_feather('Argoverse2_filtered/val_1.0_per_frame_remove_non_move_remove_far_filtered_version.feather')
+        train_data = feather.read_feather('{root_dir}/{filtered_file_path}/train_1.0_per_frame_remove_non_move_remove_far_filtered_version.feather')
     train_data = train_data[train_data['log_id'].isin(seqs)]
     sampled = dict()
     count = 10
@@ -43,15 +45,12 @@ def get_samples(file_path='data_utils/new_seq_splits_Waymo_Converted_fixed_val/'
 
     return sampled
 
-def get_point_clouds_from_feather_files(sampled, split, argo=False):
+def get_point_clouds_from_feather_files(sampled, split, argo=False, cfg=None):
     _argo = '_argo' if argo else ''
-    if not argo:
-        pc_path_whole = '/workspace/Waymo_Converted_train/train/'
-    else:
-        pc_path_whole = '/workspace/Argoverse2/train/'
-    pc_path_whole_filtered = '/workspace/all_egocomp_margin0.6_width25/all_egocomp_margin0.6_width25_train/'
-    path_to_store_whole = f'sampled_for_visualization{_argo}/{split}/point_clouds_whole/'
-    path_to_store_filtered = f'sampled_for_visualization{_argo}/{split}/point_clouds_filtered/'
+    pc_path_whole = cfg.data.data_dir + '_train/train'
+    pc_path_whole_filtered = cfg.data.processed_dir + '_train/'
+    path_to_store_whole = f'{cfg.root_dir}/sampled_for_visualization{_argo}/{split}/point_clouds_whole/'
+    path_to_store_filtered = f'{cfg.root_dir}/sampled_for_visualization{_argo}/{split}/point_clouds_filtered/'
     os.makedirs(path_to_store_whole, exist_ok=True)
     os.makedirs(path_to_store_filtered, exist_ok=True)
     # get lidar point clouds
@@ -64,7 +63,7 @@ def get_point_clouds_from_feather_files(sampled, split, argo=False):
             if not os.path.isfile(f'{path_to_store_filtered}{seq}/{time}.pt'):
                 shutil.copyfile(f'{pc_path_whole_filtered}{seq}/{time}.pt', f'{path_to_store_filtered}{seq}/{time}.pt')
 
-def get_detections_from_feather_files(detection_set, sampled, split, argo=False):
+def get_detections_from_feather_files(detection_set, sampled, split, argo=False, cfg=None):
     _argo = '_argo' if argo else ''
     data = None
     is_file = os.path.isfile(detection_set)
@@ -74,7 +73,7 @@ def get_detections_from_feather_files(detection_set, sampled, split, argo=False)
     else:
         save_name = os.path.basename(os.path.dirname(os.path.dirname(detection_set)))
     
-    os.makedirs(f'sampled_for_visualization{_argo}/{split}/detections/{save_name}', exist_ok=True)
+    os.makedirs(f'{cfg.root_dir}/sampled_for_visualization{_argo}/{split}/detections/{save_name}', exist_ok=True)
     sampled_data = None
     for seq, timestamps in sampled.items():
         print(seq, timestamps)
@@ -91,23 +90,21 @@ def get_detections_from_feather_files(detection_set, sampled, split, argo=False)
             continue
         if not is_file:
             data = None
-    print(f'Store to sampled_for_visualization{_argo}/{split}/detections/{save_name}/detections.feather...')
-    feather.write_feather(sampled_data, f'sampled_for_visualization{_argo}/{split}/detections/{save_name}/detections.feather')
+    print(f'Store to {cfg.root_dir}/sampled_for_visualization{_argo}/{split}/detections/{save_name}/detections.feather...')
+    feather.write_feather(sampled_data, f'{cfg.root_dir}/sampled_for_visualization{_argo}/{split}/detections/{save_name}/detections.feather')
 
 
-def main(detection_set, split, argo=False):
-    samples = get_samples(split=split, argo=argo)
-    get_point_clouds_from_feather_files(samples, split, argo=argo)
-    get_detections_from_feather_files(detection_set, samples, split, argo=argo)
+@hydra.main(config_path="PseudoDetection3D/conf", config_name="conf")
+def main(cfg):
+    split = f'{cfg.data.percentage_data_val}_{cfg.data.detection_set}'
+    argo = cfg.data.datset_name == 'av2_traj'
+    samples = get_samples(split=split, argo=argo, cfg=cfg)
+    get_point_clouds_from_feather_files(samples, split, argo=argo, cfg=cfg)
+    get_detections_from_feather_files(cfg.sample_vis.detection_path, samples, split, argo=argo)
 
 
 if __name__ == "__main__":
-    detection_sets = [
-        '/workspace/ExchangeWorkspace/detections_from_pp_sv2_format/pointpillars_hv_secfpn_sbn-all_16xb2-2x_waymo-3d-car_feather_fake_gt_three_anchors_0.9_0.1_True_True_train_detector/0.1_val_detector.feather',
-    ]
-    for detection_set in detection_sets:
-        main(split='1.0_val_evaluation', detection_set=detection_set, argo=argo)
-    
+    main()
 
 
 
