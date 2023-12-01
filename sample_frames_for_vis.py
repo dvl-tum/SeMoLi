@@ -10,6 +10,7 @@ from omegaconf import OmegaConf
 
 def get_samples(file_path='data_utils/new_seq_splits_Waymo_Converted_fixed_val/', split='0.1_val_detector', argo=False, cfg=None):
     file_path = 'PseudoDetection3D/data_utils/new_seq_splits_Waymo_Converted_fixed_val/' if not argo else 'PseudoDetection3D/data_utils/new_seq_splits_AV2_fixed_val/'
+    file_path = f'{cfg.root_dir}/{file_path}'
     _argo = '_argo' if argo else ''
     file_path = f'{file_path}{split}.txt'
     sampled_path = os.path.join(f'sampled_for_visualization{_argo}', os.path.basename(file_path)[:-3]+'pkl')
@@ -22,33 +23,42 @@ def get_samples(file_path='data_utils/new_seq_splits_Waymo_Converted_fixed_val/'
         seqs = f.readlines()
         seqs = [s.strip('\n') for s in seqs]
     
-    if not argo:
-        train_data = feather.read_feather('{root_dir}/{filtered_file_path}/train_1.0_per_frame_remove_non_move_remove_far_filtered_version_city.feather')
+    if 'evaluation' in split:
+        _split = 'val'
     else:
-        train_data = feather.read_feather('{root_dir}/{filtered_file_path}/train_1.0_per_frame_remove_non_move_remove_far_filtered_version.feather')
+        _split = 'train'
+
+    if not argo:
+        train_data = feather.read_feather(f'{cfg.root_dir}/{cfg.data.filtered_file_path}/{_split}_1.0_per_frame_remove_non_move_remove_far_filtered_version_city.feather')
+    else:
+        train_data = feather.read_feather(f'{cfg.root_dir}/{cfg.data.filtered_file_path}/{_split}_1.0_per_frame_remove_non_move_remove_far_filtered_version.feather')
     train_data = train_data[train_data['log_id'].isin(seqs)]
     sampled = dict()
     count = 10
-    print(train_data['log_id'].unique().shape)
+    
     for i, seq in enumerate(seqs):
         if i == count:
             break
         timestamps = train_data[train_data['log_id']==seq]['timestamp_ns'].unique().tolist()
-        print( train_data[train_data['log_id']==seq].shape[0])
         if train_data[train_data['log_id']==seq].shape[0] == 0:
             continue
         times = random.choices(timestamps, k=3)
         sampled[seq] = times
-    quit()
+    
     with open(sampled_path, 'wb') as save_file: 
         pickle.dump(sampled, save_file)
-
+    
     return sampled
 
 def get_point_clouds_from_feather_files(sampled, split, argo=False, cfg=None):
+    if 'evaluation' in split:
+        _split = 'val'
+    else:
+        _split = 'train'
+
     _argo = '_argo' if argo else ''
-    pc_path_whole = cfg.data.data_dir + '_train/train'
-    pc_path_whole_filtered = cfg.data.processed_dir + '_train/'
+    pc_path_whole = cfg.data.data_dir + f'_{_split}/{_split}/'
+    pc_path_whole_filtered = cfg.data.processed_dir + f'_{_split}/'
     path_to_store_whole = f'{cfg.root_dir}/sampled_for_visualization{_argo}/{split}/point_clouds_whole/'
     path_to_store_filtered = f'{cfg.root_dir}/sampled_for_visualization{_argo}/{split}/point_clouds_filtered/'
     os.makedirs(path_to_store_whole, exist_ok=True)
@@ -76,7 +86,6 @@ def get_detections_from_feather_files(detection_set, sampled, split, argo=False,
     os.makedirs(f'{cfg.root_dir}/sampled_for_visualization{_argo}/{split}/detections/{save_name}', exist_ok=True)
     sampled_data = None
     for seq, timestamps in sampled.items():
-        print(seq, timestamps)
         try:
             if data is None:
                 data = feather.read_feather(f'{detection_set}/{seq}/annotations.feather')
@@ -97,10 +106,10 @@ def get_detections_from_feather_files(detection_set, sampled, split, argo=False,
 @hydra.main(config_path="PseudoDetection3D/conf", config_name="conf")
 def main(cfg):
     split = f'{cfg.data.percentage_data_val}_{cfg.data.detection_set}'
-    argo = cfg.data.datset_name == 'av2_traj'
+    argo = cfg.data.dataset_name == 'av2_traj'
     samples = get_samples(split=split, argo=argo, cfg=cfg)
     get_point_clouds_from_feather_files(samples, split, argo=argo, cfg=cfg)
-    get_detections_from_feather_files(cfg.sample_vis.detection_path, samples, split, argo=argo)
+    get_detections_from_feather_files(cfg.sample_vis.detection_path, samples, split, argo=argo, cfg=cfg)
 
 
 if __name__ == "__main__":
