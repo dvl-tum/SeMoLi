@@ -731,9 +731,10 @@ def eval_detection(
             n_jobs=n_jobs,
             filter_moving=filter_moving,
             use_aff_as_score=use_aff_as_score)
-        
+                
         dts = dts[dts['is_evaluated']==1]
         gts = gts[gts['is_evaluated']==1]
+        
         if print_detail:
             print('\t Shapes after', dts.shape, gts.shape)
 
@@ -748,6 +749,6 @@ def eval_detection(
         else:
             print('\tDetection metrics: \n\t\t', metrics.columns.values, '\n\t\t', metrics.loc[_filter_class].values)
             metric = metrics.loc[_filter_class].values
-
+    
     return metrics, metric, all_results_df
 
