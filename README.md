@@ -3,32 +3,54 @@
 ## Installation
 Create a conda environment from environment file
 ```
+bash setup_conda.sh
 conda env create -f environment.yml
 ```
 
+Install additional packages using
 ```
-pip install lapsolver
-pip install "git+https://github.com/facebookresearch/pytorch3d.git"
-```
-
-```
-export conda_path=~/anaconda3/
-export CUDA_HOME=/usr/local/cuda
-export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda/lib64
-export PATH=$PATH:$CUDA_HOME/bin
-git clone https://github.com/pawelswoboda/RAMA.git
-cd RAMA
-git submodule update --init --recursive
-python setup.py install
+bash setup.sh
 ```
 
+Update av2 api by running in your conda environment where ```<conda_path>``` is the place where your anaconda is installed, e.g., ```~/anaconda3/```
 ```
-git clone https://github.com/Jiahao-Ma/2D-3D-IoUs.git
-mv 2D-3D-IoUs/cuda_op/ 3DOpenWorldMOT/
-cd 3DOpenWorldMOT/cuda_op
-python setup.py install
+export conda_path=<conda_path>
+cp PseudoDetection3D/av2_update/cuboid.py $conda_path/envs/SeMoLi/lib/python3.8/site-packages/av2/structures/
+cp PseudoDetection3D/av2_update/av2_sensor_dataloader.py $conda_path/envs/SeMoLi/lib/python3.8/site-packages/av2/datasets/sensor/
+cp PseudoDetection3D/evaluation/av2_evaluation_update/detection/* $conda_path/envs/SeMoLi/lib/python3.8/site-packages/av2/evaluation/detection/
 ```
 
+
+## Data Preparation
+The downloaded data will be stored to this directories base directory in the data directory. To set the required environment variable run:
 ```
-python3 -m pip install --user open3d
+export BASE_DIR=$(pwd)
 ```
+
+To download and convert Waymo Open Dataset run the follwing:
+```
+cd Waymo_Preparation
+bash download_and_extract_all.sh
+cd ..
+```
+This will download the whole tfrecord files, but will only extract the LiDAR data.
+
+To download Argoverse2 dataset run the following:
+```
+conda install s5cmd -c conda-forge
+export BASE_DIR="<base_dir>"
+bash download_av2.sh
+```
+This will only download the lidar data, 3D annotations, and ego vehicle poses of the AV2 dataset. Since camera data is not needed in this project we aviod downloading it.
+
+## Trajectory Estimation
+For the trajectory estimation replace ```<split>``` by either train or val and ```<dataset>``` by either waymo or av2 and run the following:
+```
+cd NTF_lidar/
+bash tools/preprocess_pcs_<split>_<dataset>.sh
+bash tools/compute_flow_<split>_<dataset>.sh
+cd ../
+```
+Since the trajectory estimation is a rather long process, you can also strart several processes at the same time if you are using a slurm-based system or something similar by specifying the ```from_``` and ```to_``` flags in the preprocssing which refers to the sequence count. Similarly, for the flow computation ```from_``` and ```to_``` flags can be specified.
+
+## Pseudo-Label Model Training

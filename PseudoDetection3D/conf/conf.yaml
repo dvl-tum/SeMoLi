@@ -9,7 +9,6 @@ defaults: # for loading the default.yaml config
   # - debugging: default                                                                                      
   - models: GNN                                                                                             
   - data: waymo_traj   
-  - registration: default
   - detector: default                                                                                                  
   - evaluation: default  
   - sample_vis: default

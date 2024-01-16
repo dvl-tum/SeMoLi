@@ -37,12 +37,6 @@ pip install av2
 # chamferdist
 pip install chamferdist
 
-# av2 update
-export conda_path=~/anaconda3/
-cp PseudoDetection3D/av2_update/cuboid.py $conda_path/envs/SeMoLi/lib/python3.8/site-packages/av2/structures/
-cp PseudoDetection3D/av2_update/av2_sensor_dataloader.py $conda_path/envs/SeMoLi/lib/python3.8/site-packages/av2/datasets/sensor/
-cp PseudoDetection3D/evaluation/av2_evaluation_update/detection/* $conda_path/envs/SeMoLi/lib/python3.8/site-packages/av2/evaluation/detection/
-
 # patwork++
 conda install cmake
 git clone https://github.com/url-kaist/patchwork-plusplus
