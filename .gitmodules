@@ -1,0 +1,9 @@
+[submodule "NTF_lidar"]
+	path = NTF_lidar
+	url = https://github.com/JennySeidenschwarz/NTF_lidar.git
+[submodule "Waymo_Preparation"]
+	path = Waymo_Preparation
+	url = https://github.com/JennySeidenschwarz/Waymo_Preparation.git
+[submodule "mmdetection3D_adapted"]
+	path = mmdetection3D_adapted
+	url = https://github.com/JennySeidenschwarz/mmdetection3D_adapted.git
