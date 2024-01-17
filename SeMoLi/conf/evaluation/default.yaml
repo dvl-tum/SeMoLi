@@ -4,14 +4,13 @@ continue_from_existing: False
 eval_dir: ''
 filter_moving: True
 use_matched_category: False
-store_matched: False
 do_corr_clustering: True
 vel_evaluation: False
 heuristics: False
-waymo_style: True
+roi_clipping: True
 filter_class: 'CONVERT_ALL_TO_CARS'
 inflate_bb: True
-store_input_to_eval: False
+store_adapted_pseudo_labels: False
 discard_last_25: False
 inflation_factor: 1.0
 pretty_print: True 

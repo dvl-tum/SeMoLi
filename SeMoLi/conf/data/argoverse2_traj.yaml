@@ -7,7 +7,7 @@ processed_dir: '/workspace/all_egocomp_margin0.6_width25/all_egocomp_margin0.6_w
 do_process: False
 num_classes: 1
 use_all_points: False
-use_all_points_eval: False
+use_all_points_eval: True
 num_points: 16000
 num_points_eval: 16000
 # remove input data
@@ -16,19 +16,15 @@ static_thresh: 0.0
 # remove gt data
 remove_static_gt: 1
 remove_static_strategy: 'per_frame' #'per_frame' #'per_seq' #'per_frame' #'per_seq'
-remove_static_thresh: 1.0
+remove_static_thresh: 1
 debug: False
-short_train: False
-split_val: False
 margin: 0.6
 traj_channels: 25
 pos_channels: 3
 percentage_data_train: 0.5
 percentage_data_val: 0.1
-filtered_file_path: 'PseudoDetection3D/data_utils/Argoverse2_filtered' #'/dvlresearch/jenny/'
+filtered_file_path: 'SeMoLi/data_utils/AV2_filtered' #'/dvlresearch/jenny/'
 detection_set: 'val_gnn' # 'val_gnn' 'train_gnn' 'val_detector', 'train_detector'
-get_vels: False
 vels_augment: False
-waymo_style: True
-cd_filter: 0.05
+roi_clipping: ${evaluation.roi_clipping}
 resmaple_radius: 1
