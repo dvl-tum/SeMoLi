@@ -10,7 +10,7 @@ import random
 import matplotlib
 import os
 import logging
-from PseudoDetection3D.models.losses import sigmoid_focal_loss
+from SeMoLi.models.losses import sigmoid_focal_loss
 from torch import multiprocessing as mp
 import pickle
 import torch.utils.checkpoint as checkpoint
@@ -510,6 +510,7 @@ class ClusterGNN(MessagePassing):
         MMMV = min_mean_max_vel
         V0 = initial_vel
         """
+  
         # Given edge-level attention coefficients for source and target nodes,
         # we simply need to sum them up to "emulate" concatenation:
         node_attr = list()
@@ -671,13 +672,13 @@ class ClusterGNN(MessagePassing):
         # if no points return
         if data['traj'].shape[0] == 0:
             return [None, None], list(), None, None
-        
+
         # extract data
         data = data.to(self.rank)
         batch_idx = data._slice_dict['pc_list']
         traj = data['traj'].view(data['traj'].shape[0], -1)
         pc = data['pc_list']
-        
+
         # get initial node attributed ans attirbutes to construct the grap
         node_attr, _ = self.initial_node_attributes(
             traj, pc, self.node_attr, data['timestamps'], data['batch'])

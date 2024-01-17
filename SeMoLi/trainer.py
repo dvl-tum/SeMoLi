@@ -9,18 +9,18 @@ from torch.utils.data.distributed import DistributedSampler
 from torch_geometric.loader import DataLoader as PyGDataLoader
 import torch.distributed as dist
 
-from PseudoDetection3D.models import _model_factory, _loss_factory, Detector3D
-from PseudoDetection3D.data_utils.TrajectoryDataset import get_TrajectoryDataLoader
+from SeMoLi.models import _model_factory, _loss_factory, Detector3D
+from SeMoLi.data_utils.TrajectoryDataset import get_TrajectoryDataLoader
 import wandb
 
 # FOR DETECTION EVALUATION
-from PseudoDetection3D.evaluation import eval_detection
-from PseudoDetection3D.evaluation import calc_nmi
+from SeMoLi.evaluation import eval_detection
+from SeMoLi.evaluation import calc_nmi
 from pyarrow import feather
 import shutil
 import numpy as np
 import random
-from PseudoDetection3D.utils.get_name import get_name
+from SeMoLi.utils.get_name import get_name
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -47,7 +47,6 @@ class Trainer():
             torch.cuda.set_device(self.rank)
             dist.init_process_group('nccl', rank=self.rank, world_size=world_size)
         
-        #print(self.cfg.training.gpu)
         #os.environ["CUDA_VISIBLE_DEVICES"] = self.cfg.training.gpu
         torch.manual_seed(1)
         # torch.use_deterministic_algorithms(True)
@@ -55,7 +54,21 @@ class Trainer():
         np.random.seed(1)
         random.seed(1)
 
-        '''CREATE DIR'''
+        # set up logger
+        self.logger = logging.getLogger("Model")
+        self.logger.setLevel(logging.INFO)
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        ch = logging.StreamHandler()
+        ch.setFormatter(formatter)
+        self.logger.addHandler(ch)
+        self.logger.info(self.cfg)
+
+        # get data
+        self.get_data()
+        if self.cfg.data.do_process:
+            return
+
+        # create experiment (dectections will be stored here) and checkpoint dirs
         out_path = os.path.join(self.cfg.root_dir, 'out/')
         os.makedirs(out_path, exist_ok=True)
         # experiments dir
@@ -65,23 +78,15 @@ class Trainer():
         self.checkpoints_dir = os.path.join(out_path, 'checkpoints/')
         os.makedirs(self.checkpoints_dir, exist_ok=True)
 
-        '''LOG'''
-        self.logger = logging.getLogger("Model")
-        self.logger.setLevel(logging.INFO)
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-
-        ch = logging.StreamHandler()
-        ch.setFormatter(formatter)
-        self.logger.addHandler(ch)
-        self.logger.info(self.cfg)
-
+        # get name of experiments and make save directories
         self.name = get_name(self.cfg)
         if self.rank == 0: 
             self.logger.info(f'Using this name: {self.name}')
         if self.rank == 0:
             self.make_dirs()
+
+        # load model
         self.load_model()
-        self.get_data()
 
     def train(self):
         # send model to data paralell
@@ -145,14 +150,12 @@ class Trainer():
             shutil.rmtree(self.checkpoints_dir + self.name)
         if not self.cfg.evaluation.keep_detections and self.rank == 0:
             shutil.rmtree(self.experiment_dir + self.name)
-        shutil.rmtree(f'{self.cfg.root_dir}/outputs') 
+        shutil.rmtree(f'{self.cfg.root_dir}/outputs', ignore_errors=True) 
     def make_dirs(self):
         if self.rank == 0 or not self.cfg.training.multi_gpu:
-            if os.path.isdir(self.experiment_dir + self.name) \
-                and not self.cfg.evaluation.continue_from_existing:
+            if os.path.isdir(self.experiment_dir + self.name):
                 shutil.rmtree(self.experiment_dir + self.name)
-            if not self.cfg.training.just_eval and os.path.isdir(str(self.checkpoints_dir) + self.name) \
-                and not self.cfg.evaluation.continue_from_existing:
+            if not self.cfg.training.just_eval and os.path.isdir(str(self.checkpoints_dir) + self.name):
                 shutil.rmtree(str(self.checkpoints_dir) + self.name)
             os.makedirs(self.experiment_dir + self.name, exist_ok=True)
             self.logger.info(f'Detections are stored under {self.experiment_dir + self.name}...')
@@ -261,15 +264,17 @@ class Trainer():
 
     def get_data(self):
         # get train, val and test data 
-        self.cfg.data.do_process = False
-        train_data, val_data, test_data = \
-            get_TrajectoryDataLoader(self.cfg, name=self.experiment_dir + self.name)
+        if self.cfg.training.just_eval:
+            train_data, val_data = \
+                get_TrajectoryDataLoader(self.cfg, train=False)
+        else:
+            train_data, val_data = \
+                get_TrajectoryDataLoader(self.cfg)
         
         # get dataloaders 
         self.av2_data_loader = val_data.loader
         self.train_loader = self.make_loader(train_data, shuffle=True)
         self.val_loader = self.make_loader(val_data, shuffle=False)
-        self.test_loader = self.make_loader(test_data, shuffle=False)
     
         if self.train_loader is not None and self.rank == 0:
             self.logger.info("The number of training data is: %d" % len(self.train_loader.dataset))
@@ -393,13 +398,10 @@ class Trainer():
                 num_interior=self.cfg.detector.num_interior,
                 av2_loader=self.av2_data_loader,
                 rank=self.rank,
-                precomp_dets=self.cfg.detector.precomp_dets,
                 kNN=self.cfg.detector.kNN,
                 threshold=self.cfg.detector.threshold,
                 median_flow=self.cfg.detector.median_flow,
-                median_center=self.cfg.detector.median_center,
-                root_dir=self.cfg.root_dir,
-                track_data_path=self.cfg.registration.track_data_path)
+                median_center=self.cfg.detector.median_center)
         
         _nmis = list()
         log_dict = dict()
@@ -414,6 +416,7 @@ class Trainer():
                 if batch % 50 == 0:
                     self.logger.info(f'Epoch {epoch}: batch {batch}/{len(self.val_loader)}')
                 # compute clusters
+
                 logits, all_clusters, edge_index, _ = self.model(data, eval=True, name=self.name, corr_clustering=do_corr_clustering)
 
                 batch_idx = data._slice_dict['pc_list']
@@ -561,7 +564,8 @@ class Trainer():
                         name=self.name,
                         inflate_bb=self.cfg.evaluation.inflate_bb, 
                         root_dir=self.cfg.root_dir,
-                        filtered_file_path=self.cfg.data.filtered_file_path)
+                        filtered_file_path=self.cfg.data.filtered_file_path,
+                        flow_path=self.cfg.data.trajectory_dir)
 
                     # log metrics
                     for_logs = {met: m for met, m in zip(['AP', 'ATE', 'ASE', 'AOE' ,'CDS'], detection_metric)}

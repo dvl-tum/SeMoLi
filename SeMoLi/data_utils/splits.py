@@ -25,10 +25,10 @@ def get_seq_list(path, detection_set='train_gnn',percentage=1.0):
 
 def get_seq_list_fixed_val(path, root_dir, detection_set='train_gnn',percentage=1.0):
     if not 'Argo' in path:
-        save_path = f'{root_dir}/PseudoDetection3D/data_utils/new_seq_splits_Waymo_Converted_fixed_val/{percentage}_{detection_set}.txt'
+        save_path = f'{root_dir}/SeMoLi/data_utils/new_seq_splits_Waymo_Converted_fixed_val/{percentage}_{detection_set}.txt'
     else:
-        save_path = f'{root_dir}/PseudoDetection3D/data_utils/new_seq_splits_AV2_fixed_val/{percentage}_{detection_set}.txt'
-    
+        save_path = f'{root_dir}/SeMoLi/data_utils/new_seq_splits_AV2_fixed_val/{percentage}_{detection_set}.txt'
+
     if os.path.isfile(save_path):
         with open(save_path, 'r') as f:
             seqs = f.read()
@@ -39,7 +39,7 @@ def get_seq_list_fixed_val(path, root_dir, detection_set='train_gnn',percentage=
     seqs = os.listdir(path)
     
     # for evaluation take all validation sequences
-    if detection_set == 'val_evaluation' or detection_set == 'val_test':
+    if detection_set == 'val_evaluation' or detection_set == 'val_test' or detection_set == 'train_all':
         return seqs
     
     if 'val' in detection_set:
@@ -57,6 +57,9 @@ def get_seq_list_fixed_val(path, root_dir, detection_set='train_gnn',percentage=
         seqs = seqs[:int(len(seqs)*percentage)]
     elif 'detector' in detection_set:
         seqs = seqs[int(len(seqs)*percentage):]
+
+    with open(save_path, 'w') as f:
+        f.write('\n'.join(seqs))
     
     return seqs
  
@@ -75,13 +78,17 @@ if __name__ == "__main__":
     os.makedirs(save_dir, exist_ok=True)
     for per in np.arange(0.0, 1.1, 0.1):
         per = np.round(per,decimals=1)
-        for detection_set in ['train_gnn', 'train_detector', 'val_gnn', 'val_detector', 'val_evaluation']:
+        for detection_set in ['train_all', 'train_gnn', 'train_detector', 'val_gnn', 'val_detector', 'val_evaluation']:
             
             # get split directory
             if detection_set == 'val_evaluation':
                 if per != 1.0:
                     continue
                 split = 'val'
+            if detection_set == 'train_all':
+                if per != 1.0:
+                    continue
+                split = 'train'
             elif detection_set == 'val_test':
                 split = 'test'
             else:

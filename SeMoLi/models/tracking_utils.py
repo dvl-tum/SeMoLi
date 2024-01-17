@@ -304,9 +304,8 @@ def get_lwh(object_points):
     return lwh
     
 
-def to_feather(detections, log_id, out_path, split, rank, precomp_dets=False, name='', root_dir='', track_data_path=''):
+def to_feather(detections, log_id, out_path, split):
     track_vals = list()
-    print(f'{root_dir}/{track_data_path}/initial_dets/{name}', precomp_dets)
     
      # per timestamp detections
     for i, timestamp in enumerate(sorted(detections.keys())):

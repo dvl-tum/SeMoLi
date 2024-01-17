@@ -112,7 +112,8 @@ def accumulate(
     max_points: int = 10000,
     timestamp_ns: int = 0,
     filter_category: int = 1,
-    log_id = None
+    log_id = None,
+    pc_path = ''
 ) -> Tuple[NDArrayFloat, NDArrayFloat]:
     """Accumulate the true / false positives (boolean flags) and true positive errors for each class.
 
@@ -183,7 +184,8 @@ def accumulate(
             max_points=max_points,
             filter_category=filter_category,
             timestamp_ns=timestamp_ns,
-            log_id=log_id)
+            log_id=log_id,
+            pc_path=pc_path)
         
         dts_augmented[is_evaluated_dts, :-1] = dts_assignments
         gts_augmented[is_evaluated_gts, :-1] = gts_assignments
@@ -238,7 +240,8 @@ def assign(
         max_points: int=1000,
         filter_category=1,
         timestamp_ns=0,
-        log_id=None) -> Tuple[NDArrayFloat, NDArrayFloat]:
+        log_id=None,
+        pc_path='') -> Tuple[NDArrayFloat, NDArrayFloat]:
     """Attempt assignment of each detection to a ground truth label.
 
     The detections (gts) and ground truth annotations (gts) are expected to be shape (N,10) and (M,10)
@@ -287,7 +290,13 @@ def assign(
         is_moving,
         is_inpointrange)
     # get affinity matrix
-    affinity_matrix = compute_affinity_matrix(dts, gts, cfg.affinity_type, timestamp_ns, log_id)
+    affinity_matrix = compute_affinity_matrix(
+        dts,
+        gts,
+        cfg.affinity_type,
+        timestamp_ns,
+        log_id,
+        pc_path)
 
     # Get the GT label for each max-affinity GT label, detection pair.
     idx_gts = affinity_matrix.argmax(axis=1)[None]
@@ -395,7 +404,13 @@ def interpolate_precision(precision: NDArrayFloat, interpolation_method: InterpT
     return precision_interpolated
 
 
-def compute_affinity_matrix(dts: NDArrayFloat, gts: NDArrayFloat, metric: AffinityType, timestamp_ns, log_id) -> NDArrayFloat:
+def compute_affinity_matrix(
+        dts: NDArrayFloat,
+        gts: NDArrayFloat,
+        metric: AffinityType,
+        timestamp_ns,
+        log_id,
+        pc_path) -> NDArrayFloat:
     """Calculate the affinity matrix between detections and ground truth annotations.
 
     Args:
@@ -460,7 +475,7 @@ def compute_affinity_matrix(dts: NDArrayFloat, gts: NDArrayFloat, metric: Affini
         iou_2d = IoUs2D(torch.from_numpy(dts_corners[idx_d]).unsqueeze(0).cuda(), torch.from_numpy(gts_corners[idx_g]).unsqueeze(0).cuda()).view(dts.shape[0], gts.shape[0]).cpu().numpy()
         affinities = -(1-iou_2d)
     elif metric == AffinityType.SegIoU:
-        iou_seg = compute_sem_seg(dts, gts, timestamp_ns, log_id)
+        iou_seg = compute_sem_seg(dts, gts, timestamp_ns, log_id, pc_path)
         affinities = -(1-iou_seg)
     else:
         raise NotImplementedError("This affinity metric is not implemented!")
@@ -508,10 +523,10 @@ def get_masks(dts, data):
     return np.stack(mask_dets)
 
 
-def compute_sem_seg(dts, gts, timestamp_ns, log_id):
-    pc_path=f'/workspace/all_egocomp_margin0.6_width25/all_egocomp_margin0.6_width25_train'
-    time_p = os.path.join(pc_path, log_id, f'{timestamp_ns}.pt')
-    data = torch.load(time_p)['pc_list'].numpy()
+def compute_sem_seg(dts, gts, timestamp_ns, log_id, pc_path):
+    time_p = os.path.join(pc_path, log_id, f'{timestamp_ns}.npz')
+    pred = np.load(time_p)
+    data = pred['pc_list']  
     # pc_path = '/workspace/Waymo_Converted_train/Waymo_Converted/train/' 
     # time_p = os.path.join(pc_path, log_id, f'{timestamp_ns}.feather')
     masks_dets = get_masks(dts, data)

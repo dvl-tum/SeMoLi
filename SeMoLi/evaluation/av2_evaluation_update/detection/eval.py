@@ -97,8 +97,8 @@ def evaluate(
     use_matched_category: bool = False,
     filter_moving: bool = True,
     _class_dict: dict = {},
-    use_aff_as_score = False
-) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    use_aff_as_score = False,
+    pc_path = '') -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Evaluate a set of detections against the ground truth annotations.
 
     Each sweep is processed independently, computing assignment between detections and ground truth annotations.
@@ -140,7 +140,8 @@ def evaluate(
             max_points,
             filter_class,
             use_matched_category=False,
-            use_aff_as_score=use_aff_as_score)#use_matched_category)
+            use_aff_as_score=use_aff_as_score,
+            pc_path=pc_path)#use_matched_category)
     else:
         METRIC_COLUMN_NAMES_DTS = cfg.affinity_thresholds_m + TP_ERROR_COLUMNS + ("is_evaluated",)
         METRIC_COLUMN_NAMES_DTS = [m for m in METRIC_COLUMN_NAMES_DTS]
@@ -184,7 +185,8 @@ def _evaluate(dts: pd.DataFrame,
     filter_class: str = 'NO_FILTER',
     use_matched_category: bool = False,
     pre_filtering=False,
-    use_aff_as_score=False):
+    use_aff_as_score=False,
+    pc_path=''):
     if cfg.eval_only_roi_instances and cfg.dataset_dir is None:
         raise ValueError(
             "ROI pruning has been enabled, but the dataset directory has not be specified. "
@@ -242,11 +244,11 @@ def _evaluate(dts: pd.DataFrame,
         if uuid in uuid_to_gts:
             sweep_gts = uuid_to_gts[uuid]
 
-        args = sweep_dts, sweep_gts, cfg, None, None, min_points, max_points, int(timestamp_ns), filter_class, log_id
+        args = sweep_dts, sweep_gts, cfg, None, None, min_points, max_points, int(timestamp_ns), filter_class, log_id, pc_path
         if log_id_to_avm is not None and log_id_to_timestamped_poses is not None:
             avm = log_id_to_avm[log_id]
             city_SE3_ego = log_id_to_timestamped_poses[log_id][int(timestamp_ns)]
-            args = sweep_dts, sweep_gts, cfg, avm, city_SE3_ego, min_points, max_points, int(timestamp_ns), filter_class, log_id
+            args = sweep_dts, sweep_gts, cfg, avm, city_SE3_ego, min_points, max_points, int(timestamp_ns), filter_class, log_id, pc_path
         args_list.append(args)
 
     print("\t Starting evaluation ...")

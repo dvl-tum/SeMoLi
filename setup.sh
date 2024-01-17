@@ -5,13 +5,13 @@
 # conda activate SeMoLi
 
 # lapsolver
-pip install lapsolver
+python3 -m pip install lapsolver
 
 # pyarrow
-pip install pyarrow
+python3 -m pip install pyarrow
 
 # Pytorch3d
-pip install "git+https://github.com/facebookresearch/pytorch3d.git"
+python3 -m pip install "git+https://github.com/facebookresearch/pytorch3d.git"
 
 # RAMA
 export CUDA_HOME=/usr/local/cuda
@@ -32,10 +32,10 @@ python setup.py install
 python3 -m pip install --user open3d
 
 # argoverse 2 api
-pip install av2
+python3 -m pip install av2
 
 # chamferdist
-pip install chamferdist
+python3 -m pip install chamferdist
 
 # patwork++
 conda install cmake
@@ -43,7 +43,10 @@ git clone https://github.com/url-kaist/patchwork-plusplus
 cp CMakeLists.txt  patchwork-plusplus
 cd patchwork-plusplus
 sudo apt-get install libeigen3-dev
-pip install .
+python3 -m pip install .
 
 # pyransac
-pip install pyransac3d
+python3 -m pip install pyransac3d
+
+# install waymo open dataset
+python3 -m pip install waymo-open-dataset-tf-2-11-0==1.6.1

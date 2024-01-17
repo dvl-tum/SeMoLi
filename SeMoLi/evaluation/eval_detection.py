@@ -113,21 +113,13 @@ def get_feather_files(
         # get file name
         split = os.path.basename(paths)
         if split == 'val':
-            # file = 'filtered_version_city.feather'
-            file = 'filtered_version_city_w0_withwaymovel.feather'
+            file = 'filtered_version_city_w0.feather'
         else:
-            if not 'Argo' in paths:
-                if discard_last_25:
-                    file = 'filtered_version.feather'
-                else:
-                    file = 'filtered_version_city_w0.feather' 
+            if discard_last_25:
+                file = 'filtered_version.feather'
             else:
-                if discard_last_25:
-                    file = 'filtered_version.feather'
-                else:
-                    file = 'filtered_version_city_w0.feather'
-                # file = 'filtered_version.feather'
-        # file = 'filtered_version_city.feather'
+                file = 'filtered_version_city_w0.feather'
+
         file = 'remove_non_drive_' + file if remove_non_drive else file
         file = 'remove_far_' + file if remove_far else file
         file = 'remove_non_move_' + file if remove_non_move else file
@@ -159,7 +151,6 @@ def get_feather_files(
             df = df[df['log_id'].isin(seq_list)]
         
         if df['category'].dtypes != int:
-
             if not is_waymo:
                 def convert2int(x): return class_dict_argo[x]
                 df['category'] = df['category'].apply(convert2int)
@@ -196,7 +187,10 @@ def get_feather_files(
         data_loader = enumerate(data_loader)
 
         all_filtered = list()
-        mp.set_start_method('forkserver')
+        try:
+            mp.set_start_method('forkserver')
+        except:
+            pass
         with mp.Pool() as pool:
             filtered = pool.map(filter_seq, data_loader, chunksize=None)
             all_filtered.append(filtered)
@@ -212,9 +206,10 @@ def get_feather_files(
         
         # store filtered df
         df = filtered
-
+        os.makedirs(os.path.dirname(path_filtered), exist_ok=True)
         with open(path_filtered, 'wb') as f:
             feather.write_feather(df, f)
+        print(f'Stored to {path_filtered}...')
     
         if seq_list is not None:
             df = df[df['log_id'].isin(seq_list)]
@@ -519,23 +514,24 @@ def eval_detection(
         filter_class="CONVERT_ALL_TO_CARS",
         use_matched_category=False,
         filter_moving=True,
-        store_matched=False,
         velocity_evaluation=False,
         min_num_interior_pts=20,
-        waymo_style=True,
+        roi_clipping=True,
         heuristics=False,
         inflate_bb=False,
         use_aff_as_score=False,
-        store_input_to_eval=False,
+        store_adapted_pseudo_labels=False,
         discard_last_25=False,
         inflation_factor=1.0,
         root_dir='',
-        filtered_file_path=''):
+        filtered_file_path='', 
+        flow_path=''):
     
     if os.path.isdir(trackers_folder) and not len(os.listdir(trackers_folder)):
         return None, np.array([0, 2, 1, 3.142, 0]), None
 
     is_waymo = 'waymo' in gt_folder or 'Waymo' in gt_folder
+    flow_path = os.path.join(flow_path, split)
     gt_folder = os.path.join(gt_folder, split)
     loader = AV2SensorDataLoader(data_dir=Path(
         gt_folder), labels_dir=Path(gt_folder))
@@ -567,7 +563,7 @@ def eval_detection(
     gts = gts[gts['num_interior_pts'] > 0]
     print(f'Numer of gt after removing bss w 0 interior points {gts.shape}')
     
-    if waymo_style:
+    if roi_clipping:
         gts = gts[np.logical_and(gts['tx_m'] < 50, gts['ty_m'] < 20)]
         gts = gts[np.logical_and(gts['tx_m'] > -50, gts['ty_m'] > -20)]
         print(f'Numer of gt after filter points waymo style {gts.shape}')
@@ -625,7 +621,7 @@ def eval_detection(
             dts['width_m'] = (inflation_factor*dts['width_m']).clip(lower=0.75, upper=None)
             dts['height_m'] = (inflation_factor*dts['height_m']).clip(lower=1.75, upper=None)
     
-    if waymo_style:
+    if roi_clipping:
         dts = dts[np.logical_and(dts['tx_m'] < 50, dts['ty_m'] < 20)]
         dts = dts[np.logical_and(dts['tx_m'] > -50, dts['ty_m'] > -20)]
     
@@ -682,11 +678,10 @@ def eval_detection(
     dts = dts[dts['score'] > 0.1]
     gts_orig = gts 
     dts_orig = dts
-    if store_input_to_eval:
-        print(f"\t Writing macthed detections to {root_dir}/input_eval/{os.path.basedir(os.path.dirname(trackers_folder))}/annotations.feather...")
+    if store_adapted_pseudo_labels:
+        print(f"\t Writing adapted detections to {root_dir}/input_eval/{os.path.basedir(os.path.dirname(trackers_folder))}/annotations.feather...")
         os.makedirs(f'{root_dir}/input_eval/{os.path.basedir(os.path.dirname(trackers_folder))}', exist_ok=True)
         feather.write_feather(dts, f'{root_dir}/input_eval/{os.path.basedir(os.path.dirname(trackers_folder))}/annotations.feather')
-        quit()
     
     for affinity, tp_thresh, threshs, n_jobs in zip(
         ['CENTER', 'IoU3D', 'IoU2D', 'SegIoU'], \
@@ -730,7 +725,8 @@ def eval_detection(
             _class_dict=_class_dict,
             n_jobs=n_jobs,
             filter_moving=filter_moving,
-            use_aff_as_score=use_aff_as_score)
+            use_aff_as_score=use_aff_as_score,
+            pc_path=flow_path)
                 
         dts = dts[dts['is_evaluated']==1]
         gts = gts[gts['is_evaluated']==1]
