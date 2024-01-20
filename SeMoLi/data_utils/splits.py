@@ -24,7 +24,7 @@ def get_seq_list(path, detection_set='train_gnn',percentage=1.0):
     return seqs
 
 def get_seq_list_fixed_val(path, root_dir, detection_set='train_gnn',percentage=1.0):
-    if not 'Argo' in path:
+    if not 'AV2' in path:
         save_path = f'{root_dir}/SeMoLi/data_utils/new_seq_splits_Waymo_Converted_fixed_val/{percentage}_{detection_set}.txt'
     else:
         save_path = f'{root_dir}/SeMoLi/data_utils/new_seq_splits_AV2_fixed_val/{percentage}_{detection_set}.txt'

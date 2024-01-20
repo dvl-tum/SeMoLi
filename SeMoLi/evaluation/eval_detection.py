@@ -22,6 +22,8 @@ from torch import multiprocessing as mp
 import pandas as pd
 from scipy.spatial.transform import Rotation
 import matplotlib
+import warnings 
+warnings.simplefilter(action='ignore', category=FutureWarning)
 
 
 _class_dict_argo = {
@@ -130,7 +132,7 @@ def get_feather_files(
         
         path_filtered = os.path.join(f'{root_dir}/{filtered_file_path}', file)
         print(f'Looking for filtered gt file {path_filtered}')
-    
+
     if not is_gt or not os.path.isfile(path_filtered):
         df = None
         print(f'Loading from {paths}...')
@@ -218,145 +220,98 @@ def get_feather_files(
 def filter_seq(data, width=0):
     # generate filtered version
     filtered = None
-    map_dict = dict()
     # unpack input
     m, (seq, num_seqs, remove_non_move, remove_non_move_strategy, loader, remove_non_move_thresh, remove_non_drive, path, remove_far, df) = data
     print(f'Sequence {m}/{num_seqs}...')
     seq_df = df[df['log_id'] == seq]
     timestamps = sorted(seq_df['timestamp_ns'].unique().tolist())
 
-    if remove_non_move and remove_non_move_strategy == 'per_seq':
-        centroid_dict = defaultdict(list)
-        movers = list()
-        centroid_time = defaultdict(list)
-        for i, t in enumerate(sorted(seq_df['timestamp_ns'].unique().tolist())):
-            labels = loader.get_labels_at_lidar_timestamp(
-                log_id=seq, lidar_timestamp_ns=int(t))
-
-            city_SE3_ego = loader.get_city_SE3_ego(seq, int(t))
-
-            labels = labels.transform(city_SE3_ego)
-            for label in labels:
-                centroid_dict[label.track_id].append(
-                    label.dst_SE3_object.translation)
-                centroid_time[label.track_id].append(int(t))
-
-        for track, centroids in centroid_dict.items():
-            diff_cent = np.linalg.norm(np.asarray(
-                centroids)[:-1, :-1] - np.asarray(centroids)[1:, :-1], axis=1)
-            diff_time = np.asarray(centroid_time[track])[
-                1:] - np.asarray(centroid_time[track])[:-1]
-            diff_time = diff_time / np.power(10, 9)
-            if np.mean(diff_cent/diff_time) > remove_non_move_thresh:
-                movers.append(track)
-
     # iterate over timesyeps to get argoverse map and labels
     timestamp_list = sorted(seq_df['timestamp_ns'].unique().tolist())
     for i, t in enumerate(timestamp_list):
         bool_labels = list()
+        last_24s = list()
         if i > len(timestamp_list) - width:
             break
-        track_ids = list()
         time_df = seq_df[seq_df['timestamp_ns'] == t]
+
+        # determine if timestamp part of last 24 timestamps
+        last_24 = True if len(timestamp_list)-(i+1) < 24 else False
 
         # get labels
         labels = loader.get_labels_at_lidar_timestamp(
             log_id=seq, lidar_timestamp_ns=int(t))
 
-        # remove labels that are non in dirvable area
-        if remove_non_drive and 'Argo' in path:
-            if seq not in map_dict.keys():
-                log_map_dirpath = Path(gt_folder) / seq / "map"
-                map_dict[seq] = ArgoverseStaticMap.from_map_dir(
-                    log_map_dirpath, build_raster=True)
-            centroids_ego = np.asarray(
-                [label.dst_SE3_object.translation for label in labels])
-            city_SE3_ego = loader.get_city_SE3_ego(seq, int(t))
-            centroids_city = city_SE3_ego.transform_point_cloud(
-                centroids_ego)
-            bool_labels = map_dict[seq].get_raster_layer_points_boolean(
-                centroids_city, layer_name=RasterLayerType.DRIVABLE_AREA)
-            labels = [l for i, l in enumerate(
-                labels) if bool_labels[i]]
-
         if remove_non_move:
-            if remove_non_move_strategy == 'per_seq':
-                labels = [
-                    label for label in labels if label.track_id in movers]
-            elif remove_non_move_strategy == 'per_frame':
-
-                if i < len(timestamps) - 1:
-                    # labels at t+1
-                    labels_t2 = loader.get_labels_at_lidar_timestamp(
-                        log_id=seq, lidar_timestamp_ns=int(timestamps[i+1]))
-                    city_SE3_t2 = loader.get_city_SE3_ego(
-                        seq, int(timestamps[i+1]))
-                    ids_t2 = [label.track_id for label in labels_t2]
-                    t_ = i+1
-                else:
-                    labels_t2 = loader.get_labels_at_lidar_timestamp(
-                        log_id=seq, lidar_timestamp_ns=int(timestamps[i-1]))
-                    city_SE3_t2 = loader.get_city_SE3_ego(
-                        seq, int(timestamps[i-1]))
-                    ids_t2 = [label.track_id for label in labels_t2]
-                    t_ = i-1
-                city_SE3_t1 = loader.get_city_SE3_ego(
-                    seq, int(timestamps[i]))
-                vels = list()
-                vels_city = list()
-
-                ego_traj_SE3_ego_ref = city_SE3_t2.inverse().compose(city_SE3_t1)
-
-                for m, label in enumerate(labels):
-                    center_city = city_SE3_t1.transform_point_cloud(label.dst_SE3_object.translation)
-                    center = label.dst_SE3_object.translation
-                    if len(labels_t2) and label.track_id in ids_t2:
-                        # Pose of the object in the destination reference frame.
-                        # ego_SE3_object --> from object to ego   
-                        center_lab_city = city_SE3_t2.transform_point_cloud(
-                                labels_t2[ids_t2.index(
-                            label.track_id)].dst_SE3_object.translation)
-                        ego_traj_SE3_obj_traj = labels_t2[ids_t2.index(
-                            label.track_id)].dst_SE3_object
-                        ego_ref_SE3_obj_ref = label.dst_SE3_object
-
-                        # transform points belonging to object in t1 into ego t2 coordinate system
-                        obj_ref_ego_traj = ego_traj_SE3_ego_ref.transform_point_cloud(
-                            center)
-                        
-                        # transform points belonging to object in t1 into obj and from obj to ego t2 (assmue obj same points)
-                        obj_traj_ego_traj = ego_traj_SE3_obj_traj.compose(
-                            ego_ref_SE3_obj_ref.inverse()).transform_point_cloud(center)
-
-                        # get flow
-                        translation = obj_traj_ego_traj - obj_ref_ego_traj
-                        translation_city = center_lab_city - center_city
-                        dist = np.linalg.norm(translation)
-                        dist_city = np.linalg.norm(translation_city)
-                        if 'Argo' in path:
-                            diff_time = (
-                                timestamps[t_]-t) / np.power(10, 9)
-                        else:
-                            diff_time = (
-                                timestamps[t_]-t) / np.power(10, 6)
-                        vel = dist/diff_time
-                        vel_city = dist_city/diff_time
-                        vels.append(vel)
-                        vels_city.append(vel_city)
-                        bool_labels.append(
-                            vel > remove_non_move_thresh)
-                    else:
-                        vels.append(None)
-                        vels_city.append(None)
-                        bool_labels.append(False)
-                # filter labels
-                # labels = [l for i, l in enumerate(
-                #     labels) if bool_labels[i]]
+            if i < len(timestamps) - 1:
+                # labels at t+1
+                labels_t2 = loader.get_labels_at_lidar_timestamp(
+                    log_id=seq, lidar_timestamp_ns=int(timestamps[i+1]))
+                city_SE3_t2 = loader.get_city_SE3_ego(
+                    seq, int(timestamps[i+1]))
+                ids_t2 = [label.track_id for label in labels_t2]
+                t_ = i+1
             else:
-                assert remove_non_move_strategy in [
-                    'per_frame', 'per_seq'], 'remove strategy for static objects not defined'
+                labels_t2 = loader.get_labels_at_lidar_timestamp(
+                    log_id=seq, lidar_timestamp_ns=int(timestamps[i-1]))
+                city_SE3_t2 = loader.get_city_SE3_ego(
+                    seq, int(timestamps[i-1]))
+                ids_t2 = [label.track_id for label in labels_t2]
+                t_ = i-1
+            city_SE3_t1 = loader.get_city_SE3_ego(
+                seq, int(timestamps[i]))
+            vels = list()
+            vels_city = list()
 
-        # remove points that are far away (>80,)
+            ego_traj_SE3_ego_ref = city_SE3_t2.inverse().compose(city_SE3_t1)
+
+            for m, label in enumerate(labels):
+                center_city = city_SE3_t1.transform_point_cloud(label.dst_SE3_object.translation)
+                center = label.dst_SE3_object.translation
+                if len(labels_t2) and label.track_id in ids_t2:
+                    # Pose of the object in the destination reference frame.
+                    # ego_SE3_object --> from object to ego   
+                    center_lab_city = city_SE3_t2.transform_point_cloud(
+                            labels_t2[ids_t2.index(
+                        label.track_id)].dst_SE3_object.translation)
+                    ego_traj_SE3_obj_traj = labels_t2[ids_t2.index(
+                        label.track_id)].dst_SE3_object
+                    ego_ref_SE3_obj_ref = label.dst_SE3_object
+
+                    # transform points belonging to object in t1 into ego t2 coordinate system
+                    obj_ref_ego_traj = ego_traj_SE3_ego_ref.transform_point_cloud(
+                        center)
+                    
+                    # transform points belonging to object in t1 into obj and from obj to ego t2 (assmue obj same points)
+                    obj_traj_ego_traj = ego_traj_SE3_obj_traj.compose(
+                        ego_ref_SE3_obj_ref.inverse()).transform_point_cloud(center)
+
+                    # get flow
+                    translation = obj_traj_ego_traj - obj_ref_ego_traj
+                    translation_city = center_lab_city - center_city
+                    dist = np.linalg.norm(translation)
+                    dist_city = np.linalg.norm(translation_city)
+
+                    if 'AV2' in path:
+                        diff_time = (
+                            timestamps[t_]-t) / np.power(10, 9)
+                    else:
+                        diff_time = (
+                            timestamps[t_]-t) / np.power(10, 6)
+                    vel = dist/diff_time
+                    vel_city = dist_city/diff_time
+                    vels.append(vel)
+                    vels_city.append(vel_city)
+                    bool_labels.append(
+                        vel > remove_non_move_thresh)
+                    last_24s.append(last_24)
+                else:
+                    vels.append(None)
+                    vels_city.append(None)
+                    bool_labels.append(False)
+                    last_24s.append(last_24)
+
+        '''# remove points that are far away (>80,)
         if remove_far and len(labels):
             all_centroids = np.asarray(
                 [label.dst_SE3_object.translation for label in labels])
@@ -364,19 +319,19 @@ def filter_seq(data, width=0):
             dists_to_center = np.sqrt(np.sum(all_centroids ** 2, 1))
             ind = np.where(dists_to_center <= 80)[0]
             labels = [labels[i] for i in ind]
-            bool_labels = [bool_labels[i] for i in ind]
+            bool_labels = [bool_labels[i] for i in ind]'''
 
         # get track id of remaining objects
-        track_ids = [l.track_id for l in labels]
         bool_labels = {l.track_id: b for l, b in zip(labels, bool_labels)}
         vels =  {l.track_id: b for l, b in zip(labels, vels)}
         vels_city = {l.track_id: b for l, b in zip(labels, vels_city)}
+        last_24s = {l.track_id: b for l, b in zip(labels, last_24s)}
         
         # filter time df by track ids
-        time_df = time_df[time_df['track_uuid'].isin(track_ids)]
         time_df['filter_moving'] = [bool_labels[t] for t in time_df['track_uuid'].values]
         time_df['velocities'] = [vels[t] for t in time_df['track_uuid'].values]
         time_df['velocities_city'] = [vels_city[t] for t in time_df['track_uuid'].values]
+        time_df['last_24'] = [last_24s[t] for t in time_df['track_uuid'].values]
 
         if filtered is None and time_df.shape[0]:
             filtered = time_df
@@ -498,7 +453,7 @@ def eval_detection(
         trackers_folder,
         seq_to_eval,
         remove_far=True,
-        remove_non_drive=True,
+        remove_non_drive=False,
         remove_non_move=True,
         remove_non_move_strategy='per_frame',
         remove_non_move_thresh=1,
@@ -541,6 +496,7 @@ def eval_detection(
     if just_eval:
         print("Loading data...")
     print("Discard last 25 ", discard_last_25)
+
     gts = get_feather_files(
         gt_folder,
         is_gt=True,
@@ -556,7 +512,7 @@ def eval_detection(
         discard_last_25=discard_last_25,
         root_dir=root_dir,
         filtered_file_path=filtered_file_path)
-    
+
     print(f'Numer of gt {gts.shape}')
     num_mov = gts[gts['filter_moving']].shape[0]
     print(f'Numer of gt of moving objects {num_mov}')
@@ -579,7 +535,7 @@ def eval_detection(
 
     if just_eval:
         print("Loaded ground truth...")
-    is_pp = 'detections_from_pp_sv2_format' in trackers_folder
+    is_pp = 'work_dirs' in trackers_folder
     dts = get_feather_files(
         trackers_folder,
         seq_list=seq_to_eval,
@@ -689,8 +645,6 @@ def eval_detection(
                 [(0.5, 1.0, 2.0, 4.0), (0.3, 0.4, 0.6, 0.99), (0.3, 0.4, 0.6, 0.99), (0.3, 0.4, 0.6, 0.8)], \
                 [8, 1, 1, 8]):
         
-        if affinity != 'IoU3D' and affinity != 'SegIoU':
-            continue
         if affinity == 'SegIoU' and is_pp:
             continue
 

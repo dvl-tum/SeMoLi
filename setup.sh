@@ -21,12 +21,15 @@ git clone https://github.com/pawelswoboda/RAMA.git
 cd RAMA
 git submodule update --init --recursive
 python setup.py install
+cd ../
 
 # sort for 2D IoU
 git clone https://github.com/Jiahao-Ma/2D-3D-IoUs.git
 mv 2D-3D-IoUs/cuda_op/ .
 cd cuda_op
 python setup.py install
+cd ../
+rm -rf 2D-3D-IoUs/
 
 # open3d
 python3 -m pip install --user open3d
@@ -50,3 +53,12 @@ python3 -m pip install pyransac3d
 
 # install waymo open dataset
 python3 -m pip install waymo-open-dataset-tf-2-11-0==1.6.1
+
+# mmdetection3d 
+python -m pip install numpy==1.22.0
+python -m pip install -U openmim
+mim install mmcv
+mim install mmengine
+mim install "mmcv==2.0.0"
+mim install "mmdet==3.0.0"
+mim install "mmdet3d>=1.1.0"

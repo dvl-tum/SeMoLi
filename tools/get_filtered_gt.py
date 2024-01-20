@@ -28,7 +28,7 @@ def main(cfg):
                 filtered_file_path=cfg.data.filtered_file_path,
                 is_waymo='Waymo' in gt_folder)
 
-    shutil.rmtree(f'{cfg.root_dir}/outputs')
+    shutil.rmtree(f'{cfg.root_dir}/outputs', ignore_errors=True)
 
 
 if __name__ == "__main__":

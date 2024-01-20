@@ -1,13 +1,13 @@
-from PseudoDetection3D.data_utils.splits import get_seq_list_fixed_val
+from SeMoLi.data_utils.splits import get_seq_list_fixed_val
 import hydra
 from omegaconf import OmegaConf
-from PseudoDetection3D.evaluation import eval_detection
+from SeMoLi.evaluation import eval_detection
 import os
-from PseudoDetection3D.utils.get_name import get_name
+from SeMoLi.utils.get_name import get_name
 import shutil
 
 
-@hydra.main(config_path="PseudoDetection3D/conf", config_name="conf")   
+@hydra.main(config_path="../SeMoLi/conf", config_name="conf")   
 def main(cfg):
     seq_list = get_seq_list_fixed_val(
         cfg.data.data_dir,
@@ -48,16 +48,14 @@ def main(cfg):
             filter_class=cfg.evaluation.filter_class,
             filter_moving=cfg.evaluation.filter_moving,
             use_matched_category=cfg.evaluation.use_matched_category,
-            debug=cfg.data.debug,
             name=name,
-            store_matched=cfg.evaluation.store_matched,
             velocity_evaluation=cfg.evaluation.vel_evaluation,
             heuristics=cfg.evaluation.heuristics,
-            waymo_style=cfg.evaluation.waymo_style,
+            roi_clipping=cfg.evaluation.roi_clipping,
             use_aff_as_score=False,
             inflate_bb=cfg.evaluation.inflate_bb,
             min_num_interior_pts=cfg.detector.num_interior,
-            store_input_to_eval=cfg.evaluation.store_input_to_eval,
+            store_adapted_pseudo_labels=cfg.evaluation.store_adapted_pseudo_labels,
             discard_last_25=cfg.evaluation.discard_last_25,
             inflation_factor=cfg.evaluation.inflation_factor,
             root_dir=cfg.root_dir,
