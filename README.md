@@ -46,6 +46,7 @@ This will only download the lidar data, 3D annotations, and ego vehicle poses of
 
 For SeMoLi and the training of the off-the-shelf detector we follow the dataset split as introduced in the paper:
 ![data split figure according to SeMoLi](figs/data_splits.jpg)
+
 ```x``` corresponds to the percentage used for training the SeMoLi
 
 ## 3. Trajectory Estimation
@@ -105,7 +106,7 @@ The command above uses the default values of all flags. They detemine the follin
 - ```store_adapted_pseudo_labels``` stores all pseudo-labels in inflated manner into one file as input for the down stream detector training
 - ```roi_clipping``` filters the ground truth as to only contain bounding boxes in a 100mx4m rectangle around the ego vehicle
 
-### 4.3. Generate Pseudo-Labels
+### 4.3. Evaluate SeMoLi to Generate Pseudo-Labels
 To generate detections and evaluate trained SeMoLi replace ```<path_to_weight>``` with the path to the weights you want to use and run the following:
 ```
 python tools/train.py root_dir=$BASE_DIR data=$DATA_TYPE training.just_eval=True data.trajectory_dir=$BASE_DIR/data/$TRAJECTORY_DIR/trajectories data.data_dir=$BASE_DIR/data/$DATA_DIR data.processed_dir=$BASE_DIR/data/$PROCESSED_DIR data.percentage_data_val=0.1 data.detection_set=val_gnn models.weight_path=<path_to_weight> evaluation.keep_checkpoint=False evaluation.keep_detections=True
@@ -117,7 +118,7 @@ For evaluation the default flags as defined above are used and hence not added t
 - ```keep_checkpoint``` determines if checkpoints should be kept, i.e., for hyperparameter search not wanted
 - ```keep_detections``` determines if detections should be kept, i.e., for hyperparameter search not wanted
 
-### 4.4. Train Pseudo-Labels
+### 4.4. Train SeMoLi
 To train SeMoLi from scratch run the following:
 ```
 python tools/train.py root_dir=$BASE_DIR data=$DATA_TYPE data.trajectory_dir=$BASE_DIR/data/$TRAJECTORY_DIR/trajectories data.data_dir=$BASE_DIR/data/$DATA_DIR data.processed_dir=$BASE_DIR/data/$PROCESSED_DIR data.percentage_data_train=0.1 data.percentage_data_val=0.1 data.detection_set=val_gnn
