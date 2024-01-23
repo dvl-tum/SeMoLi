@@ -106,6 +106,8 @@ The command above uses the default values of all flags. They detemine the follin
 - ```store_adapted_pseudo_labels``` stores all pseudo-labels in inflated manner into one file as input for the down stream detector training
 - ```roi_clipping``` filters the ground truth as to only contain bounding boxes in a 100mx4m rectangle around the ego vehicle
 
+The pseudo-labels to train the off-the-shelf detector will be stored to ```input_eval/<experiment_name>```. Those pseudo-labels already include inflation and other post-processings if enabled (by default disabled). The orginal detections will be stored under ```out/detections_<detection_split>/<experiment_name>```.
+
 ### 4.3. Evaluate SeMoLi to Generate Pseudo-Labels
 To generate detections and evaluate trained SeMoLi replace ```<path_to_weight>``` with the path to the weights you want to use and run the following:
 ```
@@ -126,6 +128,8 @@ python tools/train.py root_dir=$BASE_DIR data=$DATA_TYPE data.trajectory_dir=$BA
 For evaluation and pseudo-label generation flags are defined as above. Additionally for training the following flags are of importance:
 - ```percentage_data_train``` determines the percentage of data used for training
 
+Checkpoints will be stored under ```out/checkpoints/<experiment_name>```
+
 ### 4.5. Additional Flags
 #### Pseudo-Label Generation
 You can adapt the pseudo-label generation parameters in ```SeMoLi/conf/detector/default.yaml``` like minimum number of interior points for a pseudo-label to be kept. Additionally, the inflation flags for evaluation can be adapted accordingly in ```SeMoLi/conf/evaluation/default.yaml```. In ```SeMoLi/conf/data/<data_set>.yaml```, the amount of maximum points per point cloud for training and testing can be set as well as filtering of static points for ground truth (used in ```get_filtered_gt```) and training / validation samples based on predicted velocity.
@@ -137,3 +141,34 @@ Training parameters, e.g., number of epochs can be set in ```SeMoLi/conf/trainin
 The parameters of SeMoLi, e.g., number of layers and loss specifications can be defined in ```SeMoLi/conf/models/GNN.yaml```.
 
 ## 5. Off-The-Shelf Detector
+To train the off the shelf detector on pseudo-labels and evaluate it on the ```val_detector``` set, first set the evironment variables as the following:
+
+```
+export TRAIN_LABELS=<train_label_path>
+export VAL_LABELS=$BASE_DIR/SeMoLi/data_utils/Waymo_Converted_filtered/train_1_per_frame_remove_non_move_remove_far_filtered_version_city_w0.feather
+```
+
+where ```<train_label_path>``` is the path to the feather file containing the pseudo-labels.
+
+Then run the following to train the detector:
+```
+cd mmdetection3D_adapted
+./tools/dist_train.sh configs/pointpillars/pointpillars_hv_secfpn_sbn-all_8xb4-2x_waymo-3d-class_specific.py <num_gpus> <percentage_train> 1.0 $TRAIN_LABELS $VAL_LABELS --val_detection_set=val_detector --auto-scale-lr
+```
+where 
+- ```percentage_train``` is the percentage used to train the gnn, i.e., the x value as defined above
+- ```num_gpus``` is the number of gpus that will be used for training
+
+The code will automatically evaluate the performance using the evaluation code of SeMoLi returning 3D average precision.
+
+To evaluate on the real validation set, set 
+```
+export VAL_LABELS=$BASE_DIR/SeMoLi/data_utils/Waymo_Converted_filtered/val_1_per_frame_remove_non_move_remove_far_filtered_version_city_w0.feather
+```
+
+as well as ```val_detection_set=val_evaluation```. If you only want to evaluate, add the ```--eval``` flag:
+```
+./tools/dist_train.sh configs/pointpillars/pointpillars_hv_secfpn_sbn-all_8xb4-2x_waymo-3d-class_specific.py <num_gpus> <percentage_train> 1.0 $TRAIN_LABELS $VAL_LABELS --val_detection_set=val_evaluator --auto-scale-lr --eval
+```
+
+For more details, please refer to the ```README.md``` of the ```mmdetection3D_adapted``` repository.
