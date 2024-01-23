@@ -635,7 +635,7 @@ def eval_detection(
     gts_orig = gts 
     dts_orig = dts
     if store_adapted_pseudo_labels:
-        print(f"\t Writing adapted detections to {root_dir}/input_eval/{os.path.basedir(os.path.dirname(trackers_folder))}/annotations.feather...")
+        print(f"\t Writing pseudo-labels for training the off-the-shelf detector to {root_dir}/input_eval/{os.path.basedir(os.path.dirname(trackers_folder))}/annotations.feather...")
         os.makedirs(f'{root_dir}/input_eval/{os.path.basedir(os.path.dirname(trackers_folder))}', exist_ok=True)
         feather.write_feather(dts, f'{root_dir}/input_eval/{os.path.basedir(os.path.dirname(trackers_folder))}/annotations.feather')
     
