@@ -66,15 +66,16 @@ def get_seq_list_fixed_val(path, root_dir, detection_set='train_gnn',percentage=
 
 
 if __name__ == "__main__":
-    data_path = '/dvlresearch/jenny/Waymo_Converted_GT'
-    data_path = '/workspace/Argoverse2/'
+    data_path = '../../data/Waymo_Converted'
+    # data_path = '../../data/AV2'
+    root_dir = ''
     fixed_val = True
+
     if fixed_val:
-        save_dir = f'new_seq_splits_Waymo_Converted_fixed_val'
+        save_dir = f'new_seq_splits_{os.path.basename(data_path)}_fixed_val'
     else:
-        save_dir = f'new_seq_splits_Waymo_Converted'
+        save_dir = f'new_seq_splits{os.path.basename(data_path)}'
      
-    save_dir = f'new_seq_splits_AV2_fixed_val'
     os.makedirs(save_dir, exist_ok=True)
     for per in np.arange(0.0, 1.1, 0.1):
         per = np.round(per,decimals=1)
@@ -97,9 +98,9 @@ if __name__ == "__main__":
             # get sequences
             p = os.path.join(data_path, split)
             if not fixed_val:
-                seqs = get_seq_list(p, detection_set, per)
+                seqs = get_seq_list(p, root_dir, detection_set, per)
             else:
-                seqs = get_seq_list_fixed_val(p, detection_set, per)
+                seqs = get_seq_list_fixed_val(p, root_dir, detection_set, per)
             print(per, detection_set, len(seqs))
             # save sequences
             with open(f'{save_dir}/{per}_{detection_set}.txt', 'w') as f:
