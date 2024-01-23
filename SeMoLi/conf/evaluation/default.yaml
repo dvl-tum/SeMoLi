@@ -10,7 +10,7 @@ heuristics: False
 roi_clipping: True
 filter_class: 'CONVERT_ALL_TO_CARS'
 inflate_bb: True
-store_adapted_pseudo_labels: False
+store_adapted_pseudo_labels: True
 discard_last_25: False
 inflation_factor: 1.0
 pretty_print: True 
