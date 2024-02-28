@@ -141,7 +141,13 @@ Training parameters, e.g., number of epochs can be set in ```SeMoLi/conf/trainin
 The parameters of SeMoLi, e.g., number of layers and loss specifications can be defined in ```SeMoLi/conf/models/GNN.yaml```.
 
 ## 5. Off-The-Shelf Detector
-To train the off the shelf detector on pseudo-labels and evaluate it on the ```val_detector``` set, first set the evironment variables as the following:
+To train the off the shelf detector on pseudo-labels and evaluate it on the ```val_detector``` set, first go to the detection repository:
+
+```
+cd mmdet3d
+```
+
+Then, set the evironment variables as the following:
 
 ```
 export TRAIN_LABELS=<train_label_path>
@@ -152,7 +158,6 @@ where ```<train_label_path>``` is the path to the feather file containing the ps
 
 Then run the following to train the detector:
 ```
-cd mmdetection3D_adapted
 ./tools/dist_train.sh configs/pointpillars/pointpillars_hv_secfpn_sbn-all_8xb4-2x_waymo-3d-class_specific.py <num_gpus> <percentage_train> 1.0 $TRAIN_LABELS $VAL_LABELS --val_detection_set=val_detector --auto-scale-lr
 ```
 where 
@@ -172,3 +177,10 @@ as well as ```val_detection_set=val_evaluation```. If you only want to evaluate,
 ```
 
 For more details, please refer to the ```README.md``` of the ```mmdetection3D_adapted``` repository.
+
+To only evaluate exsiting detections from PointPillars in AV2 format, please run the folowwing from the SeMoLi directory (```$BASE_DIR/SeMoLi```):
+
+```
+python tools/evaluate.py root_dir=$BASE_DIR training.just_eval=True data=$DATA_TYPE data.data_dir=$BASE_DIR/data/$DATA_DIR data.trajectory_dir=$BASE_DIR/data/ evaluation.eval_dir=<detection_dir> evaluation.filter_moving=True evaluation.discard_last_25=False evaluation.inflate_bb=False evaluation.use_matched_category=False evaluation.heuristics=False evaluation.store_adapted_pseudo_labels=False evaluation.roi_clipping=True data.percentage_data_val=1.0 data.detection_set=val_evaluation data.processed_dir=$BASE_DIR/data/$PROCESSED_DIR evaluation.filtered_pc_path=$BASE_DIR/data/$FILTERED_DIR
+```
+
