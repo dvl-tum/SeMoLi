@@ -565,7 +565,9 @@ class Trainer():
                         inflate_bb=self.cfg.evaluation.inflate_bb, 
                         root_dir=self.cfg.root_dir,
                         filtered_file_path=self.cfg.data.filtered_file_path,
-                        flow_path=self.cfg.data.trajectory_dir)
+                        flow_path=self.cfg.evaluation.filtered_pc_path,
+                        only_level_1=self.cfg.evaluation.only_level_1,
+                        score_thresh=self.cfg.evaluation.score_thresh)
 
                     # log metrics
                     for_logs = {met: m for met, m in zip(['AP', 'ATE', 'ASE', 'AOE' ,'CDS'], detection_metric)}
