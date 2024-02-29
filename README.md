@@ -146,7 +146,7 @@ The parameters of SeMoLi, e.g., number of layers and loss specifications can be 
 To train the off the shelf detector on pseudo-labels and evaluate it on the ```val_detector``` set, first go to the detection repository:
 
 ```
-cd mmdet3d
+cd mmdetection3D_adapted
 ```
 
 Then, set the evironment variables as the following:
