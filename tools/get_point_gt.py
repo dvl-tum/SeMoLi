@@ -8,7 +8,7 @@ import torch.multiprocessing as mp
 import shutil
 
 
-@hydra.main(config_path="../SeMoLi/conf", config_name="conf")   
+@hydra.main(config_path="../SeMoLi/conf", config_name="conf", version_base=None)   
 def main(cfg):
     _ = Trainer(cfg, 0, 1)
     shutil.rmtree(f'{cfg.root_dir}/outputs')

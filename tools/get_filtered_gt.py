@@ -7,7 +7,7 @@ from omegaconf import OmegaConf
 import shutil
 
 
-@hydra.main(config_path="../SeMoLi/conf", config_name="conf")
+@hydra.main(config_path="../SeMoLi/conf", config_name="conf", version_base=None)
 def main(cfg):
     for split in ['train', 'val']:
         gt_folder = os.path.join(cfg.data.data_dir, split)

@@ -103,7 +103,7 @@ def get_detections_from_feather_files(detection_set, sampled, split, argo=False,
     feather.write_feather(sampled_data, f'{cfg.root_dir}/sampled_for_visualization{_argo}/{split}/detections/{save_name}/detections.feather')
 
 
-@hydra.main(config_path="PseudoDetection3D/conf", config_name="conf")
+@hydra.main(config_path="PseudoDetection3D/conf", config_name="conf", version_base=None)
 def main(cfg):
     split = f'{cfg.data.percentage_data_val}_{cfg.data.detection_set}'
     argo = cfg.data.dataset_name == 'av2_traj'

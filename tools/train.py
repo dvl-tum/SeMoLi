@@ -50,7 +50,7 @@ def sample_dims():
     return dim_dict
 
 
-@hydra.main(config_path="../SeMoLi/conf", config_name="conf")   
+@hydra.main(config_path="../SeMoLi/conf", config_name="conf", version_base=None)   
 def main(cfg):
     iters = 1
     if cfg.training.hypersearch:
