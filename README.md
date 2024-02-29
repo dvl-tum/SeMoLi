@@ -181,6 +181,7 @@ For more details, please refer to the ```README.md``` of the ```mmdetection3D_ad
 To only evaluate exsiting detections on our test set (the real validation set) from PointPillars in AV2 format, please run the following from the SeMoLi directory (```$BASE_DIR/SeMoLi```):
 
 ```
-python tools/evaluate.py root_dir=$BASE_DIR training.just_eval=True data=$DATA_TYPE data.data_dir=$BASE_DIR/data/$DATA_DIR data.trajectory_dir=$BASE_DIR/data/ evaluation.eval_dir=<detection_dir> evaluation.filter_moving=True evaluation.discard_last_25=False evaluation.inflate_bb=False evaluation.use_matched_category=False evaluation.heuristics=False evaluation.store_adapted_pseudo_labels=False evaluation.roi_clipping=True data.percentage_data_val=1.0 data.detection_set=val_evaluation data.processed_dir=$BASE_DIR/data/$PROCESSED_DIR evaluation.filtered_pc_path=$BASE_DIR/data/$FILTERED_DIR
+export EVAL_DIR=<detection_dir>
+python tools/evaluate.py root_dir=$BASE_DIR training.just_eval=True data=$DATA_TYPE data.data_dir=$BASE_DIR/data/$DATA_DIR data.trajectory_dir=$BASE_DIR/data/ evaluation.eval_dir=$BASE_DIR/$EVAL_DIR evaluation.filter_moving=True evaluation.discard_last_25=False evaluation.inflate_bb=False evaluation.use_matched_category=False evaluation.heuristics=False evaluation.store_adapted_pseudo_labels=False evaluation.roi_clipping=True data.percentage_data_val=1.0 data.detection_set=val_evaluation data.processed_dir=$BASE_DIR/data/$PROCESSED_DIR evaluation.filtered_pc_path=$BASE_DIR/data/$FILTERED_DIR
 ```
 
