@@ -22,8 +22,7 @@ from torch import multiprocessing as mp
 import pandas as pd
 from scipy.spatial.transform import Rotation
 import matplotlib
-import warnings 
-warnings.simplefilter(action='ignore', category=FutureWarning)
+pd.options.mode.chained_assignment = None  # default='warn'
 
 
 _class_dict_argo = {
@@ -115,12 +114,9 @@ def get_feather_files(
         # get file name
         split = os.path.basename(paths)
         if split == 'val':
-            file = 'filtered_version_city_w0.feather'
+            file = 'filtered_version_w0.feather'
         else:
-            if discard_last_25:
-                file = 'filtered_version.feather'
-            else:
-                file = 'filtered_version_city_w0.feather'
+            file = 'filtered_version_w0.feather'
 
         file = 'remove_non_drive_' + file if remove_non_drive else file
         file = 'remove_far_' + file if remove_far else file
@@ -480,7 +476,9 @@ def eval_detection(
         inflation_factor=1.0,
         root_dir='',
         filtered_file_path='', 
-        flow_path=''):
+        flow_path='',
+        only_level_1=False,
+        score_thresh=0.1):
     
     if os.path.isdir(trackers_folder) and not len(os.listdir(trackers_folder)):
         return None, np.array([0, 2, 1, 3.142, 0]), None
@@ -495,7 +493,6 @@ def eval_detection(
 
     if just_eval:
         print("Loading data...")
-    print("Discard last 25 ", discard_last_25)
 
     gts = get_feather_files(
         gt_folder,
@@ -513,16 +510,32 @@ def eval_detection(
         root_dir=root_dir,
         filtered_file_path=filtered_file_path)
 
-    print(f'Numer of gt {gts.shape}')
+    print(f'Number of gt {gts.shape}')
     num_mov = gts[gts['filter_moving']].shape[0]
-    print(f'Numer of gt of moving objects {num_mov}')
+    print(f'Number of gt of moving objects {num_mov}')
     gts = gts[gts['num_interior_pts'] > 0]
-    print(f'Numer of gt after removing bss w 0 interior points {gts.shape}')
+    print(f'Number of gt after removing bbs with 0 interior points {gts.shape}')
+
+    if not filter_moving:
+        gts['filter_moving'] = True
     
     if roi_clipping:
         gts = gts[np.logical_and(gts['tx_m'] < 50, gts['ty_m'] < 20)]
         gts = gts[np.logical_and(gts['tx_m'] > -50, gts['ty_m'] > -20)]
-        print(f'Numer of gt after filter points waymo style {gts.shape}')
+        print(f'Number of gt after filter points waymo style {gts.shape}')
+    
+    if discard_last_25:
+        gts = gts[~gts['last_24']]
+        print(f'Number of gt after discard last 25 {gts.shape}')
+    
+    if is_waymo:
+        gts = gts[gts['category']!='TYPE_SIGN']
+        print(f'Number of gt after removing signs {gts.shape[0]}')
+    
+    if only_level_1 and 'detection_difficulty' in gts.columns:
+        mask = np.logical_and(gts['detection_difficulty'] != 2, gts['num_interior_pts'] > 5)
+        gts.loc[~mask, 'filter_moving'] = False
+        print(f'Number of Level 2 gt (filtered during evaluation process) {(~mask).sum()}')
 
     if velocity_evaluation:
         use_matched_category = True
@@ -552,19 +565,19 @@ def eval_detection(
         dts = dts[dts['filter_moving']]
      
     dts = dts.drop_duplicates()
-    print(f'Numer of detections {dts.shape[0]}')
+    print(f'Number of detections {dts.shape[0]}')
     if heuristics:
         dts = dts[np.logical_and(dts['height_m'] > 0.1,
                             np.logical_and(dts['length_m'] > 0.1, dts['width_m'] > 0.1))]
-        print(f'Numer of detections after size threshold {dts.shape[0]}')
+        print(f'Number of detections after size threshold {dts.shape[0]}')
         dts = dts[np.logical_or(dts['num_interior_pts'] > min_num_interior_pts, dts['num_interior_pts']==-1)]
-        print(f'Numer of detections after num interior threshold {dts.shape[0]}')
+        print(f'Number of detections after num interior threshold {dts.shape[0]}')
         dts = dts[dts['width_m']<5]
-        print(f'Numer of detections after removing objexts with w > 5 {dts.shape[0]}')
+        print(f'Number of detections after removing objexts with w > 5 {dts.shape[0]}')
         dts = dts[dts['length_m']<20]
-        print(f'Numer of detections after removing objexts with l > 20 {dts.shape[0]}')
+        print(f'Number of detections after removing objexts with l > 20 {dts.shape[0]}')
         dts = dts[dts['height_m']<4]
-        print(f'Numer of detections after removing objexts with h > 4 {dts.shape[0]}')
+        print(f'Number of detections after removing objexts with h > 4 {dts.shape[0]}')
         
     if inflate_bb and not is_pp:
         print('INFLATING BBs', is_waymo)
@@ -581,7 +594,7 @@ def eval_detection(
         dts = dts[np.logical_and(dts['tx_m'] < 50, dts['ty_m'] < 20)]
         dts = dts[np.logical_and(dts['tx_m'] > -50, dts['ty_m'] > -20)]
     
-    print(f'Numer of detections after filter points waymo style {dts.shape}')
+    print(f'Number of detections after filter points waymo style {dts.shape}')
 
     if print_detail:
         print(f'\t Num dts: {dts.shape}, Num gts: {gts.shape}')
@@ -610,17 +623,12 @@ def eval_detection(
         gts['category_int'] = [1] * gts.shape[0]    
         gts['category'] = [1] * gts.shape[0]
         filter_class = 1
-    else:                                                                                                                                                           
+    else:                                                                                                                                                 
          gts['category_int'] = gts['category'] 
 
     # CONVERT INT TO STRING
     gts['category'] = [_class_dict[c] for c in gts['category']]
     dts['category'] = [_class_dict[c] for c in dts['category']]
-    
-    if is_waymo:
-        print(f'\t Removing signs from GT. Shape before {gts.shape[0]}')
-        gts = gts[gts['category']!='TYPE_SIGN']
-        print(f'\t Removing signs from GT. Shape after {gts.shape[0]}')
 
     if print_detail:
         print(f' \t Min points {min_points}, Max points {max_points}')
@@ -631,7 +639,8 @@ def eval_detection(
     if just_eval:
         print("Evaluate now...")
 
-    dts = dts[dts['score'] > 0.1]
+    dts = dts[dts['score'] > score_thresh]
+    print(f"Using detection confidence score of {score_thresh}")
     gts_orig = gts 
     dts_orig = dts
     if store_adapted_pseudo_labels:
@@ -647,11 +656,10 @@ def eval_detection(
         
         if affinity == 'SegIoU' and is_pp:
             continue
-
+        if affinity != 'IoU3D': # and affinity != 'SegIoU':
+            continue
         # Evaluate instances.
         # Defaults to competition parameters.
-        if print_detail:
-            print(f' \t Setting categories to Waymo categories {is_waymo}')
         if velocity_evaluation:
             categories : Tuple[str, ...] = tuple(x.value for x in VelocityCategories)
         elif is_waymo:
@@ -667,7 +675,7 @@ def eval_detection(
             max_num_dts_per_category=100000,
             eval_only_roi_instances=False)
         
-        print(f"\t {affinity}, # gt {gts_orig.shape[0]}, # dt {dts_orig.shape[0]}\n")
+        print(f"\n\n\t {affinity}, # gt {gts_orig.shape[0]}, # dt {dts_orig.shape[0]}")
         dts, gts, metrics, np_tps, np_fns, _, all_results_df = evaluate(
             dts_orig,
             gts_orig,
@@ -678,7 +686,7 @@ def eval_detection(
             use_matched_category=use_matched_category,
             _class_dict=_class_dict,
             n_jobs=n_jobs,
-            filter_moving=filter_moving,
+            filter_moving=True,
             use_aff_as_score=use_aff_as_score,
             pc_path=flow_path)
                 
@@ -694,10 +702,10 @@ def eval_detection(
         # AP    ATE    ASE    AOE    CDS
         _filter_class = filter_class if filter_class == "NO_FILTER" else _class_dict[filter_class]
         if _filter_class == "NO_FILTER":
-            print('\tDetection metrics: ', metrics.loc['AVERAGE_METRICS'].values)
+            print('\t Detection metrics: ', metrics.loc['AVERAGE_METRICS'].values)
             metric = metrics.loc['AVERAGE_METRICS'].values
         else:
-            print('\tDetection metrics: \n\t\t', metrics.columns.values, '\n\t\t', metrics.loc[_filter_class].values)
+            print('\t Detection metrics: \n\t\t', metrics.columns.values, '\n\t\t', metrics.loc[_filter_class].values)
             metric = metrics.loc[_filter_class].values
     
     return metrics, metric, all_results_df

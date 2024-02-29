@@ -7,7 +7,7 @@ from SeMoLi.utils.get_name import get_name
 import shutil
 
 
-@hydra.main(config_path="../SeMoLi/conf", config_name="conf")   
+@hydra.main(config_path="../SeMoLi/conf", config_name="conf", version_base=None)   
 def main(cfg):
     seq_list = get_seq_list_fixed_val(
         cfg.data.data_dir,
@@ -31,8 +31,9 @@ def main(cfg):
           1. on only moving objexts {cfg.evaluation.filter_moving}, \n \
           2. using matched categories {cfg.evaluation.use_matched_category} \n \
           3. using heuristics {cfg.evaluation.heuristics} \n \
-          4. filtering waymo style {cfg.evaluation.waymo_style} \n \
-          5. inflating bounding boxes {inflate}')
+          4. filtering waymo style {cfg.evaluation.roi_clipping} \n \
+          5. inflating bounding boxes {inflate} \n \
+          6. Using only Level 1 if Waymo Open Dataset {cfg.evaluation.only_level_1}')
 
     _, _, _ = eval_detection.eval_detection(
             gt_folder=os.path.join(os.getcwd(), cfg.data.data_dir),
@@ -55,14 +56,16 @@ def main(cfg):
             use_aff_as_score=False,
             inflate_bb=cfg.evaluation.inflate_bb,
             min_num_interior_pts=cfg.detector.num_interior,
-            store_adapted_pseudo_labels=cfg.evaluation.store_adapted_pseudo_labels,
+            store_adapted_pseudo_labels=cfg.evaluation.store_adapted_pseudo_labels  ,
             discard_last_25=cfg.evaluation.discard_last_25,
             inflation_factor=cfg.evaluation.inflation_factor,
             root_dir=cfg.root_dir,
             filtered_file_path=cfg.data.filtered_file_path,
-            flow_path=cfg.data.trajectory_dir)
+            only_level_1=cfg.evaluation.only_level_1,
+            flow_path=cfg.evaluation.filtered_pc_path,
+            score_thresh=cfg.evaluation.score_thresh) # cfg.data.trajectory_dir)
     
-    shutil.rmtree(f'{cfg.root_dir}/outputs')
+    shutil.rmtree(f'{cfg.root_dir}/outputs', ignore_errors=True)
 
 if __name__ == "__main__":
         main()

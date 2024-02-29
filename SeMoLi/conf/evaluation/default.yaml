@@ -15,3 +15,6 @@ discard_last_25: False
 inflation_factor: 1.0
 pretty_print: True 
 eval_frequency: 1
+filtered_pc_path: ''
+only_level_1: False
+score_thresh: 0.1

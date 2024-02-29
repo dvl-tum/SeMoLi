@@ -45,6 +45,7 @@ import torch
 from .iou import IoUs2D
 from scipy.spatial.transform import Rotation as R
 import os
+from pyarrow import feather
 
 
 logger = logging.getLogger(__name__)
@@ -524,9 +525,19 @@ def get_masks(dts, data):
 
 
 def compute_sem_seg(dts, gts, timestamp_ns, log_id, pc_path):
-    time_p = os.path.join(pc_path, log_id, f'{timestamp_ns}.npz')
-    pred = np.load(time_p)
-    data = pred['pc_list']  
+    if 'Preprocessed' in pc_path:
+        time_p = os.path.join(pc_path, log_id, 'sensors/lidar', f'{timestamp_ns}.feather')
+        data = feather.read_feather(time_p)
+        mask = data['low_pts'] < 4
+        mask = np.logical_and(mask, data['close_pts'] < 80)
+        mask = np.logical_and(mask, data[f'cd_dist'] > 0.2)
+        mask = np.logical_and(mask, data['remove_ground_pts_patch'])
+        data = data[
+                    list(['x', 'y', 'z'])].to_numpy()[mask]
+    else:
+        time_p = os.path.join(pc_path, log_id, f'{timestamp_ns}.npz')
+        data = np.load(time_p)
+        data = data['pc_list']  
     # pc_path = '/workspace/Waymo_Converted_train/Waymo_Converted/train/' 
     # time_p = os.path.join(pc_path, log_id, f'{timestamp_ns}.feather')
     masks_dets = get_masks(dts, data)
@@ -565,10 +576,9 @@ def compute_average_precision(
 
     # Compute precision.
     precision: NDArrayFloat = cum_tps / (cum_tps + cum_fps + EPS)
-    # print(precision, precision.shape)
-    # Compute recall.
+    # Compute recall
     recall: NDArrayFloat = cum_tps / (cum_tps + cum_fns)
-    # print(recall, recall.shape)
+
     # Interpolate precision -- VOC-style.
     precision = interpolate_precision(precision)
     # print('interpolated precision', precision, precision.shape)

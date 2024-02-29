@@ -123,9 +123,9 @@ def evaluate(
         if filter_moving:
             gts = gts[gts['filter_moving']]
             num_matched_to_static = dts[(dts['matched_to_static'].values.astype(bool))].shape[0]
-            print(f'{num_matched_to_static} objects matched to static objects...')
+            print(f'\t {num_matched_to_static} objects matched to static objects...')
             dts = dts[~(dts['matched_to_static'].values.astype(bool))]
-            print(f'{dts.shape[0]} remaining objects...')
+            print(f'\t {dts.shape[0]} remaining objects...')
         if use_matched_category:
             dts['category'] = dts['matched_category'].apply(lambda x: _class_dict[x])
     gts['filter_moving'] = True
