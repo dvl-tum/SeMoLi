@@ -71,6 +71,7 @@ export TRAJECTORY_DIR=Waymo_Flow
 export DATA_DIR=Waymo_Converted
 export DATA_TYPE=waymo_traj
 export PROCESSED_DIR=Waymo_Point_GT
+export FILTERED_DIR=Waymo_Preprocessed
 ```
 
 For AV2 run:
@@ -80,6 +81,7 @@ export TRAJECTORY_DIR=AV2_Flow
 export DATA_DIR=AV2
 export DATA_TYPE=argoverse2_traj
 export PROCESSED_DIR=AV2_Point_GT
+export FILTERED_DIR=AV2_Preprocessed
 ```
 
 #### Generating Ground Truth Files
@@ -89,13 +91,13 @@ python tools/get_filtered_gt.py root_dir=$BASE_DIR data=$DATA_TYPE data.data_dir
 
 python tools/get_point_gt.py root_dir=$BASE_DIR training.just_eval=True data=$DATA_TYPE data.trajectory_dir=$BASE_DIR/data/$TRAJECTORY_DIR/trajectories data.data_dir=$BASE_DIR/data/$DATA_DIR data.processed_dir=$BASE_DIR/data/$PROCESSED_DIR data.do_process=True data.detection_set=val_evaluation data.percentage_data_val=1.0
 
-python tools/train.get_point_gt root_dir=$BASE_DIR training.just_eval=True data=$DATA_TYPE data.trajectory_dir=$BASE_DIR/data/$TRAJECTORY_DIR/trajectories data.data_dir=$BASE_DIR/data/$DATA_DIR data.processed_dir=$BASE_DIR/data/$PROCESSED_DIR data.do_process=True data.detection_set=train_all data.percentage_data_val=1.0
+python tools/get_point_gt.py root_dir=$BASE_DIR training.just_eval=True data=$DATA_TYPE data.trajectory_dir=$BASE_DIR/data/$TRAJECTORY_DIR/trajectories data.data_dir=$BASE_DIR/data/$DATA_DIR data.processed_dir=$BASE_DIR/data/$PROCESSED_DIR data.do_process=True data.detection_set=train_all data.percentage_data_val=1.0
 ```
 
 ### 4.2. Evaluate Pseudo-Labels
 To evaluate an existing set of pseudo-labels run the following and replce ```<pseudo_label_dir>``` with the directory where the corresponding pseudo-labels are stored:
 ```
-python tools/evaluate.py root_dir=$BASE_DIR data=$DATA_TYPE evaluation.eval_dir=<pseudo_label_dir> evaluation.filter_moving=True evaluation.discard_last_25=True evaluation.inflate_bb=True evluation.use_matched_category=False evaluation.heuristics=False evluation.store_adapted_pseudo_labels=False evaluation.roi_clipping=True
+python tools/evaluate.py root_dir=$BASE_DIR training.just_eval=True data=$DATA_TYPE data.data_dir=$BASE_DIR/data/$DATA_DIR data.trajectory_dir=$BASE_DIR/data/ evaluation.eval_dir=<pseudo_label_dir> evaluation.filter_moving=True evaluation.discard_last_25=True evaluation.inflate_bb=True evaluation.use_matched_category=False evaluation.heuristics=False evaluation.store_adapted_pseudo_labels=False evaluation.roi_clipping=True data.percentage_data_val=0.1 data.detection_set=val_gnn data.processed_dir=$BASE_DIR/data/$PROCESSED_DIR evaluation.filtered_pc_path=$BASE_DIR/data/$FILTERED_DIR
 ```
 The command above uses the default values of all flags. They detemine the folling settings:
 - ```filter_moving``` determines if only moving (```evaluation.filter_moving=True```) objects should be evaluated or also static objects (```evaluation.filter_moving=False```)
@@ -111,7 +113,7 @@ The pseudo-labels to train the off-the-shelf detector will be stored to ```input
 ### 4.3. Evaluate SeMoLi to Generate Pseudo-Labels
 To generate detections and evaluate trained SeMoLi replace ```<path_to_weight>``` with the path to the weights you want to use and run the following:
 ```
-python tools/train.py root_dir=$BASE_DIR data=$DATA_TYPE training.just_eval=True data.trajectory_dir=$BASE_DIR/data/$TRAJECTORY_DIR/trajectories data.data_dir=$BASE_DIR/data/$DATA_DIR data.processed_dir=$BASE_DIR/data/$PROCESSED_DIR data.percentage_data_val=0.1 data.detection_set=val_gnn models.weight_path=<path_to_weight> evaluation.keep_checkpoint=False evaluation.keep_detections=True
+python tools/train.py root_dir=$BASE_DIR data=$DATA_TYPE training.just_eval=True data.trajectory_dir=$BASE_DIR/data/$TRAJECTORY_DIR/trajectories data.data_dir=$BASE_DIR/data/$DATA_DIR data.processed_dir=$BASE_DIR/data/$PROCESSED_DIR data.percentage_data_val=0.1 data.detection_set=val_gnn models.weight_path=<path_to_weight> evaluation.keep_checkpoint=False evaluation.keep_detections=True evaluation.filtered_pc_path=$BASE_DIR/data/$FILTERED_DIR
 ```
 For evaluation the default flags as defined above are used and hence not added to the command. For pseudo-label generation the flags determine the following:
 - ```just_eval``` determines that SeMoLi should just be evaluated not be trained
@@ -123,7 +125,7 @@ For evaluation the default flags as defined above are used and hence not added t
 ### 4.4. Train SeMoLi
 To train SeMoLi from scratch run the following:
 ```
-python tools/train.py root_dir=$BASE_DIR data=$DATA_TYPE data.trajectory_dir=$BASE_DIR/data/$TRAJECTORY_DIR/trajectories data.data_dir=$BASE_DIR/data/$DATA_DIR data.processed_dir=$BASE_DIR/data/$PROCESSED_DIR data.percentage_data_train=0.1 data.percentage_data_val=0.1 data.detection_set=val_gnn
+python tools/train.py root_dir=$BASE_DIR data=$DATA_TYPE data.trajectory_dir=$BASE_DIR/data/$TRAJECTORY_DIR/trajectories data.data_dir=$BASE_DIR/data/$DATA_DIR data.processed_dir=$BASE_DIR/data/$PROCESSED_DIR data.percentage_data_train=0.1 data.percentage_data_val=0.1 data.detection_set=val_gnn evaluation.filtered_pc_path=$BASE_DIR/data/$FILTERED_DIR
 ```
 For evaluation and pseudo-label generation flags are defined as above. Additionally for training the following flags are of importance:
 - ```percentage_data_train``` determines the percentage of data used for training
