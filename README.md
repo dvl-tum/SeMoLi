@@ -1,4 +1,4 @@
-# 3DOpenWorldMOT
+# SeMoLi
 
 ## 1. Installation
 Create a conda environment from environment file
