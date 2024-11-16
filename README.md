@@ -1,4 +1,4 @@
-# SeMoLi: What Moves Together Belongs Together CVPR 2024
+# SeMoLi: What Moves Together Belongs Together (CVPR 2024)
 
 Check our the [paper](https://arxiv.org/abs/2402.19463) and the [project page](https://research.nvidia.com/labs/dvl/projects/semoli/)!
 
