@@ -1,4 +1,6 @@
-# SeMoLi
+# SeMoLi: What Moves Together Belongs Together
+
+Official implementation of our 2024 CVPR paper [SeMoLi](https://arxiv.org/abs/2402.19463)! FIn visualizations on our [project page](https://research.nvidia.com/labs/dvl/projects/semoli/)!
 
 ## 1. Installation
 Create a conda environment from environment file
